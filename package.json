@@ -1,0 +1,17 @@
+{
+  "name": "kanon",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.22.0",
+  "scripts": {
+    "build": "pnpm --filter @kanon/tokens build && pnpm --filter @kanon/web build",
+    "dev": "pnpm --filter @kanon/tokens build && pnpm --filter @kanon/web dev",
+    "start": "pnpm --filter @kanon/web start",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm --filter @kanon/web lint"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
