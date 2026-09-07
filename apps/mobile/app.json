@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "Kanon",
+    "slug": "kanon",
+    "scheme": "kanon",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0D10",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "app.kanon.mobile",
+      "infoPlist": {
+        "NSFaceIDUsageDescription": "Kanon signs the rules you pin with your device passkey."
+      }
+    },
+    "android": {
+      "package": "app.kanon.mobile",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": ["expo-router", "expo-font", "expo-local-authentication", "expo-secure-store"],
+    "experiments": { "typedRoutes": true }
+  }
+}

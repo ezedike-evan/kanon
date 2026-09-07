@@ -4,11 +4,15 @@
   "version": "0.1.0",
   "packageManager": "pnpm@10.22.0",
   "scripts": {
-    "build": "pnpm --filter @kanon/tokens build && pnpm --filter @kanon/web build",
-    "dev": "pnpm --filter @kanon/tokens build && pnpm --filter @kanon/web dev",
-    "start": "pnpm --filter @kanon/web start",
+    "tokens": "pnpm --filter @kanon/tokens build",
+    "start": "pnpm tokens && pnpm --filter @kanon/mobile start",
+    "ios": "pnpm tokens && pnpm --filter @kanon/mobile ios",
+    "android": "pnpm tokens && pnpm --filter @kanon/mobile android",
+    "web": "pnpm tokens && pnpm --filter @kanon/web dev",
+    "build": "pnpm tokens && pnpm --filter @kanon/web build",
+    "build:mobile": "pnpm tokens && pnpm --filter @kanon/mobile bundle",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck",
+    "typecheck": "pnpm tokens && pnpm -r typecheck",
     "lint": "pnpm --filter @kanon/web lint"
   },
   "devDependencies": {

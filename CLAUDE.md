@@ -18,28 +18,49 @@ against.
 
 ## Stack
 
-- Expo (React Native) with expo-router, TypeScript strict
-- NativeWind for styling
-- Reanimated for motion, Skia for charts, FlashList for lists
-- expo-local-authentication, expo-secure-store
-- Zod for all boundary validation, and for the strategy spec schema
-- Vitest for unit tests
-- pnpm
+Monorepo, pnpm workspaces. Two clients over one shared UI layer.
+
+- `apps/web` — Next.js 15 App Router, React 19, react-native-web. The primary
+  surface and what gets demoed.
+- `apps/mobile` — Expo (React Native) with expo-router, expo-local-authentication,
+  expo-secure-store, Reanimated.
+- `packages/ui` — every screen and component, written once in React Native
+  primitives and rendered on both clients through react-native-web.
+- `packages/spec` — the strategy spec: Zod schema, versioned type, decimal
+  helpers, hashing, diffing. Vitest lives here.
+- `packages/tokens` — design tokens, built into a Tailwind preset by
+  `scripts/build-preset.mjs`. Every client consumes the preset; no client
+  defines its own colours.
+
+TypeScript strict everywhere. NativeWind 4 for styling on both platforms. Zod for
+all boundary validation.
 
 ## Commands
 
 ```
 pnpm install
-pnpm start              # expo dev server
+pnpm web                # next dev, apps/web
+pnpm start              # expo dev server, apps/mobile
 pnpm ios / pnpm android
-pnpm test
-pnpm typecheck
-pnpm lint
+pnpm build              # tokens + next build
+pnpm test               # vitest, packages/spec
+pnpm typecheck          # tokens + every workspace
+pnpm lint               # eslint, apps/web
 ```
+
+`pnpm tokens` runs first in every script that needs styling. If Tailwind classes
+resolve to nothing, the preset was not built.
 
 ## Conventions
 
-- File-based routing under `app/`. Route names match the design exports in `design/`.
+- Screens live in `packages/ui/src/screens/`, one file per screen. A route file
+  in `apps/web/app/` or `apps/mobile/app/` does nothing but import one and mount
+  it. No screen logic in a route file.
+- Write React Native primitives (`View`, `Text`, `Pressable`), never `div`/`span`.
+  Web gets them through react-native-web. Platform splits go in
+  `packages/ui/src/platform.tsx`, not inline.
+- File-based routing on both clients, route names shared via
+  `packages/ui/src/lib/routes.ts`.
 - The strategy spec is a Zod schema and a versioned type. It is the single source
   of truth shared by the compiler, the UI and the contract encoder.
 - Prices and sizes are integers with explicit decimals. Never floats.
@@ -83,7 +104,8 @@ this product exists to prevent.
 
 - Matches the corresponding PNG in `design/` at a glance
 - Every number monospaced and tabular, consistent across screens
+- Renders from `packages/ui`, mounted by a route file on both clients
 - Works one-handed in portrait
-- Renders correctly on a mid-range Android
+- Renders correctly on a mid-range Android and in the browser at 390px wide
 - No hardcoded hex values
 - Evidence reachable in one tap wherever a claim is displayed

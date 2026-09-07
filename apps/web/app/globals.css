@@ -1,5 +1,6 @@
-@import 'tailwindcss';
-@import '@kanon/tokens/tokens.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 /*
  * Nothing below sets a colour or a size literal. Every value is a token from
@@ -13,64 +14,17 @@
   }
 
   body {
-    background: var(--color-canvas);
-    color: var(--color-bone);
-    font-family: var(--font-sans);
+    background: theme('colors.canvas');
+    color: theme('colors.bone');
+    font-family: theme('fontFamily.sans');
     /* Tabular figures everywhere, so a price never shifts as its digits change. */
     font-variant-numeric: tabular-nums;
+    margin: 0;
   }
 
   /* The rule outranks the chart, and the chrome outranks neither. */
   ::selection {
-    background: var(--color-signal);
-    color: var(--color-void);
-  }
-}
-
-@utility no-scrollbar {
-  scrollbar-width: none;
-  &::-webkit-scrollbar {
-    display: none;
-  }
-}
-
-/*
- * Refusal: fast, hard, no bounce. It should feel like a door closing.
- */
-@keyframes kanon-refuse {
-  from {
-    opacity: 0;
-    transform: translateY(calc(var(--spacing) * -2));
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@utility animate-refuse {
-  animation: kanon-refuse 120ms cubic-bezier(0.2, 0, 0, 1) both;
-}
-
-/* Spec diff: changed parameters fade up in `signal`, hold, settle. */
-@keyframes kanon-diff {
-  from {
-    opacity: 0;
-    transform: translateY(calc(var(--spacing) * 1));
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@utility animate-diff {
-  animation: kanon-diff 260ms cubic-bezier(0.2, 0, 0, 1) both;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .animate-refuse,
-  .animate-diff {
-    animation: none;
+    background: theme('colors.signal');
+    color: theme('colors.void');
   }
 }

@@ -3,9 +3,10 @@
  *
  * `docs/DESIGN.md` defines the eleven named colours. The remaining entries are
  * the surfaces and states the design canvas uses that the table does not name.
- * Nothing in the app may reference a raw hex or px value; it comes from here,
- * either as a Tailwind utility (web, via the generated `tokens.css`) or as a
- * `theme.extend` object (a future NativeWind config, via `tailwindColors`).
+ * Nothing in the app may reference a raw hex or px value. Every value reaches
+ * the UI as a Tailwind utility, through the generated `preset.cjs` that both
+ * NativeWind (metro) and Next.js (react-native-web) load. Run
+ * `pnpm --filter @kanon/tokens build` after editing this file.
  */
 
 export const colors = {
@@ -110,5 +111,14 @@ export const device = {
   height: 852,
 } as const;
 
-/** Ready to drop into `theme.extend.colors` of a NativeWind config. */
-export const tailwindColors: Record<string, string> = { ...colors };
+/**
+ * The mono face, by weight. On a device each weight is a separately registered
+ * family — `fontWeight` against a custom family is unreliable on Android — so
+ * the weight is baked into the utility (`font-mono`, `font-mono-medium`,
+ * `font-mono-bold`) rather than applied as a modifier.
+ */
+export const monoFamilies = {
+  regular: 'JetBrainsMono_400Regular',
+  medium: 'JetBrainsMono_500Medium',
+  bold: 'JetBrainsMono_700Bold',
+} as const;

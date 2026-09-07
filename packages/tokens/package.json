@@ -7,10 +7,10 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./tokens.css": "./tokens.css"
+    "./preset": "./preset.cjs"
   },
   "scripts": {
-    "build": "node scripts/build-css.mjs",
+    "build": "node scripts/build-preset.mjs",
     "typecheck": "tsc --noEmit"
   }
 }
