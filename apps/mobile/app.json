@@ -5,6 +5,7 @@
     "scheme": "kanon",
     "version": "0.1.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#0B0D10",
     "newArchEnabled": true,
@@ -17,7 +18,16 @@
     },
     "android": {
       "package": "app.kanon.mobile",
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0D10",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
     },
     "plugins": ["expo-router", "expo-font", "expo-local-authentication", "expo-secure-store"],
     "experiments": { "typedRoutes": true }
