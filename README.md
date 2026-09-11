@@ -1,7 +1,7 @@
 # Kanon
 
 Your trading strategy, compiled into a contract that refuses trades breaking
-your own rules — including the ones you would have broken yourself.
+your own rules - including the ones you would have broken yourself.
 
 See `docs/PRODUCT.md` for the thesis, `docs/ARCHITECTURE.md` for the security
 model, `docs/DESIGN.md` for the visual language and `docs/SCOPE.md` for what is

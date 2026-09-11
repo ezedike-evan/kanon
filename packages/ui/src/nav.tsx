@@ -52,7 +52,7 @@ export function Link({
   return (
     <Pressable
       role="link"
-      className={className}
+      {...(className ? { className } : {})}
       onPress={() => nav.push(href)}
       {...(Platform.OS === 'web' ? ({ href } as object) : null)}
       {...rest}

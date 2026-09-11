@@ -22,6 +22,7 @@ export { cx } from './lib/cx';
 export * from './components/chrome';
 export * from './components/ui';
 export * from './components/motion';
+export { default as SpecularButton } from './components/button/cta';
 export * from './components/countdown';
 export * from './components/evidence-chain';
 export { OnboardingScreen } from './components/onboarding';

@@ -16,12 +16,14 @@
   "dependencies": {
     "@kanon/spec": "workspace:*",
     "@kanon/tokens": "workspace:*",
+    "ogl": "^1.0.11",
     "tailwind-merge": "^3.6.0"
   },
   "peerDependencies": {
     "nativewind": "*",
     "react": "*",
     "react-native": "*",
-    "react-native-safe-area-context": "*"
+    "react-native-safe-area-context": "*",
+    "tailwindcss": "^3.4.19"
   }
 }

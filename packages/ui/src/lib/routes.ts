@@ -10,7 +10,7 @@
 import { RULE, TRADE_ID } from './demo';
 
 export const routes = {
-  home: '/',
+  home: '/home',
   refused: '/refused',
   blocked: '/blocked',
   compile: '/compile',

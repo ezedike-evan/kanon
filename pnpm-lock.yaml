@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  tailwindcss: ^3.4.19
+
 importers:
 
   .:
@@ -168,7 +171,10 @@ importers:
         version: link:../tokens
       nativewind:
         specifier: '*'
-        version: 4.2.6(react-native-reanimated@4.2.3(react-native-worklets@0.7.4(@babel/core@7.29.7)(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native-safe-area-context@5.7.0(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        version: 4.2.6(react-native-reanimated@4.2.3(react-native-worklets@0.7.4(@babel/core@7.29.7)(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native-safe-area-context@5.7.0(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)(tailwindcss@3.4.19(yaml@2.9.0))
+      ogl:
+        specifier: ^1.0.11
+        version: 1.0.11
       react:
         specifier: '*'
         version: 19.2.8
@@ -181,6 +187,9 @@ importers:
       tailwind-merge:
         specifier: ^3.6.0
         version: 3.6.0
+      tailwindcss:
+        specifier: ^3.4.19
+        version: 3.4.19(yaml@2.9.0)
 
 packages:
 
@@ -3749,7 +3758,7 @@ packages:
     resolution: {integrity: sha512-kLPRH3Yh/hhIFufXzUZDe39fuK471GwaPBCqYNgcRygILr+obV+wFfDmG+zaJnniVUFFQzYOTCEldem6XktZ+A==}
     engines: {node: '>=16'}
     peerDependencies:
-      tailwindcss: '>3.3.0'
+      tailwindcss: ^3.4.19
 
   natural-compare@1.4.0:
     resolution: {integrity: sha512-OWND8ei3VtNC9h7V60qff3SVobHr996CTwgxubgyQYEpg290h9J0buyECNNJexkFm5sOajh5G116RYA1c8ZMSw==}
@@ -3865,6 +3874,9 @@ packages:
   object.values@1.2.1:
     resolution: {integrity: sha512-gXah6aZrcUxjWg2zR2MwouP2eHlCBzdV4pygudehaKXSGW4v2AsRQUK+lwwXhii6KFZcunEnmSUoYp5CXibxtA==}
     engines: {node: '>= 0.4'}
+
+  ogl@1.0.11:
+    resolution: {integrity: sha512-kUpC154AFfxi16pmZUK4jk3J+8zxwTWGPo03EoYA8QPbzikHoaC82n6pNTbd+oEaJonaE8aPWBlX7ad9zrqLsA==}
 
   on-finished@2.3.0:
     resolution: {integrity: sha512-ikqdkGAAyf/X/gPhXGvfgAytDZtDbr+bkNUJ0N9h5MI/dmdgCs3l6hoHrcUv41sRKew3jIwrp4qQDXiK99Utww==}
@@ -4100,7 +4112,7 @@ packages:
       react-native-reanimated: '>=3.6.2'
       react-native-safe-area-context: '*'
       react-native-svg: '*'
-      tailwindcss: ~3
+      tailwindcss: ^3.4.19
     peerDependenciesMeta:
       react-native-safe-area-context:
         optional: true
@@ -4584,9 +4596,6 @@ packages:
     resolution: {integrity: sha512-3ofp+LL8E+pK/JuPLPggVAIaEuhvIz4qNcf3nA1Xn2o/7fb7s/TYpHhwGDv1ZU3PkBluUVaF8PyCHcm48cKLWQ==}
     engines: {node: '>=14.0.0'}
     hasBin: true
-
-  tailwindcss@4.3.3:
-    resolution: {integrity: sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==}
 
   terminal-link@2.1.1:
     resolution: {integrity: sha512-un0FmiRUQNr5PJqy9kP7c40F5BOfpGlYTrxonDChEZB7pzZxRNp/bt+ymiy9/npwXya9KH99nJ/GXFIiUkYGFQ==}
@@ -9163,20 +9172,6 @@ snapshots:
       - react-native-svg
       - supports-color
 
-  nativewind@4.2.6(react-native-reanimated@4.2.3(react-native-worklets@0.7.4(@babel/core@7.29.7)(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native-safe-area-context@5.7.0(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3):
-    dependencies:
-      comment-json: 4.6.2
-      debug: 4.4.3
-      react-native-css-interop: 0.2.6(react-native-reanimated@4.2.3(react-native-worklets@0.7.4(@babel/core@7.29.7)(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native-safe-area-context@5.7.0(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
-      tailwindcss: 4.3.3
-    transitivePeerDependencies:
-      - react
-      - react-native
-      - react-native-reanimated
-      - react-native-safe-area-context
-      - react-native-svg
-      - supports-color
-
   natural-compare@1.4.0: {}
 
   negotiator@0.6.3: {}
@@ -9291,6 +9286,8 @@ snapshots:
       call-bound: 1.0.4
       define-properties: 1.2.1
       es-object-atoms: 1.1.2
+
+  ogl@1.0.11: {}
 
   on-finished@2.3.0:
     dependencies:
@@ -9538,23 +9535,6 @@ snapshots:
       react-native-reanimated: 4.2.3(react-native-worklets@0.7.4(@babel/core@7.29.7)(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)
       semver: 7.8.5
       tailwindcss: 3.4.19(yaml@2.9.0)
-    optionalDependencies:
-      react-native-safe-area-context: 5.7.0(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)
-    transitivePeerDependencies:
-      - supports-color
-
-  react-native-css-interop@0.2.6(react-native-reanimated@4.2.3(react-native-worklets@0.7.4(@babel/core@7.29.7)(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native-safe-area-context@5.7.0(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3):
-    dependencies:
-      '@babel/helper-module-imports': 7.29.7
-      '@babel/traverse': 7.29.8
-      '@babel/types': 7.29.8
-      debug: 4.4.3
-      lightningcss: 1.27.0
-      react: 19.2.8
-      react-native: 0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8)
-      react-native-reanimated: 4.2.3(react-native-worklets@0.7.4(@babel/core@7.29.7)(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8))(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)
-      semver: 7.8.5
-      tailwindcss: 4.3.3
     optionalDependencies:
       react-native-safe-area-context: 5.7.0(react-native@0.87.0(@babel/core@7.29.7)(@types/react@19.2.18)(react@19.2.8))(react@19.2.8)
     transitivePeerDependencies:
@@ -10289,8 +10269,6 @@ snapshots:
     transitivePeerDependencies:
       - tsx
       - yaml
-
-  tailwindcss@4.3.3: {}
 
   terminal-link@2.1.1:
     dependencies:

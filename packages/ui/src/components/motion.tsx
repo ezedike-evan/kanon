@@ -42,7 +42,7 @@ export function Enter({
 
   return (
     <Animated.View
-      className={className}
+      {...(className ? { className } : {})}
       style={[
         style ?? null,
         {
@@ -101,14 +101,14 @@ export function ProgressBar({
 
   return (
     <Animated.View
-      className={className}
+      {...(className ? { className } : {})}
       role="progressbar"
       aria-valuemin={0}
       aria-valuemax={100}
       {...a11y}
     >
       <Animated.View
-        className={fillClassName}
+        {...(fillClassName ? { className: fillClassName } : {})}
         style={{
           width: '100%',
           height: '100%',
