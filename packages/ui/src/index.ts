@@ -23,6 +23,7 @@ export * from './components/chrome';
 export * from './components/ui';
 export * from './components/motion';
 export { default as SpecularButton } from './components/button/cta';
+export { AuthModal } from './components/modal/auth-modal';
 export * from './components/countdown';
 export * from './components/evidence-chain';
 export { OnboardingScreen } from './components/onboarding';

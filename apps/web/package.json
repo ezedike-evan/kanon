@@ -14,7 +14,7 @@
     "@kanon/tokens": "workspace:*",
     "@kanon/ui": "workspace:*",
     "nativewind": "^4.2.6",
-    "next": "^15.5.2",
+    "next": "15.5.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-native-safe-area-context": "~5.7.0",
