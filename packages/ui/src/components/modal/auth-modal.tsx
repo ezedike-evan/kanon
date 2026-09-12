@@ -15,6 +15,7 @@ export interface AuthModalProps {
   onCompleteProfile?: (data: { name: string; username: string; experience: string }) => Promise<void>;
   isSendingCode?: boolean;
   isVerifyingCode?: boolean;
+  emailError?: string;
   forceStep?: 1 | 'otp' | 2 | 3;
 }
 
@@ -28,6 +29,7 @@ export function AuthModal({
   onCompleteProfile,
   isSendingCode,
   isVerifyingCode,
+  emailError,
   forceStep
 }: AuthModalProps) {
   const [step, setStep] = useState<1 | 'otp' | 2 | 3>(1);
@@ -51,8 +53,13 @@ export function AuthModal({
 
   const handleEmailContinue = async () => {
     if (!email || !onSendEmailCode) return;
-    await onSendEmailCode(email);
-    setStep('otp');
+    try {
+      await onSendEmailCode(email);
+      setStep('otp');
+    } catch (e) {
+      console.error('Email sending failed', e);
+      // Fallback: don't transition step if it fails
+    }
   };
 
   const handleOtpSubmit = async () => {
@@ -107,6 +114,7 @@ export function AuthModal({
               <PrimaryButton onPress={handleEmailContinue} disabled={!email || isSendingCode}>
                 {isSendingCode ? 'Sending Code...' : 'Continue with Email'}
               </PrimaryButton>
+              {emailError ? <Text className="text-red-500 text-12 text-center mt-2">{emailError}</Text> : null}
             </View>
 
             <View className="flex-row items-center justify-center gap-4 my-8">
@@ -147,6 +155,7 @@ export function AuthModal({
               <PrimaryButton onPress={handleOtpSubmit} disabled={otp.length !== 6 || isVerifyingCode}>
                 {isVerifyingCode ? 'Verifying...' : 'Verify Code'}
               </PrimaryButton>
+              {emailError ? <Text className="text-red-500 text-12 text-center mt-2">{emailError}</Text> : null}
             </View>
           </View>
         )}

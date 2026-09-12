@@ -38,12 +38,9 @@ export function MarketingContent() {
   const isExistingUser = authenticated && user && dbUser !== null && dbUser !== undefined;
   const forceStep = isNewUser ? 2 : undefined;
 
-  useEffect(() => {
-    if (isExistingUser) {
-      setIsAuthModalOpen(false);
-      router.push('/home');
-    }
-  }, [isExistingUser, router]);
+  // We deliberately removed the auto-redirect useEffect so authenticated users
+  // can still view the landing page. They can click their @username in the nav
+  // to return to the dashboard.
 
   // Whitelabel Hooks
   const { initOAuth } = useLoginWithOAuth();
@@ -68,6 +65,7 @@ export function MarketingContent() {
       await sendCode({ email });
     } catch (e) {
       console.error('Failed to send email code', e);
+      throw e;
     }
   };
 
@@ -119,7 +117,8 @@ export function MarketingContent() {
         onCompleteProfile={handleCompleteProfile}
         isSendingCode={emailState.status === 'sending-code'}
         isVerifyingCode={emailState.status === 'submitting-code'}
-        forceStep={forceStep ?? 1}
+        emailError={emailState.error?.message}
+        forceStep={forceStep}
       />
       
       {/* Navbar */}
@@ -134,9 +133,15 @@ export function MarketingContent() {
           <a href="#features" className="hover:text-bone transition-colors">Features</a>
           <a href="#thesis" className="hover:text-bone transition-colors">Thesis</a>
         </nav>
-        <SpecularButton onClick={() => setIsAuthModalOpen(true)} size="sm" className="uppercase tracking-widest font-bold text-xs" tint="#D4A017" tintOpacity={0.2} lineColor="#D4A017">
-          Launch App
-        </SpecularButton>
+        {authenticated && dbUser ? (
+          <SpecularButton onClick={() => router.push('/home')} size="sm" className="uppercase tracking-widest font-bold text-xs" tint="#D4A017" tintOpacity={0.2} lineColor="#D4A017">
+            @{dbUser.username}
+          </SpecularButton>
+        ) : (
+          <SpecularButton onClick={() => setIsAuthModalOpen(true)} size="sm" className="uppercase tracking-widest font-bold text-xs" tint="#D4A017" tintOpacity={0.2} lineColor="#D4A017">
+            Launch App
+          </SpecularButton>
+        )}
       </header>
 
       {/* Hero Section */}
@@ -286,9 +291,15 @@ export function MarketingContent() {
           <p className="text-ash text-lg mb-10 leading-relaxed">
             Commit your strategy. Post your bond. Prove your track record.
           </p>
-          <SpecularButton onClick={() => setIsAuthModalOpen(true)} size="lg" className="uppercase tracking-widest font-bold text-sm" tint="#D4A017" tintOpacity={0.15} lineColor="#D4A017">
-            Join the Beta
-          </SpecularButton>
+          {authenticated && dbUser ? (
+            <SpecularButton onClick={() => router.push('/home')} size="lg" className="uppercase tracking-widest font-bold text-sm" tint="#D4A017" tintOpacity={0.15} lineColor="#D4A017">
+              Go to Dashboard
+            </SpecularButton>
+          ) : (
+            <SpecularButton onClick={() => setIsAuthModalOpen(true)} size="lg" className="uppercase tracking-widest font-bold text-sm" tint="#D4A017" tintOpacity={0.15} lineColor="#D4A017">
+              Join the Beta
+            </SpecularButton>
+          )}
         </div>
       </section>
 
