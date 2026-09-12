@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@kanon/backend": "workspace:*",
     "@kanon/spec": "workspace:*",
     "@kanon/tokens": "workspace:*",
     "@kanon/ui": "workspace:*",

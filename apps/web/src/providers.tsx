@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { PrivyProvider } from '@privy-io/react-auth';
+import { ConvexProvider, ConvexReactClient } from 'convex/react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { PlatformProvider, type PlatformCapabilities } from '@kanon/ui';
 import { NextNavProvider } from './nav';
@@ -14,6 +15,8 @@ const browserPlatform: PlatformCapabilities = {
   hasBiometrics: false,
   authenticate: async () => false,
 };
+
+const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL || 'https://placeholder.convex.cloud');
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
@@ -28,11 +31,13 @@ export function Providers({ children }: { children: ReactNode }) {
         },
       }}
     >
-      <SafeAreaProvider>
-        <PlatformProvider capabilities={browserPlatform}>
-          <NextNavProvider>{children}</NextNavProvider>
-        </PlatformProvider>
-      </SafeAreaProvider>
+      <ConvexProvider client={convex}>
+        <SafeAreaProvider>
+          <PlatformProvider capabilities={browserPlatform}>
+            <NextNavProvider>{children}</NextNavProvider>
+          </PlatformProvider>
+        </SafeAreaProvider>
+      </ConvexProvider>
     </PrivyProvider>
   );
 }

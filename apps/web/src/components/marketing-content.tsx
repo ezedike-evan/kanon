@@ -1,15 +1,16 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, Platform } from 'react-native';
 import { SpecularButton, AuthModal } from '@kanon/ui';
 import { 
   useLoginWithOAuth, 
-  useLoginWithPasskey, 
+  useLoginWithPasskey,
   useLoginWithEmail,
   usePrivy
 } from '@privy-io/react-auth';
 import { useRouter } from 'next/navigation';
+import { useQuery, useMutation } from 'convex/react';
+import { api } from '@kanon/backend';
 
 const CheckIcon = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -27,20 +28,36 @@ export function MarketingContent() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const router = useRouter();
   const { authenticated, user } = usePrivy();
+  
+  // Convex Hooks
+  const dbUser = useQuery(api.users.getUserByPrivyId, user ? { privyId: user.id } : "skip");
+  const createUser = useMutation(api.users.createUser);
+
+  // Auto-redirect if they exist in DB, else force step 2
+  const isNewUser = authenticated && user && dbUser === null;
+  const isExistingUser = authenticated && user && dbUser !== null && dbUser !== undefined;
+  const forceStep = isNewUser ? 2 : undefined;
+
+  useEffect(() => {
+    if (isExistingUser) {
+      setIsAuthModalOpen(false);
+      router.push('/home');
+    }
+  }, [isExistingUser, router]);
 
   // Whitelabel Hooks
   const { initOAuth } = useLoginWithOAuth();
   const { loginWithPasskey } = useLoginWithPasskey();
   const { sendCode, loginWithCode, state: emailState } = useLoginWithEmail();
 
-  const handleSocialLogin = (provider: 'google' | 'twitter' | 'github') => {
+  const handleSocialLogin = (provider: 'google' | 'twitter') => {
     initOAuth({ provider });
   };
 
   const handlePasskeyLogin = async () => {
     try {
       await loginWithPasskey();
-      // Notice we don't close the modal, so they can enter basic info!
+      // Flow is handled by useEffect when authenticated becomes true
     } catch (e) {
       console.error('Passkey login failed', e);
     }
@@ -57,7 +74,7 @@ export function MarketingContent() {
   const handleVerifyEmailCode = async (code: string) => {
     try {
       await loginWithCode({ code });
-      // Transition to basic info happens in AuthModal
+      // Flow is handled by useEffect when authenticated becomes true
     } catch (e) {
       console.error('Failed to verify code', e);
       throw e;
@@ -65,9 +82,27 @@ export function MarketingContent() {
   };
 
   const handleCompleteProfile = async (data: { name: string; username: string; experience: string }) => {
-    // Convex was removed from apps/web. Profile data storage should be handled in a shared package or API later.
-    console.log('Profile complete:', data, 'Privy User:', user?.id);
-    
+    if (!user) return;
+
+    const createUserPayload: {
+      privyId: string;
+      name: string;
+      username: string;
+      experience: string;
+      email?: string;
+    } = {
+      privyId: user.id,
+      name: data.name,
+      username: data.username,
+      experience: data.experience,
+    };
+
+    if (user.email?.address) {
+      createUserPayload.email = user.email.address;
+    }
+
+    await createUser(createUserPayload);
+
     setIsAuthModalOpen(false);
     router.push('/home');
   };
@@ -84,6 +119,7 @@ export function MarketingContent() {
         onCompleteProfile={handleCompleteProfile}
         isSendingCode={emailState.status === 'sending-code'}
         isVerifyingCode={emailState.status === 'submitting-code'}
+        forceStep={forceStep ?? 1}
       />
       
       {/* Navbar */}
