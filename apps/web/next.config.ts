@@ -21,6 +21,7 @@ const config: NextConfig = {
     webpackConfig.resolve.alias = {
       ...webpackConfig.resolve.alias,
       'react-native$': 'react-native-web',
+      '@farcaster/mini-app-solana': false,
     };
     // `.web.tsx` wins over `.tsx`, the convention every RN library ships against.
     webpackConfig.resolve.extensions = [

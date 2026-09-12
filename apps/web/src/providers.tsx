@@ -1,6 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import { PrivyProvider } from '@privy-io/react-auth';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { PlatformProvider, type PlatformCapabilities } from '@kanon/ui';
 import { NextNavProvider } from './nav';
@@ -16,10 +17,22 @@ const browserPlatform: PlatformCapabilities = {
 
 export function Providers({ children }: { children: ReactNode }) {
   return (
-    <SafeAreaProvider>
-      <PlatformProvider capabilities={browserPlatform}>
-        <NextNavProvider>{children}</NextNavProvider>
-      </PlatformProvider>
-    </SafeAreaProvider>
+    <PrivyProvider
+      appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID || ''}
+      config={{
+        loginMethods: ['email', 'wallet', 'google', 'twitter'],
+        appearance: {
+          theme: 'dark',
+          accentColor: '#D4A017',
+          showWalletLoginFirst: false,
+        },
+      }}
+    >
+      <SafeAreaProvider>
+        <PlatformProvider capabilities={browserPlatform}>
+          <NextNavProvider>{children}</NextNavProvider>
+        </PlatformProvider>
+      </SafeAreaProvider>
+    </PrivyProvider>
   );
 }

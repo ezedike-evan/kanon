@@ -1,17 +1,10 @@
 import type { Metadata, Viewport } from 'next';
-import { JetBrains_Mono } from 'next/font/google';
 import { colors } from '@kanon/tokens';
 import { Providers } from '@/src/providers';
 import './globals.css';
 
-const mono = JetBrains_Mono({
-  subsets: ['latin'],
-  weight: ['400', '500', '700'],
-  variable: '--kanon-font-mono',
-  display: 'swap',
-});
-
 export const metadata: Metadata = {
+  metadataBase: new URL('https://kanon.app'),
   title: 'Kanon',
   applicationName: 'Kanon',
   description:
@@ -51,7 +44,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={mono.variable}>
+    <html lang="en">
       <body>
         <Providers>{children}</Providers>
       </body>

@@ -1,7 +1,15 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { View, Text, Platform } from 'react-native';
 import { SpecularButton, AuthModal } from '@kanon/ui';
+import { 
+  useLoginWithOAuth, 
+  useLoginWithPasskey, 
+  useLoginWithEmail,
+  usePrivy
+} from '@privy-io/react-auth';
+import { useRouter } from 'next/navigation';
 
 const CheckIcon = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -17,10 +25,66 @@ const ShieldIcon = ({ className }: { className?: string }) => (
 
 export function MarketingContent() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const router = useRouter();
+  const { authenticated, user } = usePrivy();
+
+  // Whitelabel Hooks
+  const { initOAuth } = useLoginWithOAuth();
+  const { loginWithPasskey } = useLoginWithPasskey();
+  const { sendCode, loginWithCode, state: emailState } = useLoginWithEmail();
+
+  const handleSocialLogin = (provider: 'google' | 'twitter' | 'github') => {
+    initOAuth({ provider });
+  };
+
+  const handlePasskeyLogin = async () => {
+    try {
+      await loginWithPasskey();
+      // Notice we don't close the modal, so they can enter basic info!
+    } catch (e) {
+      console.error('Passkey login failed', e);
+    }
+  };
+
+  const handleSendEmailCode = async (email: string) => {
+    try {
+      await sendCode({ email });
+    } catch (e) {
+      console.error('Failed to send email code', e);
+    }
+  };
+
+  const handleVerifyEmailCode = async (code: string) => {
+    try {
+      await loginWithCode({ code });
+      // Transition to basic info happens in AuthModal
+    } catch (e) {
+      console.error('Failed to verify code', e);
+      throw e;
+    }
+  };
+
+  const handleCompleteProfile = async (data: { name: string; username: string; experience: string }) => {
+    // Convex was removed from apps/web. Profile data storage should be handled in a shared package or API later.
+    console.log('Profile complete:', data, 'Privy User:', user?.id);
+    
+    setIsAuthModalOpen(false);
+    router.push('/home');
+  };
 
   return (
     <>
-      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
+      <AuthModal 
+        isOpen={isAuthModalOpen} 
+        onClose={() => setIsAuthModalOpen(false)} 
+        onSocialLogin={handleSocialLogin}
+        onPasskeyLogin={handlePasskeyLogin}
+        onSendEmailCode={handleSendEmailCode}
+        onVerifyEmailCode={handleVerifyEmailCode}
+        onCompleteProfile={handleCompleteProfile}
+        isSendingCode={emailState.status === 'sending-code'}
+        isVerifyingCode={emailState.status === 'submitting-code'}
+      />
       
       {/* Navbar */}
       <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4 bg-void/80 backdrop-blur-md border-b border-hairline">
@@ -40,9 +104,9 @@ export function MarketingContent() {
       </header>
 
       {/* Hero Section */}
-      <section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 text-center pt-20">
+      <section className="relative flex min-h-[calc(100vh-80px)] mt-20 flex-col items-center justify-center overflow-hidden px-6 text-center">
         <div className="absolute inset-0 bg-gradient-to-b from-panel via-void to-void" />
-        <div className="relative z-10 max-w-4xl mt-12">
+        <div className="relative z-10 max-w-4xl">
           <div className="mb-6 inline-flex items-center gap-2 rounded-none border border-hairline bg-panel px-4 py-1.5 text-xs text-ash uppercase tracking-widest">
             <span className="h-1.5 w-1.5 rounded-none bg-signal" />
             Now in Private Beta
