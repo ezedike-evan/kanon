@@ -15,8 +15,8 @@ export interface AuthModalProps {
   onCompleteProfile?: (data: { name: string; username: string; experience: string }) => Promise<void>;
   isSendingCode?: boolean;
   isVerifyingCode?: boolean;
-  emailError?: string;
-  forceStep?: 1 | 'otp' | 2 | 3;
+  emailError?: string | undefined;
+  forceStep?: 1 | 'otp' | 2 | 3 | undefined;
 }
 
 export function AuthModal({ 

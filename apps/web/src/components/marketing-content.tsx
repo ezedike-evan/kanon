@@ -105,11 +105,13 @@ export function MarketingContent() {
     router.push('/home');
   };
 
+  const emailError = 'error' in emailState ? emailState.error?.message : undefined;
+
   return (
     <>
-      <AuthModal 
-        isOpen={isAuthModalOpen} 
-        onClose={() => setIsAuthModalOpen(false)} 
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
         onSocialLogin={handleSocialLogin}
         onPasskeyLogin={handlePasskeyLogin}
         onSendEmailCode={handleSendEmailCode}
@@ -117,8 +119,8 @@ export function MarketingContent() {
         onCompleteProfile={handleCompleteProfile}
         isSendingCode={emailState.status === 'sending-code'}
         isVerifyingCode={emailState.status === 'submitting-code'}
-        emailError={emailState.error?.message}
-        forceStep={forceStep}
+        emailError={emailError}
+        {...(forceStep !== undefined ? { forceStep } : {})}
       />
       
       {/* Navbar */}
