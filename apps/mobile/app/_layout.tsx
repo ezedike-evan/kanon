@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { View, LogBox } from 'react-native';
 import { Slot } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -14,6 +14,12 @@ import { colors } from '@kanon/tokens';
 import { ExpoNavProvider } from '../src/nav';
 import { devicePlatform } from '../src/platform';
 import '../global.css';
+
+LogBox.ignoreLogs([
+  'Attempted to import the module',
+  'ReactNativeFeatureFlags',
+  'ImageBackground is deprecated',
+]);
 
 /**
  * Nothing renders until the mono face is loaded.

@@ -151,7 +151,7 @@ export function PrimaryButton(props: ButtonProps) {
   return (
     <Button
       {...props}
-      box="bg-signal py-4.5 hover:bg-signal-hot active:bg-signal-hot"
+      box="bg-signal py-4.5"
       text="font-mono-bold text-13 tracking-w18 text-void"
     />
   );
@@ -162,7 +162,7 @@ export function GhostButton(props: ButtonProps) {
   return (
     <Button
       {...props}
-      box="border border-hairline bg-raised py-4.25 hover:bg-raised-hot active:bg-raised-hot"
+      box="border border-hairline bg-raised py-4.25"
       text="font-mono-medium text-13 tracking-w14 text-bone"
     />
   );
@@ -173,7 +173,7 @@ export function DangerButton(props: ButtonProps) {
   return (
     <Button
       {...props}
-      box="border border-refused bg-transparent py-4.5 hover:bg-refused-wash active:bg-refused-wash"
+      box="border border-refused bg-transparent py-4.5"
       text="font-mono-bold text-13 tracking-w18 text-refused"
     />
   );

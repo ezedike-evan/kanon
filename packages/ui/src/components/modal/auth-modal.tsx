@@ -93,7 +93,7 @@ export function AuthModal({
       
       <View className="w-full max-w-md bg-panel border border-hairline overflow-hidden p-8" style={{ shadowColor: '#D4A017', shadowOpacity: 0.1, shadowRadius: 40, elevation: 10 }}>
         <Pressable onPress={onClose} className="absolute top-4 right-4 p-2 z-10">
-          <Text className="text-ash hover:text-bone text-lg font-mono">✕</Text>
+          <Text className="text-ash text-lg font-mono">✕</Text>
         </Pressable>
 
         {step === 1 && (
@@ -124,10 +124,10 @@ export function AuthModal({
             </View>
 
             <View className="gap-3">
-              <Pressable onPress={() => onSocialLogin?.('google')} className="w-full flex-row items-center justify-center gap-3 border border-hairline bg-void/50 py-4 hover:bg-hairline/30 active:bg-hairline/50 transition-colors">
+              <Pressable onPress={() => onSocialLogin?.('google')} className="w-full flex-row items-center justify-center gap-3 border border-hairline bg-void/50 py-4">
                 <Text className="text-bone text-14 font-mono">Continue with Google</Text>
               </Pressable>
-              <Pressable onPress={() => onPasskeyLogin?.()} className="w-full flex-row items-center justify-center gap-3 border border-signal bg-signal/10 py-4 mt-2 hover:bg-signal/20 active:bg-signal/30 transition-colors">
+              <Pressable onPress={() => onPasskeyLogin?.()} className="w-full flex-row items-center justify-center gap-3 border border-signal bg-signal/10 py-4 mt-2">
                 <Text className="text-signal text-14 font-mono-bold uppercase tracking-widest">Continue with Passkey</Text>
               </Pressable>
             </View>
