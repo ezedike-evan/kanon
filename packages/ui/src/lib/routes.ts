@@ -11,6 +11,9 @@ import { RULE, TRADE_ID } from './demo';
 
 export const routes = {
   home: '/home',
+  create: '/create',
+  predict: '/predict',
+  chart: '/chart',
   refused: '/refused',
   blocked: '/blocked',
   compile: '/compile',

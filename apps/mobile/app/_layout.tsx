@@ -1,7 +1,7 @@
 import '../polyfill';
 import { useEffect, useState } from 'react';
 import { View, LogBox } from 'react-native';
-import { Slot } from 'expo-router';
+import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
@@ -52,7 +52,7 @@ export default function RootLayout() {
       >
         <PlatformProvider capabilities={devicePlatform}>
           <ExpoNavProvider>
-            {ready ? <Slot /> : <View style={{ flex: 1, backgroundColor: colors.void }} />}
+            {ready ? <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }} /> : <View style={{ flex: 1, backgroundColor: colors.void }} />}
           </ExpoNavProvider>
         </PlatformProvider>
       </PrivyProvider>

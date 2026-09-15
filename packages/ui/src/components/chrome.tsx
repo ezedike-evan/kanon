@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { Platform, ScrollView, Text, View } from 'react-native';
+import { ReactNode, useEffect, useRef } from 'react';
+import { Platform, ScrollView, Text, View, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { device } from '@kanon/tokens';
 import { Dot, Num } from './ui';
@@ -127,14 +127,181 @@ export function NavBar({
   );
 }
 
-type TabKey = 'rules' | 'trades' | 'chart' | 'profile';
+type TabKey = 'rules' | 'chart' | 'create' | 'predict' | 'profile';
 
-const TABS: Array<{ key: TabKey; label: string; href: string; round?: boolean }> = [
+const TABS: Array<{ key: TabKey; label: string; href: string; round?: boolean; isSphere?: boolean }> = [
   { key: 'rules', label: 'RULES', href: routes.home },
-  { key: 'trades', label: 'TRADES', href: routes.blocked },
-  { key: 'chart', label: 'CHART', href: tradeRoute(TRADE_ID) },
+  { key: 'chart', label: 'CHART', href: routes.chart },
+  { key: 'create', label: 'CREATE', href: routes.create, isSphere: true },
+  { key: 'predict', label: 'PREDICT', href: routes.predict },
   { key: 'profile', label: 'PROFILE', href: shareRoute(RULE.id), round: true },
 ];
+
+function AnimatedOrb() {
+  const anim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(anim, {
+          toValue: 1,
+          duration: 1500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(anim, {
+          toValue: 0,
+          duration: 1500,
+          useNativeDriver: true,
+        }),
+      ])
+    ).start();
+  }, [anim]);
+
+  const scale = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 1.25], // scales up by 25%
+  });
+
+  const opacity = anim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.6, 1],
+  });
+
+  return (
+    <View className="items-center justify-center" style={{ width: 64, height: 64 }}>
+      {/* Massive soft ambient aura */}
+      <Animated.View
+        style={{
+          position: 'absolute',
+          width: 72,
+          height: 72,
+          borderRadius: 36,
+          backgroundColor: 'rgba(212, 160, 23, 0.2)', // Faint signal gold
+          transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.4] }) }],
+          opacity: anim.interpolate({ inputRange: [0, 1], outputRange: [0.2, 0.6] }),
+        }}
+      />
+
+      {/* Intense Animated Outer Glow */}
+      <Animated.View
+        style={{
+          position: 'absolute',
+          width: 48,
+          height: 48,
+          borderRadius: 24,
+          backgroundColor: '#D4A017',
+          shadowColor: '#FFCC40',
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: opacity,
+          shadowRadius: 24,
+          elevation: 20,
+          transform: [{ scale }],
+        }}
+      />
+
+      {/* 3D Orb Body */}
+      <View
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: 28,
+          backgroundColor: '#825600', // Core deep shadow color
+          overflow: 'hidden',
+        }}
+      >
+        {/* Mid-tone offset */}
+        <View
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: 56,
+            height: 56,
+            borderRadius: 28,
+            backgroundColor: '#BC8500',
+            transform: [{ translateY: -4 }, { translateX: -4 }],
+          }}
+        />
+        {/* Main light face */}
+        <View
+          style={{
+            position: 'absolute',
+            top: -4,
+            left: -4,
+            width: 50,
+            height: 50,
+            borderRadius: 25,
+            backgroundColor: '#EAA610',
+          }}
+        />
+        {/* Soft top gradient/highlight area */}
+        <View
+          style={{
+            position: 'absolute',
+            top: -10,
+            left: -6,
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            backgroundColor: '#FFCC40',
+          }}
+        />
+
+        {/* Sharp Specular Highlight (The glassy shine) */}
+        <View
+          style={{
+            position: 'absolute',
+            top: 6,
+            left: 12,
+            width: 18,
+            height: 8,
+            borderRadius: 6,
+            backgroundColor: 'rgba(255, 255, 255, 0.85)',
+            transform: [{ rotate: '-25deg' }],
+          }}
+        />
+        {/* Secondary small sharp dot */}
+        <View
+          style={{
+            position: 'absolute',
+            top: 10,
+            left: 10,
+            width: 4,
+            height: 4,
+            borderRadius: 2,
+            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+          }}
+        />
+
+        {/* Bottom rim light (Ambient bounce) */}
+        <View
+          style={{
+            position: 'absolute',
+            bottom: -2,
+            right: 2,
+            width: 36,
+            height: 14,
+            borderRadius: 10,
+            backgroundColor: 'rgba(255, 220, 100, 0.35)',
+            transform: [{ rotate: '-20deg' }],
+          }}
+        />
+        {/* Subtle inner dark shadow top right */}
+        <View
+          style={{
+            position: 'absolute',
+            top: 4,
+            right: -10,
+            width: 20,
+            height: 40,
+            borderRadius: 10,
+            backgroundColor: 'rgba(0, 0, 0, 0.15)',
+          }}
+        />
+      </View>
+    </View>
+  );
+}
 
 export function TabBar({ active }: { active: TabKey }) {
   const insets = useSafeAreaInsets();
@@ -146,6 +313,20 @@ export function TabBar({ active }: { active: TabKey }) {
     >
       {TABS.map((tab) => {
         const on = tab.key === active;
+
+        if (tab.isSphere) {
+          return (
+            <Link
+              key={tab.key}
+              href={tab.href}
+              className="flex-[1.2] items-center justify-center -mt-8"
+              aria-selected={on}
+            >
+              <AnimatedOrb />
+            </Link>
+          );
+        }
+
         return (
           <Link
             key={tab.key}

@@ -42,3 +42,5 @@ export { OnboardingPasskeyScreen } from './screens/onboarding-passkey';
 export { OnboardingFundScreen } from './screens/onboarding-fund';
 export { OnboardingStrategyScreen } from './screens/onboarding-strategy';
 export { ScreenIndexScreen } from './screens/screen-index';
+export { CreateScreen } from './screens/create';
+export { ChartScreen } from './screens/chart';
