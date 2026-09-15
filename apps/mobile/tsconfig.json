@@ -11,8 +11,7 @@
       "DOM"
     ],
     "types": [
-      "nativewind/types",
-      "expo-router/types"
+      "nativewind/types"
     ],
     "paths": {
       "@/*": [

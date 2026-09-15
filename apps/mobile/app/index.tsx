@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { AuthModal } from '@kanon/ui';
 import { colors } from '@kanon/tokens';
+import { useLoginWithEmail, usePrivy } from '@privy-io/expo';
 
 export default function MobileLandingPage() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -10,36 +11,49 @@ export default function MobileLandingPage() {
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
   const router = useRouter();
 
-  // Mock handlers for mobile auth until native Privy or alternative is wired up
+  const { sendCode, loginWithCode } = useLoginWithEmail();
+  const { user, isReady } = usePrivy();
+
+  // Redirect if already logged in (optional, matching web)
+  useEffect(() => {
+    if (isReady && user) {
+      router.replace('/home');
+    }
+  }, [isReady, user, router]);
+
+  // Mock handlers for social/passkey on mobile until fully wired up
   const handleSocialLogin = (provider: 'google' | 'twitter') => {
     console.log(`Mobile: Logging in with ${provider}`);
-    setIsAuthModalOpen(false);
-    router.replace('/home');
   };
 
   const handlePasskeyLogin = async () => {
     console.log('Mobile: Logging in with Passkey');
-    setIsAuthModalOpen(false);
-    router.replace('/home');
   };
 
   const handleSendEmailCode = async (email: string) => {
     setIsSendingCode(true);
-    console.log(`Mobile: Sending code to ${email}`);
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setIsSendingCode(false);
-    // Note: This is a mock. No actual email is sent because Privy is a web-only package here.
+    try {
+      await sendCode({ email });
+    } catch (e) {
+      console.error('Mobile: Failed to send code', e);
+      throw e; // Bubble up so AuthModal knows it failed
+    } finally {
+      setIsSendingCode(false);
+    }
   };
 
   const handleVerifyEmailCode = async (code: string) => {
     setIsVerifyingCode(true);
-    console.log(`Mobile: Verifying code ${code}`);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    setIsVerifyingCode(false);
-    // Usually we check if user exists. For now, route directly.
-    setIsAuthModalOpen(false);
-    router.replace('/home');
+    try {
+      await loginWithCode({ code });
+      setIsAuthModalOpen(false);
+      router.replace('/home');
+    } catch (e) {
+      console.error('Mobile: Failed to verify code', e);
+      throw e;
+    } finally {
+      setIsVerifyingCode(false);
+    }
   };
 
   const handleCompleteProfile = async (data: { name: string; username: string; experience: string }) => {

@@ -17,12 +17,5 @@
   },
   "devDependencies": {
     "typescript": "^5.9.2"
-  },
-  "pnpm": {
-    "overrides": {
-      "tailwindcss": "^3.4.19",
-      "react": "^19.1.1",
-      "react-dom": "^19.1.1"
-    }
   }
 }

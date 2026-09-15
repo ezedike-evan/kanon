@@ -1,3 +1,4 @@
+import '../polyfill';
 import { useEffect, useState } from 'react';
 import { View, LogBox } from 'react-native';
 import { Slot } from 'expo-router';
@@ -21,6 +22,8 @@ LogBox.ignoreLogs([
   'ImageBackground is deprecated',
 ]);
 
+import { PrivyProvider } from '@privy-io/expo';
+
 /**
  * Nothing renders until the mono face is loaded.
  *
@@ -42,12 +45,17 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" backgroundColor={colors.void} />
-      <PlatformProvider capabilities={devicePlatform}>
-        <ExpoNavProvider>
-          {ready ? <Slot /> : <View style={{ flex: 1, backgroundColor: colors.void }} />}
-        </ExpoNavProvider>
-      </PlatformProvider>
+      <StatusBar style="light" />
+      <PrivyProvider
+        appId={process.env.EXPO_PUBLIC_PRIVY_APP_ID!}
+        clientId={process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID!}
+      >
+        <PlatformProvider capabilities={devicePlatform}>
+          <ExpoNavProvider>
+            {ready ? <Slot /> : <View style={{ flex: 1, backgroundColor: colors.void }} />}
+          </ExpoNavProvider>
+        </PlatformProvider>
+      </PrivyProvider>
     </SafeAreaProvider>
   );
 }
