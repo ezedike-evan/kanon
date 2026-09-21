@@ -10,3 +10,4 @@ coverage/
 .env
 .env.local
 packages/tokens/preset.cjs
+packages/tokens/theme.css

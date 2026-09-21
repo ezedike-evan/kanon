@@ -6,4 +6,8 @@ overrides:
   ox: 0.14.34
   react: ^19.1.1
   react-dom: ^19.1.1
+  # packages/ui declares react-native as a "*" peer; without this pnpm installs a
+  # second, newer copy under it, so NativeWind's className types miss it and
+  # Metro would bundle two React Natives. Keep equal to apps/mobile.
+  react-native: 0.86.3
   tailwindcss: ^3.4.19
