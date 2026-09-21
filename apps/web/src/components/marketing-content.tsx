@@ -41,9 +41,17 @@ export function MarketingContent() {
   const isExistingUser = authenticated && user && dbUser !== null && dbUser !== undefined;
   const forceStep = isNewUser ? 2 : undefined;
 
-  // We deliberately removed the auto-redirect useEffect so authenticated users
-  // can still view the landing page. They can click their @username in the nav
-  // to return to the dashboard.
+  // A signed-in visitor can still view the landing page, so there is no
+  // redirect on load. But a login completed through the sheet is a different
+  // moment: once an existing user is signed in and Convex has found their
+  // row, close the sheet and take them to their dashboard. (A new user stays
+  // on the profile step; `handleCompleteProfile` closes it and routes.)
+  useEffect(() => {
+    if (isAuthModalOpen && isExistingUser) {
+      setIsAuthModalOpen(false);
+      router.push('/home');
+    }
+  }, [isAuthModalOpen, isExistingUser, router]);
 
   // Whitelabel Hooks
   const { initOAuth } = useLoginWithOAuth();
