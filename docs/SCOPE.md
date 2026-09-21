@@ -64,8 +64,6 @@ Track: Onchain Finance & Trading ($30,000).
 | Nansen | $5,000 | Flow data in the analytics view |
 | Privy or Dynamic | $5,000 | Embedded wallet, mobile |
 | Perpl — analytics / risk tool | $3,000 | Adherence and risk metrics |
-| Mera — one passkey, many keys | $2,500 | Passkey-derived session keys |
-| Mera — best UX | $2,500 | Passkey onboarding |
 | Envio | $1,000 | HyperIndex for trade history |
 | Qwen / Kimi / Hunyuan | credits | Compiler |
 

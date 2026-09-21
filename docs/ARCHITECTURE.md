@@ -91,7 +91,8 @@ Two constraints to plan around:
   Define buckets accordingly. Do not assume evenly spaced candles.
 - The sponsored set is nine crypto pairs. FX feeds exist in Pyth but are not
   sponsored on Monad, so FX means paying for your own updates. **Demo on BTC or
-  ETH.**
+  ETH.** FX and equities are not built. The seam for adding them later is
+  `packages/spec/src/assets.ts`; the enforcement path never sees an asset class.
 
 Manipulation is a real threat surface: a feed pushed to fake a break of
 structure, or a position triggered deliberately. Document the assumption. Do not
