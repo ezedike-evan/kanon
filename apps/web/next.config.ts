@@ -6,6 +6,8 @@ import type { NextConfig } from 'next';
  * untranspiled source, and `react-native` has to resolve to its web build.
  */
 const config: NextConfig = {
+  // `KANON_DIST_DIR=.next-perf next build` builds beside a running `next dev` without clobbering it.
+  distDir: process.env.KANON_DIST_DIR || '.next',
   transpilePackages: [
     '@kanon/spec',
     '@kanon/tokens',
@@ -17,6 +19,12 @@ const config: NextConfig = {
     'react-native-css-interop',
   ],
   typedRoutes: true,
+  experimental: {
+    // `@kanon/ui` and `@kanon/spec` are barrels: one `import { X } from '@kanon/ui'` otherwise
+    // pulls in every screen, the chart engine and the chain clients into every route. This
+    // rewrites each such import to the module that defines X.
+    optimizePackageImports: ['@kanon/ui', '@kanon/spec'],
+  },
   webpack: (webpackConfig) => {
     webpackConfig.resolve.alias = {
       ...webpackConfig.resolve.alias,

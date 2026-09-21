@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
-import { colors } from '@kanon/tokens';
+import { colors, themeBootScript } from '@kanon/tokens';
 import { Providers } from '@/src/providers';
+import { ThemeRoot } from '@/src/theme-root';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -39,14 +40,22 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: colors.void,
-  colorScheme: 'dark',
+  // Dark by default; the user can pick light or follow the OS in Profile.
+  colorScheme: 'dark light',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    // `data-theme` is set by the boot script before paint and then owned by
+    // ThemeProvider, so React must not fight it during hydration.
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
+      </head>
       <body>
-        <Providers>{children}</Providers>
+        <ThemeRoot>
+          <Providers>{children}</Providers>
+        </ThemeRoot>
       </body>
     </html>
   );

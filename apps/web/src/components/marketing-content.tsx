@@ -9,7 +9,7 @@ import {
   usePrivy
 } from '@privy-io/react-auth';
 import { useRouter } from 'next/navigation';
-import { useQuery, useMutation } from 'convex/react';
+import { useConvexAuth, useQuery, useMutation } from 'convex/react';
 import { api } from '@kanon/backend';
 
 const CheckIcon = ({ className }: { className?: string }) => (
@@ -30,7 +30,10 @@ export function MarketingContent() {
   const { authenticated, user } = usePrivy();
   
   // Convex Hooks
-  const dbUser = useQuery(api.users.getUserByPrivyId, user ? { privyId: user.id } : "skip");
+  // Skipped until Convex has accepted the Privy token: an unauthenticated
+  // `users.me` also answers null, which must not read as "new user".
+  const { isAuthenticated: convexAuthed } = useConvexAuth();
+  const dbUser = useQuery(api.users.me, convexAuthed ? {} : "skip");
   const createUser = useMutation(api.users.createUser);
 
   // Auto-redirect if they exist in DB, else force step 2
@@ -82,14 +85,13 @@ export function MarketingContent() {
   const handleCompleteProfile = async (data: { name: string; username: string; experience: string }) => {
     if (!user) return;
 
+    // No privyId: the server binds the row to the token's subject.
     const createUserPayload: {
-      privyId: string;
       name: string;
       username: string;
       experience: string;
       email?: string;
     } = {
-      privyId: user.id,
       name: data.name,
       username: data.username,
       experience: data.experience,

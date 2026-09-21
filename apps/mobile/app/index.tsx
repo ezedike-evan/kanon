@@ -4,6 +4,8 @@ import { useRouter } from 'expo-router';
 import { AuthModal } from '@kanon/ui';
 import { colors } from '@kanon/tokens';
 import { useLoginWithEmail, usePrivy } from '@privy-io/expo';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
+import { api } from '@kanon/backend';
 
 export default function MobileLandingPage() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -13,13 +15,36 @@ export default function MobileLandingPage() {
 
   const { sendCode, loginWithCode } = useLoginWithEmail();
   const { user, isReady } = usePrivy();
+  const createUser = useMutation(api.users.createUser);
 
-  // Redirect if already logged in (optional, matching web)
+  // Mirrors apps/web/src/components/marketing-content.tsx: look up the
+  // Convex `users` row (`users.me`, found from the Privy token) once Privy resolves a user, and use its
+  // absence to force the auth modal to its "complete profile" step (2) for a
+  // first-time signup rather than treating a bare Privy session as done.
+  // Skipped until Convex has accepted the Privy token: an unauthenticated
+  // `users.me` also answers null, which must not read as "new user".
+  const { isAuthenticated: convexAuthed } = useConvexAuth();
+  const dbUser = useQuery(api.users.me, convexAuthed ? {} : 'skip');
+  const isNewUser = isReady && !!user && dbUser === null;
+  const isExistingUser = isReady && !!user && dbUser !== null && dbUser !== undefined;
+  const forceStep = isNewUser ? 2 : undefined;
+
   useEffect(() => {
-    if (isReady && user) {
+    if (isNewUser) {
+      setIsAuthModalOpen(true);
+    }
+  }, [isNewUser]);
+
+  // Only an already-registered user is redirected straight to the app —
+  // mobile has no header/username affordance to return here later, so this
+  // redirect stands in for that, but it must wait for `dbUser` to resolve
+  // rather than firing on a bare Privy session (which would skip step 2 for
+  // a first-time signup before a `users` row exists).
+  useEffect(() => {
+    if (isExistingUser) {
       router.replace('/home');
     }
-  }, [isReady, user, router]);
+  }, [isExistingUser, router]);
 
   // Mock handlers for social/passkey on mobile until fully wired up
   const handleSocialLogin = (provider: 'google' | 'twitter') => {
@@ -46,8 +71,9 @@ export default function MobileLandingPage() {
     setIsVerifyingCode(true);
     try {
       await loginWithCode({ code });
-      setIsAuthModalOpen(false);
-      router.replace('/home');
+      // Do not close the modal or navigate here: `isNewUser`/`isExistingUser`
+      // above (derived from the resolved `dbUser`) decide what happens next
+      // — step 2 for a first-time signup, or a redirect for a returning one.
     } catch (e) {
       console.error('Mobile: Failed to verify code', e);
       throw e;
@@ -57,7 +83,32 @@ export default function MobileLandingPage() {
   };
 
   const handleCompleteProfile = async (data: { name: string; username: string; experience: string }) => {
-    console.log('Mobile: Completed profile', data);
+    if (!user) return;
+
+    // No privyId: the server binds the row to the token's subject.
+    const createUserPayload: {
+      name: string;
+      username: string;
+      experience: string;
+      email?: string;
+    } = {
+      name: data.name,
+      username: data.username,
+      experience: data.experience,
+    };
+
+    // `linked_accounts` is a discriminated union; Privy's expo SDK does not
+    // re-export the individual `LinkedAccountEmail` member type, so this
+    // narrows structurally rather than nominally.
+    const emailAccount = user.linked_accounts.find((account) => account.type === 'email') as
+      | { type: 'email'; address: string }
+      | undefined;
+    if (emailAccount) {
+      createUserPayload.email = emailAccount.address;
+    }
+
+    await createUser(createUserPayload);
+
     setIsAuthModalOpen(false);
     router.replace('/home');
   };
@@ -100,6 +151,7 @@ export default function MobileLandingPage() {
         onCompleteProfile={handleCompleteProfile}
         isSendingCode={isSendingCode}
         isVerifyingCode={isVerifyingCode}
+        {...(forceStep !== undefined ? { forceStep } : {})}
       />
     </View>
   );

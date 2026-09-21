@@ -10,10 +10,11 @@ import {
   JetBrainsMono_500Medium,
   JetBrainsMono_700Bold,
 } from '@expo-google-fonts/jetbrains-mono';
-import { PlatformProvider } from '@kanon/ui';
+import { PlatformProvider, ThemeProvider, monad, useTheme } from '@kanon/ui';
 import { colors } from '@kanon/tokens';
 import { ExpoNavProvider } from '../src/nav';
 import { devicePlatform } from '../src/platform';
+import { ConvexDataProviders } from '../src/providers';
 import '../global.css';
 
 LogBox.ignoreLogs([
@@ -23,6 +24,12 @@ LogBox.ignoreLogs([
 ]);
 
 import { PrivyProvider } from '@privy-io/expo';
+
+/** Status bar icons follow the chosen theme: light icons on dark, dark on light. */
+function ThemedStatusBar() {
+  const { scheme } = useTheme();
+  return <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />;
+}
 
 /**
  * Nothing renders until the mono face is loaded.
@@ -45,15 +52,22 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <StatusBar style="light" />
       <PrivyProvider
         appId={process.env.EXPO_PUBLIC_PRIVY_APP_ID!}
         clientId={process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID!}
+        // Monad mainnet (143). Embedded wallets default to the first supported chain,
+        // so the pin transaction is sent where the StrategyRegistry lives.
+        supportedChains={[monad]}
       >
         <PlatformProvider capabilities={devicePlatform}>
-          <ExpoNavProvider>
-            {ready ? <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }} /> : <View style={{ flex: 1, backgroundColor: colors.void }} />}
-          </ExpoNavProvider>
+          <ThemeProvider>
+            <ThemedStatusBar />
+            <ConvexDataProviders>
+              <ExpoNavProvider>
+                {ready ? <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }} /> : <View style={{ flex: 1, backgroundColor: colors.void }} />}
+              </ExpoNavProvider>
+            </ConvexDataProviders>
+          </ThemeProvider>
         </PlatformProvider>
       </PrivyProvider>
     </SafeAreaProvider>
