@@ -1,0 +1,54 @@
+/**
+ * Trade markers on the candle series.
+ *
+ * A marker is a fact about one bucket: a trade executed there, or a trade the
+ * rule refused there. `TradeMarker` is what a screen supplies; `EngineMarker`
+ * is the plain, library-free shape both chart engines draw (`engine.web.tsx`
+ * hands it straight to lightweight-charts, `engine.tsx` bakes it into the
+ * WebView's HTML), so the mapping from meaning to glyph and colour lives here
+ * once and the two engines cannot drift apart.
+ *
+ * Direction is carried by placement, not colour: a long sits below its bar and
+ * a short above it. Executed trades are arrows in the direction colours. A
+ * refusal is a circle in `refused` — the token docs/DESIGN.md sets aside for
+ * blocks so one never reads as a losing trade — and it is a plain mark, never
+ * an error glyph, because a block is the product working.
+ */
+import { colors } from '@kanon/tokens';
+import type { EngineMarker } from '../../lib/chart-protocol';
+
+export type { EngineMarker } from '../../lib/chart-protocol';
+
+export interface TradeMarker {
+  /** Start of the bucket the trade landed in, unix seconds. A timestamp that
+   * is not a candle's own start has no bar to sit on. */
+  timestamp: number;
+  side: 'long' | 'short';
+  kind: 'executed' | 'blocked';
+}
+
+/** Ascending by time: lightweight-charts requires markers in order. */
+export function toEngineMarkers(
+  markers: readonly TradeMarker[],
+  palette: { up: string; down: string; refused: string } = {
+    up: colors.long,
+    down: colors.short,
+    refused: colors.refused,
+  },
+): EngineMarker[] {
+  return [...markers]
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map((m) => {
+      const long = m.side === 'long';
+      const position = long ? 'belowBar' : 'aboveBar';
+      if (m.kind === 'blocked') {
+        return { time: m.timestamp, position, shape: 'circle', color: palette.refused };
+      }
+      return {
+        time: m.timestamp,
+        position,
+        shape: long ? 'arrowUp' : 'arrowDown',
+        color: long ? palette.up : palette.down,
+      };
+    });
+}
