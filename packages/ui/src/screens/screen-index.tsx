@@ -2,25 +2,25 @@ import { Text, View } from 'react-native';
 import { Body, Screen, StatusBar } from '../components/chrome';
 import { Meta, Num } from '../components/ui';
 import { Link } from '../nav';
-import { device } from '@kanon/tokens';
 import { SCREEN_INDEX } from '../lib/routes';
 
 /**
- * The canvas, on a device.
+ * The canvas, as a list.
  *
- * `docs/DESIGN.md` asks for a consistency check across screens; in a browser
- * that is thirteen artboards side by side, which a phone cannot show. Here it
- * is a jump list instead — the same purpose, which is reaching any screen in
- * the demo without walking the whole flow.
+ * `docs/DESIGN.md` asks for a consistency check across screens. There is no
+ * artboard to lay them side by side on any more (every screen now fills its
+ * viewport), so this is a jump list: the same purpose, which is reaching any
+ * screen in the demo without walking the whole flow. Mounted at `/screens` on
+ * the web and on a device.
  */
 export function ScreenIndexScreen() {
   return (
-    <Screen rail="bg-hairline" label="11 · SCREEN INDEX">
+    <Screen rail="bg-hairline">
       <StatusBar />
       <View className="shrink-0 gap-2 px-5 pt-5.5">
         <Text className="font-mono-bold text-12 tracking-w22 text-bone">KANON</Text>
         <Meta className="tracking-w16">
-          {SCREEN_INDEX.length} SCREENS · {device.width} × {device.height}
+          {SCREEN_INDEX.length} SCREENS
         </Meta>
       </View>
 

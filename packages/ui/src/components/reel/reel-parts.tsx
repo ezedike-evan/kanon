@@ -158,9 +158,19 @@ export function SideButton({
 }
 
 /** One sentence of fact under the action zone. Neutral: a state, never a fault. */
-export function NoteLine({ text, icon = 'info', strong }: { text: string; icon?: IconName; strong?: boolean }) {
+export function NoteLine({
+  text,
+  icon = 'info',
+  strong,
+  className,
+}: {
+  text: string;
+  icon?: IconName;
+  strong?: boolean;
+  className?: string | undefined;
+}) {
   return (
-    <View className="min-h-8 flex-row items-center justify-center gap-1.5 px-2 pt-2.5">
+    <View className={cx('min-h-8 flex-row items-center justify-center gap-1.5 px-2 pt-2.5', className)}>
       <Icon name={icon} size={14} color={strong ? 'bone' : 'ash'} />
       <Text
         className={cx('shrink font-mono text-11 leading-4', strong ? 'text-bone' : 'text-ash')}
@@ -183,6 +193,7 @@ export const TopBar = memo(function TopBar({
   timeframe,
   timeframeCount,
   onTimeframe,
+  className,
 }: {
   assets: readonly string[];
   asset: string | null;
@@ -191,10 +202,12 @@ export const TopBar = memo(function TopBar({
   /** How many windows there are to cycle through. The chip is hidden for fewer than two. */
   timeframeCount: number;
   onTimeframe: () => void;
+  /** Classes for the strip's own box: `lg:hidden` where the desktop's left panel does this job. */
+  className?: string | undefined;
 }) {
   const { colors } = useTheme();
   return (
-    <View className="absolute inset-x-0 top-0 z-10" style={{ pointerEvents: 'box-none' }}>
+    <View className={cx('absolute inset-x-0 top-0 z-10', className)} style={{ pointerEvents: 'box-none' }}>
       <LinearGradient
         colors={[withAlpha(colors.void, 0.96), withAlpha(colors.void, 0.7), withAlpha(colors.void, 0)]}
         locations={[0, 0.6, 1]}

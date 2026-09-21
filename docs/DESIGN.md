@@ -83,7 +83,7 @@ short, verified is blue.
 
 ## Information architecture
 
-Five tabs, bottom-anchored, in this order:
+Five tabs, bottom-anchored on a phone or tablet and a left rail on desktop (see Responsive), in this order:
 
 | Tab | Route | What it is |
 |---|---|---|
@@ -116,6 +116,93 @@ away. Every inferred default flagged.
 
 **Cooling-off rendered as a real countdown.** Make the friction beautiful rather
 than hiding it.
+
+## Responsive
+
+One app, three shapes. The phone is the design's home; tablet and desktop are the
+same screens given room, not a second product. There is no phone-shaped artboard
+on the web: a screen fills its window.
+
+| Layout | Width | Chrome | Content |
+|---|---|---|---|
+| Phone | under 640 | Bottom `TabBar` | Full-bleed |
+| Tablet | 640 to 1023 | Bottom `TabBar` | Centred column, 720 max, edges drawn in `hairline` |
+| Desktop | 1024 and up | 232px `SideNav` on the left, no `TabBar` | The pane beside it, `column` 720, `wide` 1280 or `full` |
+
+Native is unchanged: the screen is the viewport, the safe-area inset is the frame,
+the bottom bar stays. Every rule below is web-only and gated on `isWeb`.
+
+**Breakpoints are classes.** `sm:` (640) and `lg:` (1024) in Tailwind, so the
+server-rendered markup is right at every width and hydration never flashes. The
+numbers live in `packages/ui/src/lib/layout.ts` (`BREAKPOINTS`, `SHELL`), and the
+classes in `components/shell` have to move with them. `useLayout()` returns
+`'phone' | 'tablet' | 'desktop'` from `useWindowDimensions`, and is for what a
+class cannot express (mounting a component, JS geometry). It says `'phone'` on the
+server and the first client render, so a branch on it shows the phone form for one
+frame on a wide screen.
+
+**The shell is `Screen`.** Every screen keeps its structure, `Screen`, header,
+`Body`, `TabBar`, and the shell does the rest. `TabBar` renders the bottom bar
+below `lg` and tells the enclosing `Screen` which tab is current, so the rail
+lights the same item. A screen with no tab (refusal, review, pinning) still gets
+the rail, with nothing lit; `active` on `Screen` lights one for a sub-screen that
+belongs under a tab.
+
+| Piece | What it is |
+|---|---|
+| `Screen` | The frame. `size`: `column` (default), `wide`, `full`. `desktop` sets the pane from `lg` alone (`size="column" desktop="full"`: a column on a phone and tablet, the whole pane on desktop, so the tablet is untouched). `nav={false}` hides the rail (a full-screen chart). `active` for a screen with no `TabBar`. |
+| `SideNav` | The desktop rail: brand, Home / Chart / AI / Predict / Profile, account chip. A `navigation` landmark, every item a real link with a `signal` focus ring, the current one `aria-current="page"`. |
+| `TabBar` | The bottom bar, hidden from `lg`. |
+| `Body` | The scrolling middle. Pass `size` to keep its own column inside a `wide` or `full` screen. |
+| `Content` | A centred, gutter-padded container for a page inside its own scroller: `size` `column` or `wide`. |
+| `Row`, `Col` | Stack below `lg`, side by side from `lg`. `Col span` is its share of twelve. |
+| `SplitPane` | Main plus a fixed-width side panel (`sideWidth` 320, 360 or 420); stacks below `lg`, main first. `fill` makes the split the whole screen (a thread with a pinned composer); `desktopSide` draws the panel from `lg` only, so a phone keeps its own composition of that content. |
+
+The rail's active item changes three things together, as the bottom bar's tab
+does: a 2px `signal` bar, a `raised` ground, and `bone` icon and label. The AI item
+keeps its `signal` tile always, the raised centre button's counterpart. The
+account chip shows the signed-in name and handle, or the demo account, and opens
+Profile.
+
+**Composing for desktop.** Start from the phone stack and add, never fork.
+A dashboard is `<Screen size="full">`, its own scroller, `<Content size="wide">`
+inside it, and `Row`/`Col`/`SplitPane` for the two-column parts. The scroller spans
+the pane so the wheel works everywhere; only the text keeps a readable width. A
+`column` pane that leaves gutters forwards the wheel from them to its scroller.
+Gutters are 20 on a phone, 32 on a tablet and 40 on desktop for `wide` and `full`,
+and 20 throughout for a `column`, so it lines up with `NavBar` and `Footer`. The
+rules above still hold: bottom sheets, not modals; P&L never above the fold; every
+number monospaced.
+
+**Chart, Predict and AI on desktop.** Each keeps its phone composition and adds a
+desktop one by class (`hidden lg:flex` for what only desktop draws, `lg:hidden` for
+what only a phone draws), so there is one tree and one chart or reel instance.
+Chart: a fixed 40px tool rail left of the canvas, a 44px toolbar (symbol, timeframe
+strip, history, magnet, full screen), and a 264 to 300px panel with the symbol, the
+Markets watchlist (feed-backed assets only), the pinned rule with its structure
+toggle, and the ticket. Predict: the reel stays a 440px centred column, paged by
+wheel, arrow and page keys, between a left panel (asset filter with live prices,
+window, the markets in view) and, from 1280, a right panel (how it settles, this market's
+terms, open and settled predictions). AI: `SplitPane` with the conversation held to
+720 and the spec draft as an always-visible 360px panel instead of the dock. A bottom
+sheet is a 560px panel centred at the foot of the pane from `lg`.
+
+**Home and Profile on desktop.** Both are `<Screen size="column" desktop="wide">`, so
+the phone and the tablet are untouched and only `lg` opens out. Home is a header row,
+then a main column (the four behaviour tiles in one row, the rule, the pairs as a
+table with pair, price, 24h change and the day's line, then the ledger) beside a side
+column (traders to follow as stacked lead cards, an Ask the AI card that opens
+`/create?prompt=…` with an example rule in the box and nothing sent, the Analytics and
+Vault shortcuts). The P&L line is the last thing on the page, full width. The desktop
+pair table has no 24h high or low because the ticker does not carry them. Profile is a
+two-pane settings layout: a section list (Overview, Trading records, Previous rules,
+Copy trading, Security, Appearance, Settings, About, Sign out) and the selected
+section inline on the right. Each route selects its section, so `/profile/records`
+opens Trading records and the browser's back button retraces sections; the four
+sections with no route (Overview, Copy trading, Appearance, About) switch in place on
+`/profile`, and `/profile?section=appearance` opens one. Trading records is a table
+(day, asset, side glyph, size, entry from `xl`, result or the predicate that refused
+it, proof link) with the filter chips above it. A phone keeps the push navigation.
 
 ## Density and rhythm
 
@@ -212,4 +299,4 @@ in size, weight or alignment, the app stops reading as a single instrument.
 ## Test conditions
 
 Mid-range Android, throttled connection. Skia charts must hold frame rate on
-that device, not on a simulator. Check every screen in both themes at 390px.
+that device, not on a simulator. Check every screen in both themes at 390px, and the tab screens at 768, 1024 and 1440.

@@ -10,6 +10,87 @@ import { Label } from '../stat';
 import { Num, PrimaryButton } from '../ui';
 
 /**
+ * The draft itself: the rule in plain English, then every parameter, the ones the
+ * AI chose marked DEFAULT and the ones this turn moved fading up in `signal`. One
+ * body for the phone's dock and the desktop's side panel, so the two cannot say
+ * different things about the same spec.
+ */
+export function DraftDetail({
+  lines,
+  plain,
+  label,
+}: {
+  lines: readonly DraftLineView[];
+  plain: readonly (readonly ReviewSegment[])[];
+  label: string;
+}) {
+  const reduced = useReducedMotion();
+  const sum = draftSummary(lines);
+  return (
+    <>
+      {plain.length > 0 ? (
+        <View className="gap-2">
+          <Label>In plain English</Label>
+          {plain.map((sentence, i) => (
+            <Text key={i} className="font-sans text-14 leading-[21px] text-ash">
+              {sentence.map((seg, j) =>
+                typeof seg === 'string' ? (
+                  <Text key={j}>{seg}</Text>
+                ) : (
+                  <Text key={j} className="font-mono-medium text-13 text-bone">
+                    {seg.param}
+                  </Text>
+                ),
+              )}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+
+      <View className="gap-2">
+        <View className="flex-row items-center justify-between gap-3">
+          <Label>Parameters</Label>
+          <Num className="text-10 text-ash">{label}</Num>
+        </View>
+        <View className="overflow-hidden rounded-xs border border-hairline bg-sunken">
+          {lines.map((line, i) => {
+            const row = (
+              <View
+                className={cx(
+                  'flex-row items-center justify-between gap-3 px-3 py-2',
+                  i > 0 && 'border-t border-hairline',
+                  line.changed && 'bg-diff-wash',
+                )}
+              >
+                <View className="min-w-0 flex-1 flex-row items-center gap-2">
+                  <Text className={cx('font-mono text-12', line.changed ? 'text-signal' : 'text-ash')} numberOfLines={1}>
+                    {line.name || 'note'}
+                  </Text>
+                  {line.inferred ? <Badge label="Default" icon="sliders" /> : null}
+                </View>
+                <Num className={cx('shrink text-12', line.changed ? 'text-signal' : 'text-bone')}>{line.value}</Num>
+              </View>
+            );
+            return line.changed && !reduced ? (
+              <Enter key={`${line.id}-${line.value}`} variant="diff">
+                {row}
+              </Enter>
+            ) : (
+              <View key={`${line.id}-${line.value}`}>{row}</View>
+            );
+          })}
+        </View>
+        <Text className="font-sans text-12 leading-[18px] text-ash">
+          {sum.defaults > 0
+            ? `${sum.defaults} ${sum.defaults === 1 ? 'value here is a default' : 'values here are defaults'} the AI chose, not words you said. Each is editable in the review.`
+            : 'Every value above came from your words. Each is editable in the review.'}
+        </Text>
+      </View>
+    </>
+  );
+}
+
+/**
  * The spec as it forms, docked between the thread and the message box.
  *
  * Collapsed it is one row: what the draft holds, and the way onward. Expanded it
@@ -27,6 +108,7 @@ export function DraftDock({
   onReview,
   compiling,
   sample,
+  className,
 }: {
   lines: readonly DraftLineView[];
   plain: readonly (readonly ReviewSegment[])[];
@@ -36,76 +118,20 @@ export function DraftDock({
   onReview: () => void;
   compiling: boolean;
   sample: boolean;
+  /** Classes for the dock's own box: `lg:hidden` where the desktop's side panel replaces it. */
+  className?: string | undefined;
 }) {
-  const reduced = useReducedMotion();
   const sum = draftSummary(lines);
 
   return (
-    <View className="shrink-0 border-t border-hairline bg-panel">
+    <View className={cx('shrink-0 border-t border-hairline bg-panel', className)}>
       {expanded ? (
         <ScrollView
           style={{ maxHeight: 300 }}
           showsVerticalScrollIndicator={false}
           contentContainerClassName="gap-4 px-5 pb-3 pt-4"
         >
-          {plain.length > 0 ? (
-            <View className="gap-2">
-              <Label>In plain English</Label>
-              {plain.map((sentence, i) => (
-                <Text key={i} className="font-sans text-14 leading-[21px] text-ash">
-                  {sentence.map((seg, j) =>
-                    typeof seg === 'string' ? (
-                      <Text key={j}>{seg}</Text>
-                    ) : (
-                      <Text key={j} className="font-mono-medium text-13 text-bone">
-                        {seg.param}
-                      </Text>
-                    ),
-                  )}
-                </Text>
-              ))}
-            </View>
-          ) : null}
-
-          <View className="gap-2">
-            <View className="flex-row items-center justify-between gap-3">
-              <Label>Parameters</Label>
-              <Num className="text-10 text-ash">{label}</Num>
-            </View>
-            <View className="overflow-hidden rounded-xs border border-hairline bg-sunken">
-              {lines.map((line, i) => {
-                const row = (
-                  <View
-                    className={cx(
-                      'flex-row items-center justify-between gap-3 px-3 py-2',
-                      i > 0 && 'border-t border-hairline',
-                      line.changed && 'bg-diff-wash',
-                    )}
-                  >
-                    <View className="min-w-0 flex-1 flex-row items-center gap-2">
-                      <Text className={cx('font-mono text-12', line.changed ? 'text-signal' : 'text-ash')} numberOfLines={1}>
-                        {line.name || 'note'}
-                      </Text>
-                      {line.inferred ? <Badge label="Default" icon="sliders" /> : null}
-                    </View>
-                    <Num className={cx('shrink text-12', line.changed ? 'text-signal' : 'text-bone')}>{line.value}</Num>
-                  </View>
-                );
-                return line.changed && !reduced ? (
-                  <Enter key={`${line.id}-${line.value}`} variant="diff">
-                    {row}
-                  </Enter>
-                ) : (
-                  <View key={`${line.id}-${line.value}`}>{row}</View>
-                );
-              })}
-            </View>
-            <Text className="font-sans text-12 leading-[18px] text-ash">
-              {sum.defaults > 0
-                ? `${sum.defaults} ${sum.defaults === 1 ? 'value here is a default' : 'values here are defaults'} the AI chose, not words you said. Each is editable in the review.`
-                : 'Every value above came from your words. Each is editable in the review.'}
-            </Text>
-          </View>
+          <DraftDetail lines={lines} plain={plain} label={label} />
         </ScrollView>
       ) : null}
 
@@ -124,7 +150,7 @@ export function DraftDock({
             <Text className="font-mono-medium text-11 uppercase tracking-w10 text-bone">
               {sample ? 'Sample draft' : 'Spec draft'}
             </Text>
-            <Num className="text-11 text-ash" >
+            <Num className="text-11 text-ash">
               {compiling
                 ? 'Updating'
                 : sum.changed > 0

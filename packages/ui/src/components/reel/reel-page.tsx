@@ -6,6 +6,7 @@ import type { ColorToken } from '@kanon/tokens';
 import { changeOver24h, decimalToNumber } from '../../lib/chart-series';
 import { useKanonSelector } from '../../lib/data';
 import { cx } from '../../lib/cx';
+import { web } from '../../lib/desktop';
 import { withAlpha } from '../../lib/elevation';
 import { formatCountdown, formatUtc } from '../../lib/predict-map';
 import { candleCountFor, chartGeometry, closesOf } from '../../lib/predict-chart';
@@ -25,6 +26,7 @@ import {
   type PageState,
 } from '../../lib/predict-reel';
 import type { PredictMarket } from '../../lib/predict-types';
+import { isWeb } from '../../platform';
 import { useTheme } from '../../theme';
 import { Badge } from '../badge';
 import { Chip } from '../chip';
@@ -125,7 +127,9 @@ function Backdrop({ tone }: { tone: ColorToken | null }) {
 function Header({ market, state, compact }: { market: PredictMarket; state: PageState; compact: boolean }) {
   const badge = PHASE_BADGE[state.phase];
   return (
-    <View className="px-5" style={{ paddingTop: TOP_INSET }}>
+    // `pt-[58px]` is TOP_INSET, room for the filter strip that floats over a phone's feed. From `lg` the
+    // filters are in the left panel and the page starts closer to its top.
+    <View className={cx('px-5 pt-[58px]', web('lg:pt-6'))}>
       <View className="flex-row items-center gap-2">
         <Text className="font-mono-bold text-15 tracking-w08 text-bone">{assetCode(market.asset)}</Text>
         <Chip label={market.timeframe} />
@@ -189,7 +193,13 @@ function ActionZone({
       ) : yours ? (
         <NoteLine text={`Your side · ${yours}`} strong />
       ) : hint && !compact ? (
-        <NoteLine text="Swipe up for the next market" icon="chevron-up" />
+        <>
+          <NoteLine text="Swipe up for the next market" icon="chevron-up" className={web('lg:hidden')} />
+          {/* A desktop has no swipe: the wheel and the arrow keys page the reel. */}
+          {isWeb ? (
+            <NoteLine text="Scroll or press the arrow keys for the next market" icon="chevron-down" className="hidden lg:flex" />
+          ) : null}
+        </>
       ) : (
         <View className={compact ? 'min-h-2' : 'min-h-8'} />
       )}

@@ -20,13 +20,13 @@ import { ToolIcon, type ToolGlyph } from './tool-icons';
 
 export type FeedStatus = 'live' | 'demo' | 'loading' | 'empty';
 
-const STATUS_LABEL: Record<FeedStatus, string> = {
+export const STATUS_LABEL: Record<FeedStatus, string> = {
   live: 'CANONICAL',
   demo: 'DEMO',
   loading: 'SYNC',
   empty: 'NO SAMPLES',
 };
-const STATUS_DOT: Record<FeedStatus, string> = {
+export const STATUS_DOT: Record<FeedStatus, string> = {
   live: 'bg-verified',
   demo: 'bg-signal',
   loading: 'bg-ash',
@@ -193,7 +193,7 @@ export function OhlcReadout({ readout }: { readout: Readout | null }) {
 /** Air between the rail and the price axis it sits beside. */
 const RAIL_GAP = 6;
 
-const TOOLS: ReadonlyArray<{ tool: DrawingKind | null; glyph: ToolGlyph; label: string }> = [
+export const TOOLS: ReadonlyArray<{ tool: DrawingKind | null; glyph: ToolGlyph; label: string }> = [
   { tool: null, glyph: 'cursor', label: 'Cursor' },
   { tool: 'trend', glyph: 'trend', label: TOOL_LABEL.trend },
   { tool: 'hray', glyph: 'hray', label: TOOL_LABEL.hray },
@@ -204,7 +204,7 @@ const TOOLS: ReadonlyArray<{ tool: DrawingKind | null; glyph: ToolGlyph; label: 
   { tool: 'measure', glyph: 'measure', label: TOOL_LABEL.measure },
 ];
 
-function ToolButton({
+export function ToolButton({
   label,
   on,
   onPress,
@@ -252,6 +252,7 @@ export function DrawingToolbar({
   collapsed,
   onCollapsed,
   priceAxisWidth,
+  className,
 }: {
   tool: DrawingKind | null;
   onTool: (tool: DrawingKind | null) => void;
@@ -263,11 +264,13 @@ export function DrawingToolbar({
   onCollapsed: (collapsed: boolean) => void;
   /** Measured width of the price axis. The rail sits to its left, so no price label is covered. */
   priceAxisWidth: number;
+  /** Classes for the floating rail's own box, e.g. `lg:hidden` when the desktop has a fixed rail instead. */
+  className?: string | undefined;
 }) {
   const right = priceAxisWidth + RAIL_GAP;
   if (collapsed) {
     return (
-      <View className="absolute top-2 rounded-[3px] border border-hairline bg-raised/95" style={{ right }}>
+      <View className={cx('absolute top-2 rounded-[3px] border border-hairline bg-raised/95', className)} style={{ right }}>
         <ToolButton label="Show drawing tools" on={tool !== null} onPress={() => onCollapsed(false)}>
           <ToolIcon name={TOOLS.find((t) => t.tool === tool)?.glyph ?? 'trend'} size={20} color={tool ? 'signal' : 'bone'} />
         </ToolButton>
@@ -275,7 +278,10 @@ export function DrawingToolbar({
     );
   }
   return (
-    <View className="absolute top-2 overflow-hidden rounded-[3px] border border-hairline bg-raised/95" style={{ right }}>
+    <View
+      className={cx('absolute top-2 overflow-hidden rounded-[3px] border border-hairline bg-raised/95', className)}
+      style={{ right }}
+    >
       <Pressable
         role="button"
         aria-label="Hide drawing tools"
@@ -308,12 +314,14 @@ export function DrawingToolbar({
 export function TimeframeStrip({
   value,
   onChange,
+  className,
 }: {
   value: Timeframe;
   onChange: (timeframe: Timeframe) => void;
+  className?: string | undefined;
 }) {
   return (
-    <View className="shrink-0 flex-row border-t border-hairline bg-panel" role="tablist">
+    <View className={cx('shrink-0 flex-row border-t border-hairline bg-panel', className)} role="tablist">
       {CHART_TIMEFRAMES.map((tf) => {
         const on = tf.bucketSeconds === value.bucketSeconds;
         return (
@@ -377,6 +385,7 @@ export function ChartBottomBar({
   onClear,
   fullscreen,
   onFullscreen,
+  className,
 }: {
   symbol: string;
   timeframe: string;
@@ -389,9 +398,10 @@ export function ChartBottomBar({
   onClear: () => void;
   fullscreen: boolean;
   onFullscreen: () => void;
+  className?: string | undefined;
 }) {
   return (
-    <View className="shrink-0 flex-row items-center justify-between border-t border-hairline bg-panel px-2 py-1">
+    <View className={cx('shrink-0 flex-row items-center justify-between border-t border-hairline bg-panel px-2 py-1', className)}>
       <Pressable
         role="button"
         aria-label={`Change market, now ${symbol} ${timeframe}`}
@@ -435,13 +445,15 @@ export function QuickTradeBar({
   onTrade,
   busy,
   note,
+  className,
 }: {
   onTrade: (side: 'long' | 'short') => void;
   busy: boolean;
   note: string | null;
+  className?: string | undefined;
 }) {
   return (
-    <View className="shrink-0 border-t border-hairline bg-void px-3 pb-2 pt-2">
+    <View className={cx('shrink-0 border-t border-hairline bg-void px-3 pb-2 pt-2', className)}>
       {note ? <Text className="mb-1.5 font-mono text-10 text-ash">{note}</Text> : null}
       <View className="flex-row gap-2">
         <Pressable

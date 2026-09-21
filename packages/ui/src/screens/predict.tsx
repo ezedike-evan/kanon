@@ -1,18 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Share, Text, View, type LayoutChangeEvent, type ViewToken } from 'react-native';
 import { abbreviateHash, type MarketSide } from '@kanon/spec';
-import { Screen, StatusBar, TabBar } from '../components/chrome';
+import { Screen, StatusBar, TabBar, useLayout } from '../components/chrome';
 import { ReelPage, type TakenNote } from '../components/reel/reel-page';
-import { TopBar } from '../components/reel/reel-parts';
+import { ReelLeftPanel, ReelRightPanel } from '../components/reel/reel-desk';
+import { TopBar, usePageClock } from '../components/reel/reel-parts';
 import { EvidenceSheet, InfoSheet, StakeSheet } from '../components/reel/reel-sheets';
 import { ReelEmpty, ReelEnd, ReelSkeleton } from '../components/reel/reel-states';
+import { cx } from '../lib/cx';
 import { useKanonSelector } from '../lib/data';
+import { web } from '../lib/desktop';
+import { stepIndex, type Step } from '../lib/reel-paging';
+import { useReelPaging } from '../lib/use-reel-paging';
 import { formatAmount } from '../lib/predict-map';
 import { reelDemoMarkets } from '../lib/predict-demo';
 import {
   DEFAULT_STAKE_INDEX,
   NO_FILTER,
   advanceIndex,
+  assetCode,
   assetOptions,
   filterMarkets,
   indexOfItem,
@@ -26,6 +32,7 @@ import {
   type ReelItem,
 } from '../lib/predict-reel';
 import { STAKE_PRESETS, type PredictMarket } from '../lib/predict-types';
+import { isMarketAsset } from '@kanon/spec';
 import { isWeb, useHaptics } from '../platform';
 
 /**
@@ -70,6 +77,11 @@ export function PredictScreen() {
 
   const listRef = useRef<FlatList<ReelItem>>(null);
   const isDemo = feed.state === 'demo';
+  // Desktop: the panels beside the reel subscribe to prices, so they get content only where they are drawn.
+  const desktop = useLayout() === 'desktop';
+  const stage = useRef<View>(null);
+  const clock = usePageClock(desktop);
+  const now = clock ?? Math.floor(Date.now() / 1000);
 
   // Signed out, the feed is a richer set than the data layer's three fixtures. Built once: a market's clock is its own.
   const demoMarkets = useMemo(() => (isDemo ? reelDemoMarkets(Math.floor(Date.now() / 1000)) : null), [isDemo]);
@@ -110,12 +122,72 @@ export function PredictScreen() {
     listRef.current?.scrollToOffset({ offset: 0, animated: true });
   }, []);
 
+  // Desktop paging and navigation. The reel moves through `goTo`, so a wheel, a key and a click on a row all share one path.
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const lastSent = useRef<{ index: number; at: number } | null>(null);
+  const pendingFocus = useRef<string | null>(null);
+
+  const goTo = useCallback((index: number) => {
+    lastSent.current = { index, at: Date.now() };
+    listRef.current?.scrollToIndex({ index, animated: true });
+  }, []);
+
+  const onStep = useCallback(
+    (step: Step) => {
+      const list = itemsRef.current;
+      if (list.length === 0) return;
+      // A page still on its way is where the next key starts from, so two quick presses go two pages.
+      const recent = lastSent.current && Date.now() - lastSent.current.at < 700 ? lastSent.current.index : null;
+      const from = recent ?? Math.max(0, indexOfItem(list, activeRef.current ?? ''));
+      const to = stepIndex(from, step, list.length);
+      if (to !== from) goTo(to);
+    },
+    [goTo],
+  );
+
+  const focusMarket = useCallback(
+    (id: string) => {
+      const at = indexOfItem(itemsRef.current, id);
+      if (at >= 0) {
+        goTo(at);
+        return;
+      }
+      // Filtered out: show them all, and go there once the list has rebuilt.
+      pendingFocus.current = id;
+      setFilter(NO_FILTER);
+    },
+    [goTo],
+  );
+
+  useEffect(() => {
+    const id = pendingFocus.current;
+    if (!id) return undefined;
+    const at = indexOfItem(items, id);
+    if (at < 0) return undefined;
+    pendingFocus.current = null;
+    const timer = setTimeout(() => listRef.current?.scrollToIndex({ index: at, animated: false }), 60);
+    return () => clearTimeout(timer);
+  }, [items]);
+
   const setAsset = useCallback((asset: string | null) => setFilter((f) => ({ ...f, asset })), []);
   const cycleTimeframe = useCallback(
     () => setFilter((f) => ({ ...f, timeframe: nextTimeframe(f.timeframe, timeframes) })),
     [timeframes],
   );
   const clearFilter = useCallback(() => setFilter(NO_FILTER), []);
+  const setTimeframe = useCallback((timeframe: string | null) => setFilter((f) => ({ ...f, timeframe })), []);
+
+  // What the desktop panels list: markets per asset, and the ones in view, in reel order.
+  const counts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const m of all) if (isMarketAsset(m.asset)) c[assetCode(m.asset)] = (c[assetCode(m.asset)] ?? 0) + 1;
+    return c;
+  }, [all]);
+  const total = useMemo(() => Object.values(counts).reduce((a, b) => a + b, 0), [counts]);
+  const inView = useMemo(() => items.flatMap((i) => (i.kind === 'market' ? [i.market] : [])), [items]);
 
   const onSide = useCallback(
     (market: PredictMarket, side: MarketSide) => {
@@ -238,6 +310,8 @@ export function PredictScreen() {
     [size.h],
   );
 
+  useReelPaging(stage, sheet === null, onStep);
+
   const measured = size.w > 0 && size.h > 0;
   const loading = feed.state === 'loading';
   const empty = !loading && items.length === 0;
@@ -254,55 +328,93 @@ export function PredictScreen() {
       : null;
 
   return (
-    <Screen label="11 · PREDICT">
+    // A column on a phone and a tablet, as it always was; the whole pane on desktop.
+    <Screen size="column" desktop="full" active="predict">
       <StatusBar />
 
-      <View className="relative min-h-0 flex-1 bg-void" onLayout={onLayout}>
-        {!measured || loading ? (
-          <ReelSkeleton width={size.w || 390} height={size.h || 640} />
-        ) : empty ? (
-          <ReelEmpty height={size.h} filtered={filter.asset !== null || filter.timeframe !== null} onClear={clearFilter} />
-        ) : (
-          <FlatList
-            key={`${filter.asset ?? 'all'}|${filter.timeframe ?? 'any'}`}
-            ref={listRef}
-            data={items}
-            keyExtractor={keyOf}
-            renderItem={renderItem}
-            getItemLayout={getItemLayout}
-            extraData={renderItem}
-            pagingEnabled
-            snapToInterval={size.h}
-            snapToAlignment="start"
-            decelerationRate="fast"
-            disableIntervalMomentum
-            showsVerticalScrollIndicator={false}
-            initialNumToRender={1}
-            maxToRenderPerBatch={2}
-            windowSize={3}
-            removeClippedSubviews={!isWeb}
-            viewabilityConfig={VIEWABILITY}
-            onViewableItemsChanged={onViewable}
-          />
-        )}
-
-        {measured && !loading && (all.length > 0 || filter.asset !== null) ? (
-          <TopBar
+      {/* Desktop: a panel either side of the reel. Below `lg` the reel is the screen. */}
+      <View className={cx('min-h-0 flex-1 bg-void', web('lg:flex-row'))}>
+        {isWeb ? (
+          <ReelLeftPanel
+            live={desktop}
             assets={assets}
-            asset={filter.asset}
+            counts={counts}
+            total={total}
+            windows={timeframes}
+            filter={filter}
             onAsset={setAsset}
-            timeframe={filter.timeframe}
-            timeframeCount={timeframes.length}
-            onTimeframe={cycleTimeframe}
+            onTimeframe={setTimeframe}
+            markets={inView}
+            activeId={active}
+            now={now}
+            onPick={focusMarket}
           />
         ) : null}
 
-        {toast ? (
-          <View className="absolute inset-x-0 top-16 z-10 items-center" style={{ pointerEvents: 'none' }}>
-            <View className="rounded-xs border border-hairline bg-raised px-3 py-2">
-              <Text className="font-mono text-11 text-bone">{toast}</Text>
-            </View>
+        {/* On desktop the reel is a 440px column, centred and full height; the wheel over either side pages it too. */}
+        <View ref={stage} className={cx('min-h-0 min-w-0 flex-1', web('lg:items-center'))}>
+          <View
+            className={cx('relative min-h-0 w-full flex-1 bg-void', web('lg:w-[440px] lg:max-w-full lg:border-x lg:border-hairline'))}
+            onLayout={onLayout}
+          >
+            {!measured || loading ? (
+              <ReelSkeleton width={size.w || 390} height={size.h || 640} />
+            ) : empty ? (
+              <ReelEmpty height={size.h} filtered={filter.asset !== null || filter.timeframe !== null} onClear={clearFilter} />
+            ) : (
+              <FlatList
+                key={`${filter.asset ?? 'all'}|${filter.timeframe ?? 'any'}`}
+                ref={listRef}
+                data={items}
+                keyExtractor={keyOf}
+                renderItem={renderItem}
+                getItemLayout={getItemLayout}
+                extraData={renderItem}
+                pagingEnabled
+                snapToInterval={size.h}
+                snapToAlignment="start"
+                decelerationRate="fast"
+                disableIntervalMomentum
+                showsVerticalScrollIndicator={false}
+                initialNumToRender={1}
+                maxToRenderPerBatch={2}
+                windowSize={3}
+                removeClippedSubviews={!isWeb}
+                viewabilityConfig={VIEWABILITY}
+                onViewableItemsChanged={onViewable}
+              />
+            )}
+
+            {measured && !loading && (all.length > 0 || filter.asset !== null) ? (
+              <TopBar
+                assets={assets}
+                asset={filter.asset}
+                onAsset={setAsset}
+                timeframe={filter.timeframe}
+                timeframeCount={timeframes.length}
+                onTimeframe={cycleTimeframe}
+                className={web('lg:hidden')}
+              />
+            ) : null}
+
+            {toast ? (
+              <View className="absolute inset-x-0 top-16 z-10 items-center" style={{ pointerEvents: 'none' }}>
+                <View className="rounded-xs border border-hairline bg-raised px-3 py-2">
+                  <Text className="font-mono text-11 text-bone">{toast}</Text>
+                </View>
+              </View>
+            ) : null}
           </View>
+        </View>
+
+        {isWeb ? (
+          <ReelRightPanel
+            market={active !== null ? marketOf(active) : undefined}
+            markets={all}
+            nativeSymbol={feed.nativeSymbol}
+            onEvidence={onEvidence}
+            onPick={focusMarket}
+          />
         ) : null}
       </View>
 

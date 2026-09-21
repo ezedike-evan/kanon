@@ -4,7 +4,8 @@ import { Badge } from '../components/badge';
 import { FilterChip } from '../components/chip';
 import { EmptyState } from '../components/empty-state';
 import { ListRow } from '../components/list-row';
-import { SubScreen } from '../components/profile-parts';
+import { ProfileFrame } from '../components/profile/frame';
+import { RecordsPane } from '../components/profile/records-table';
 import { SkeletonRow } from '../components/skeleton';
 import { StatRow } from '../components/stat';
 import { Num } from '../components/ui';
@@ -174,9 +175,11 @@ export function ProfileRecordsScreen() {
   }, [filter, state.status]);
 
   return (
-    <SubScreen
+    <ProfileFrame
+      section="records"
       label="15A · TRADING RECORDS"
       title="Trading records"
+      pane={<RecordsPane state={state} filter={filter} onFilter={setFilter} now={now} />}
       right={state.status === 'demo' ? <Badge label="Demo" tone="signal" icon="sparkles" /> : null}
     >
       <View className="shrink-0">
@@ -221,6 +224,6 @@ export function ProfileRecordsScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
-    </SubScreen>
+    </ProfileFrame>
   );
 }

@@ -5,7 +5,8 @@ import { Badge, type BadgeProps } from '../components/badge';
 import { Card } from '../components/card';
 import { EmptyState } from '../components/empty-state';
 import { Icon, type Icon as IconName } from '../components/icons';
-import { CopyButton, SubScreen } from '../components/profile-parts';
+import { ProfileFrame } from '../components/profile/frame';
+import { CopyButton } from '../components/profile-parts';
 import { Skeleton } from '../components/skeleton';
 import { Label } from '../components/stat';
 import { Num } from '../components/ui';
@@ -226,10 +227,40 @@ export function ProfileRulesScreen() {
     [ordinals],
   );
 
+  // The desktop pane: the same sections and cards, in the pane's own scroller, not a virtual list.
+  const pane =
+    state.status === 'loading' ? (
+      <View className="gap-3">
+        <Skeleton height={190} />
+        <Skeleton height={150} />
+      </View>
+    ) : state.status === 'empty' ? (
+      <View className="rounded-sm border border-hairline bg-panel">
+        <EmptyState
+          icon="scroll"
+          title="No rules yet"
+          body="Describe a strategy in your own words. It becomes a rule you read, sign off and pin."
+          action={{ label: 'Build a rule', href: routes.create, primary: true }}
+        />
+      </View>
+    ) : (
+      <View className="max-w-[760px]">
+        {entries.map((item) =>
+          item.type === 'section' ? (
+            <SectionRow key={item.id} section={item} />
+          ) : (
+            <RuleCard key={item.id} rule={item.rule} state={item.state} ordinal={ordinals.get(item.id) ?? ''} />
+          ),
+        )}
+      </View>
+    );
+
   return (
-    <SubScreen
+    <ProfileFrame
+      section="rules"
       label="15B · PREVIOUS RULES"
       title="Previous rules"
+      pane={pane}
       right={state.status === 'demo' ? <Badge label="Demo" tone="signal" icon="sparkles" /> : null}
     >
       {state.status === 'loading' ? (
@@ -259,6 +290,6 @@ export function ProfileRulesScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
-    </SubScreen>
+    </ProfileFrame>
   );
 }

@@ -130,6 +130,16 @@ export function timeLabel(ms: number): string {
   return new Date(ms).toISOString().slice(11, 16);
 }
 
+/**
+ * A table's day cell: `Today`, `Yesterday`, `02 Sep`, or `02 Sep 2025` once it is not
+ * this year. The year is dropped where it says nothing, so the column stays narrow.
+ */
+export function tableDayLabel(ms: number, nowMs: number): string {
+  const label = dayLabel(dayKey(ms), nowMs);
+  const year = String(new Date(nowMs).getUTCFullYear());
+  return label.endsWith(` ${year}`) ? label.slice(0, -5) : label;
+}
+
 export interface DayHeader {
   type: 'day';
   id: string;

@@ -1,5 +1,6 @@
 import { Pressable, Text, View } from 'react-native';
 import { cx } from '../../lib/cx';
+import { web } from '../../lib/desktop';
 import { previewLines, type DraftLineView, type ThreadItem } from '../../lib/ai-chat';
 import { Enter } from '../motion';
 import { Icon } from '../icons';
@@ -94,7 +95,11 @@ function DraftEmbed({ lines, onOpen }: { lines: readonly DraftLineView[]; onOpen
         role="button"
         aria-label="Open the full spec draft"
         onPress={onOpen}
-        className="flex-row items-center justify-between border-t border-hairline px-3 py-2.5 active:bg-raised hover:bg-raised"
+        // On desktop the whole draft is always in the panel beside the thread; there is nothing to open.
+        className={cx(
+          'flex-row items-center justify-between border-t border-hairline px-3 py-2.5 active:bg-raised hover:bg-raised',
+          web('lg:hidden'),
+        )}
       >
         <Text className="font-mono-medium text-11 uppercase tracking-w10 text-verified">Open draft</Text>
         <Icon name="chevron-up" size={14} color="verified" strokeWidth={2} />

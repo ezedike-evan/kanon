@@ -9,6 +9,8 @@ import { ProgressRing } from '../progress-ring';
 import { Skeleton } from '../skeleton';
 import { Label } from '../stat';
 import { Num } from '../ui';
+import { cx } from '../../lib/cx';
+import { web } from '../../lib/desktop';
 import type { ColorToken } from '@kanon/tokens';
 
 interface TileProps {
@@ -30,7 +32,7 @@ interface TileProps {
 const Tile = memo(function Tile({ label, figure, sub, icon, iconColor = 'ash', href, a11y, corner }: TileProps) {
   return (
     <Card href={href} label={a11y} pad="none" className="flex-1 basis-0">
-      <View className="min-h-24 justify-between p-3.5">
+      <View className={cx('min-h-24 justify-between p-3.5', web('lg:min-h-28 lg:p-4'))}>
         <View className="flex-row items-start justify-between gap-2">
           <Label className="flex-1">{label}</Label>
           {corner ?? <Icon name={icon} size={16} color={iconColor} />}
@@ -43,6 +45,14 @@ const Tile = memo(function Tile({ label, figure, sub, icon, iconColor = 'ash', h
     </Card>
   );
 });
+
+/**
+ * From `xl` the four tiles sit in one row: the two phone rows become the two halves
+ * of it. Below `xl` (and on a device) they are the 2x2 they always were; the main
+ * column is under 500px wide between 1024 and 1279, too narrow for four labels.
+ */
+const ROW_OF_FOUR = web('xl:flex-row');
+const ROW_CHILD = web('xl:min-w-0 xl:flex-1');
 
 export interface StatsGridProps {
   stats: BehaviourStats;
@@ -62,8 +72,8 @@ export interface StatsGridProps {
 export const StatsGrid = memo(function StatsGrid({ stats, rules, latestTakenId }: StatsGridProps) {
   const untested = stats.attempts === 0;
   return (
-    <View className="gap-3">
-      <View className="flex-row gap-3">
+    <View className={cx('gap-3', ROW_OF_FOUR)}>
+      <View className={cx('flex-row gap-3', ROW_CHILD)}>
         <Tile
           label="Rules pinned"
           figure={String(rules.pinned)}
@@ -81,7 +91,7 @@ export const StatsGrid = memo(function StatsGrid({ stats, rules, latestTakenId }
           a11y={`${stats.taken} trades taken. Open the latest trade and its evidence.`}
         />
       </View>
-      <View className="flex-row gap-3">
+      <View className={cx('flex-row gap-3', ROW_CHILD)}>
         <Tile
           label="Refused"
           figure={String(stats.blocked)}
@@ -114,9 +124,9 @@ export const StatsGrid = memo(function StatsGrid({ stats, rules, latestTakenId }
 /** The strip's loading shape: the same four tiles, so nothing jumps when they arrive. */
 export function StatsSkeleton() {
   return (
-    <View className="gap-3">
+    <View className={cx('gap-3', ROW_OF_FOUR)}>
       {[0, 1].map((row) => (
-        <View key={row} className="flex-row gap-3">
+        <View key={row} className={cx('flex-row gap-3', ROW_CHILD)}>
           {[0, 1].map((col) => (
             <Card key={col} pad="none" className="flex-1 basis-0">
               <View className="min-h-24 justify-between p-3.5">

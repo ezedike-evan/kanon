@@ -25,6 +25,7 @@ import {
   shortAddress,
   shortId,
   stakeRecords,
+  tableDayLabel,
   timeLabel,
   tradeRecords,
   withDayHeaders,
@@ -113,6 +114,18 @@ describe('records', () => {
     expect(dayKey(Date.parse('2026-09-02T23:59:00Z'))).toBe('2026-09-02');
     expect(dayLabel('2026-01-05', Date.parse('2026-09-02T00:00:00Z'))).toBe('05 Jan 2026');
     expect(timeLabel(Date.parse('2026-09-02T09:05:00Z'))).toBe('09:05');
+  });
+});
+
+describe('tableDayLabel', () => {
+  const now = Date.parse('2026-09-21T10:00:00Z');
+  it('says Today and Yesterday', () => {
+    expect(tableDayLabel(Date.parse('2026-09-21T01:00:00Z'), now)).toBe('Today');
+    expect(tableDayLabel(Date.parse('2026-09-20T23:59:00Z'), now)).toBe('Yesterday');
+  });
+  it('drops the year in the current year and keeps it otherwise', () => {
+    expect(tableDayLabel(Date.parse('2026-09-02T14:32:00Z'), now)).toBe('02 Sep');
+    expect(tableDayLabel(Date.parse('2025-12-30T14:32:00Z'), now)).toBe('30 Dec 2025');
   });
 });
 

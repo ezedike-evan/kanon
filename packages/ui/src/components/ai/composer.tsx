@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Text, TextInput, View, type NativeSyntheticEvent, type TextInputContentSizeChangeEventData } from 'react-native';
 import { canSend, charCount, clampText, composerHeight, MESSAGE_LIMIT } from '../../lib/ai-chat';
 import { cx } from '../../lib/cx';
+import { web } from '../../lib/desktop';
 import { isWeb } from '../../platform';
 import { useTheme } from '../../theme';
 import { IconButton } from '../icon-button';
@@ -58,62 +59,65 @@ export function Composer({
 
   return (
     <View className="shrink-0 border-t border-hairline bg-void px-4 pt-3" style={{ paddingBottom: bottomPad }}>
-      <View
-        className={cx(
-          'flex-row items-end gap-2 rounded-sm border bg-panel py-1 pl-3.5 pr-1',
-          focused ? 'border-signal' : 'border-hairline',
-        )}
-      >
-        <TextInput
-          ref={inputRef}
-          value={value}
-          onChangeText={(next) => onChange(clampText(next))}
-          onFocus={() => {
-            setFocused(true);
-            onFocusChange?.(true);
-          }}
-          onBlur={() => {
-            setFocused(false);
-            onFocusChange?.(false);
-          }}
-          onContentSizeChange={grow}
-          onKeyPress={
-            isWeb
-              ? (e) => {
-                  const ev = e.nativeEvent as { key?: string; shiftKey?: boolean };
-                  if (ev.key === 'Enter' && !ev.shiftKey) {
-                    (e as unknown as { preventDefault?: () => void }).preventDefault?.();
-                    onSend();
+      {/* From `lg` the box keeps the thread's readable width (720 less its gutters) and sits centred under it. */}
+      <View className={cx('w-full self-center', web('lg:max-w-[680px]'))}>
+        <View
+          className={cx(
+            'flex-row items-end gap-2 rounded-sm border bg-panel py-1 pl-3.5 pr-1',
+            focused ? 'border-signal' : 'border-hairline',
+          )}
+        >
+          <TextInput
+            ref={inputRef}
+            value={value}
+            onChangeText={(next) => onChange(clampText(next))}
+            onFocus={() => {
+              setFocused(true);
+              onFocusChange?.(true);
+            }}
+            onBlur={() => {
+              setFocused(false);
+              onFocusChange?.(false);
+            }}
+            onContentSizeChange={grow}
+            onKeyPress={
+              isWeb
+                ? (e) => {
+                    const ev = e.nativeEvent as { key?: string; shiftKey?: boolean };
+                    if (ev.key === 'Enter' && !ev.shiftKey) {
+                      (e as unknown as { preventDefault?: () => void }).preventDefault?.();
+                      onSend();
+                    }
                   }
-                }
-              : undefined
-          }
-          multiline
-          blurOnSubmit={false}
-          placeholder={placeholder}
-          placeholderTextColor={colors.ash}
-          cursorColor={colors.signal}
-          selectionColor={colors.signal}
-          aria-label="Message to the strategy AI"
-          className="min-w-0 flex-1 py-2 font-sans text-15 text-bone"
-          style={{ height, lineHeight: LINE, textAlignVertical: 'top', outlineStyle: 'none' } as never}
-        />
-        <IconButton
-          icon="arrow-up"
-          variant="solid"
-          size="lg"
-          label={compiling ? 'Compiling, send is unavailable' : 'Send message'}
-          disabled={!enabled}
-          onPress={onSend}
-        />
-      </View>
-      <View className="min-h-6 flex-row items-center justify-between px-0.5 pt-1.5">
-        <View className="min-w-0 flex-1">{footer}</View>
-        {value.length > 0 ? (
-          <Num className={cx('text-10', near ? 'text-signal' : 'text-ash')}>
-            {charCount(value)} / {MESSAGE_LIMIT}
-          </Num>
-        ) : null}
+                : undefined
+            }
+            multiline
+            blurOnSubmit={false}
+            placeholder={placeholder}
+            placeholderTextColor={colors.ash}
+            cursorColor={colors.signal}
+            selectionColor={colors.signal}
+            aria-label="Message to the strategy AI"
+            className="min-w-0 flex-1 py-2 font-sans text-15 text-bone"
+            style={{ height, lineHeight: LINE, textAlignVertical: 'top', outlineStyle: 'none' } as never}
+          />
+          <IconButton
+            icon="arrow-up"
+            variant="solid"
+            size="lg"
+            label={compiling ? 'Compiling, send is unavailable' : 'Send message'}
+            disabled={!enabled}
+            onPress={onSend}
+          />
+        </View>
+        <View className="min-h-6 flex-row items-center justify-between px-0.5 pt-1.5">
+          <View className="min-w-0 flex-1">{footer}</View>
+          {value.length > 0 ? (
+            <Num className={cx('text-10', near ? 'text-signal' : 'text-ash')}>
+              {charCount(value)} / {MESSAGE_LIMIT}
+            </Num>
+          ) : null}
+        </View>
       </View>
     </View>
   );

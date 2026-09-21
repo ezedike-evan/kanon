@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -13,11 +13,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AiTile } from '../components/ai/ai-tile';
 import { Composer, ComposerHint } from '../components/ai/composer';
 import { DraftDock } from '../components/ai/draft-dock';
+import { DraftPanel } from '../components/ai/draft-panel';
 import { ChatMessage } from '../components/ai/message';
 import { TypingIndicator } from '../components/ai/typing';
 import { Welcome } from '../components/ai/welcome';
 import { BottomSheet } from '../components/bottom-sheet';
-import { Screen, StatusBar, TabBar } from '../components/chrome';
+import { Screen, SplitPane, StatusBar, TabBar } from '../components/chrome';
 import { Divider } from '../components/divider';
 import { IconButton } from '../components/icon-button';
 import { Icon, type Icon as IconName } from '../components/icons';
@@ -25,7 +26,7 @@ import { Enter } from '../components/motion';
 import { SectionHeader } from '../components/section-header';
 import { Skeleton } from '../components/skeleton';
 import { GhostButton, PrimaryButton } from '../components/ui';
-import { useNavigator } from '../nav';
+import { useNavigator, useRouteParam } from '../nav';
 import { isIOS, isWeb } from '../platform';
 import {
   buildThread,
@@ -40,6 +41,7 @@ import {
 } from '../lib/ai-chat';
 import { cx } from '../lib/cx';
 import { useKanonSelector } from '../lib/data';
+import { web } from '../lib/desktop';
 import { routes } from '../lib/routes';
 import { useKeyboardVisible, useReducedMotion } from '../lib/use-keyboard';
 
@@ -133,6 +135,14 @@ export function AiChatScreen() {
     inputRef.current?.focus();
   }, []);
 
+  // `/create?prompt=…` (Home's "Ask the AI") arrives with the box filled, never sent.
+  // It seeds an empty box once and leaves anything the person has already typed.
+  const seeded = useRouteParam('prompt');
+  useEffect(() => {
+    if (!seeded) return;
+    setText((current) => (current === '' ? clampText(seeded) : current));
+  }, [seeded]);
+
   const onScroll = useCallback((e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, layoutMeasurement, contentSize } = e.nativeEvent;
     // New content below is not the reader leaving; only a scroll away with the content unchanged is.
@@ -183,88 +193,119 @@ export function AiChatScreen() {
     </View>
   );
 
+  const goReview = () => nav.push(routes.compileReview);
+
   return (
-    <Screen label="STRATEGY AI">
+    // A column on a phone and a tablet, as it always was; the whole pane on desktop, where the
+    // spec draft is a panel beside the conversation and the dock below the thread is not drawn.
+    <Screen size="column" desktop="full" active="create">
       <StatusBar />
-      <KeyboardAvoidingView
-        behavior={isIOS ? 'padding' : undefined}
-        keyboardVerticalOffset={insets.top + 3}
-        style={{ flex: 1, minHeight: 0 }}
-      >
-        <View className="shrink-0 flex-row items-center gap-3 border-b border-hairline px-5 pb-3 pt-4">
-          <AiTile size="md" />
-          <View className="min-w-0 flex-1 gap-0.5">
-            <Text role="heading" className="font-sans text-18 font-medium leading-6 text-bone">
-              Strategy AI
-            </Text>
-            <Text className="font-sans text-12 leading-[17px] text-ash">Language model · never trades or pins</Text>
-          </View>
-          <IconButton icon="info" label="How the strategy AI works" variant="outline" size="sm" onPress={() => setSheet('how')} />
-        </View>
-
-        {loading ? (
-          <ThreadSkeleton />
-        ) : (
-          <FlatList
-            ref={listRef}
-            style={{ flex: 1, minHeight: 0 }}
-            data={thread}
-            keyExtractor={(item) => item.key}
-            renderItem={renderItem}
-            ItemSeparatorComponent={Gap}
-            ListEmptyComponent={<Welcome suggestions={suggestions} onPick={pick} />}
-            ListFooterComponent={footer}
-            contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 20, paddingBottom: 12, flexGrow: 1 }}
-            onScroll={onScroll}
-            scrollEventThrottle={64}
-            onContentSizeChange={followEnd}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode={isIOS ? 'interactive' : 'on-drag'}
-            showsVerticalScrollIndicator={false}
-            initialNumToRender={14}
-            maxToRenderPerBatch={10}
-            windowSize={9}
-            removeClippedSubviews={!isWeb}
-          />
-        )}
-
-        {compiler.hasSpec ? (
-          <DraftDock
+      <SplitPane
+        fill
+        desktopSide
+        sideWidth="md"
+        side={
+          <DraftPanel
+            hasSpec={compiler.hasSpec}
             lines={lines}
             plain={review.plain}
             label={compiler.draft}
-            expanded={dockOpen}
-            onToggle={() => setDockOpen((v) => !v)}
-            onReview={() => nav.push(routes.compileReview)}
             compiling={compiling}
             sample={sample}
+            onReview={goReview}
           />
-        ) : null}
+        }
+      >
+        <KeyboardAvoidingView
+          behavior={isIOS ? 'padding' : undefined}
+          keyboardVerticalOffset={insets.top + 3}
+          style={{ flex: 1, minHeight: 0 }}
+        >
+          <View className="shrink-0 border-b border-hairline">
+            <View className={cx('w-full flex-row items-center gap-3 self-center px-5 pb-3 pt-4', web('lg:max-w-[720px]'))}>
+              <AiTile size="md" />
+              <View className="min-w-0 flex-1 gap-0.5">
+                <Text role="heading" className="font-sans text-18 font-medium leading-6 text-bone">
+                  Strategy AI
+                </Text>
+                <Text className="font-sans text-12 leading-[17px] text-ash">Language model · never trades or pins</Text>
+              </View>
+              <IconButton icon="info" label="How the strategy AI works" variant="outline" size="sm" onPress={() => setSheet('how')} />
+            </View>
+          </View>
 
-        <Composer
-          value={text}
-          onChange={setText}
-          onSend={submit}
-          compiling={compiling}
-          placeholder={compiler.hasSpec ? 'Change a value or add a condition' : 'Describe the rule you keep breaking'}
-          onFocusChange={(focused) => {
-            if (focused) {
-              setDockOpen(false);
-              stick.current = true;
+          {loading ? (
+            <ThreadSkeleton />
+          ) : (
+            <FlatList
+              ref={listRef}
+              style={{ flex: 1, minHeight: 0 }}
+              data={thread}
+              keyExtractor={(item) => item.key}
+              renderItem={renderItem}
+              ItemSeparatorComponent={Gap}
+              ListEmptyComponent={<Welcome suggestions={suggestions} onPick={pick} />}
+              ListFooterComponent={footer}
+              // The scroller spans the pane so the wheel works everywhere; the text keeps a readable 720.
+              contentContainerStyle={{
+                paddingHorizontal: 20,
+                paddingTop: 20,
+                paddingBottom: 12,
+                flexGrow: 1,
+                ...(isWeb ? { maxWidth: 720, width: '100%', alignSelf: 'center' as const } : null),
+              }}
+              onScroll={onScroll}
+              scrollEventThrottle={64}
+              onContentSizeChange={followEnd}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode={isIOS ? 'interactive' : 'on-drag'}
+              showsVerticalScrollIndicator={false}
+              initialNumToRender={14}
+              maxToRenderPerBatch={10}
+              windowSize={9}
+              removeClippedSubviews={!isWeb}
+            />
+          )}
+
+          {compiler.hasSpec ? (
+            <DraftDock
+              lines={lines}
+              plain={review.plain}
+              label={compiler.draft}
+              expanded={dockOpen}
+              onToggle={() => setDockOpen((v) => !v)}
+              onReview={goReview}
+              compiling={compiling}
+              sample={sample}
+              className={web('lg:hidden')}
+            />
+          ) : null}
+
+          <Composer
+            value={text}
+            onChange={setText}
+            onSend={submit}
+            compiling={compiling}
+            placeholder={compiler.hasSpec ? 'Change a value or add a condition' : 'Describe the rule you keep breaking'}
+            onFocusChange={(focused) => {
+              if (focused) {
+                setDockOpen(false);
+                stick.current = true;
+              }
+            }}
+            inputRef={inputRef}
+            // The raised AI tab button rises 18px into the strip above the bar; the hint clears it.
+            bottomPad={keyboard ? 10 : 22}
+            footer={
+              <ComposerHint>
+                {isWeb ? 'Enter to send · Shift+Enter for a new line' : 'The AI proposes. You review and pin.'}
+              </ComposerHint>
             }
-          }}
-          inputRef={inputRef}
-          // The raised AI tab button rises 18px into the strip above the bar; the hint clears it.
-          bottomPad={keyboard ? 10 : 22}
-          footer={
-            <ComposerHint>
-              {isWeb ? 'Enter to send · Shift+Enter for a new line' : 'The AI proposes. You review and pin.'}
-            </ComposerHint>
-          }
-        />
+          />
 
-        {keyboard ? null : <TabBar active="create" />}
-      </KeyboardAvoidingView>
+          {keyboard ? null : <TabBar active="create" />}
+        </KeyboardAvoidingView>
+      </SplitPane>
 
       <BottomSheet
         open={sheet === 'signin'}

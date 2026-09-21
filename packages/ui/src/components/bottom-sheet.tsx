@@ -1,6 +1,8 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Animated, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { web } from '../lib/desktop';
+import { cx } from '../lib/cx';
 import { isWeb } from '../platform';
 import { Meta } from './ui';
 
@@ -57,7 +59,11 @@ export function BottomSheet({
         }}
       >
         <View
-          className="min-h-0 shrink border-t border-hairline bg-raised px-5 pt-4"
+          // From `lg` a sheet is a 560px panel centred at the foot of the pane, not a 1000px slab.
+          className={cx(
+            'min-h-0 shrink border-t border-hairline bg-raised px-5 pt-4',
+            web('lg:w-[560px] lg:max-w-full lg:self-center lg:rounded-t-md lg:border-x'),
+          )}
           style={{ paddingBottom: Math.max(insets.bottom, 20) }}
         >
           <View className="flex-row items-center justify-between pb-3">

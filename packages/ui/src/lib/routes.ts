@@ -47,6 +47,12 @@ export const shareRoute = (ruleId: string) => `/share/${ruleId}`;
  */
 export const chartRoute = (asset: string) => `${routes.chart}?asset=${encodeURIComponent(asset)}`;
 
+/**
+ * The AI tab with a prompt already in its box: `/create?prompt=…`. Only the box is
+ * filled. Nothing is sent, so the person reads it, edits it and sends it, or does not.
+ */
+export const createRoute = (prompt: string) => `${routes.create}?prompt=${encodeURIComponent(prompt)}`;
+
 /** The asset in a chart query string (`asset=BTC%2FUSD`), normalised as the series is, or null. */
 export function parseChartAsset(search: string): string | null {
   const raw = new URLSearchParams(search.replace(/^\?/, '')).get('asset');

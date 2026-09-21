@@ -145,7 +145,8 @@ export function EvidenceSheet({ market, onClose }: { market: PredictMarket; onCl
   );
 }
 
-const STEPS = [
+/** How a market settles, in three lines. The sheet and the desktop panel say it the same way. */
+export const SETTLE_STEPS = [
   'Every market asks one question of the recorded price: does it touch the level inside the window?',
   'The answer is arithmetic over signed Pyth prices. The window’s high at or above the level, or its low at or below. Touching counts.',
   'No model is consulted, before or after. The contract checks signatures and does the sums.',
@@ -164,7 +165,7 @@ export function InfoSheet({
   return (
     <BottomSheet open onClose={onClose} title="HOW IT SETTLES" meta={assetCode(market.asset)}>
       <View className="gap-3.5">
-        {STEPS.map((step, i) => (
+        {SETTLE_STEPS.map((step, i) => (
           <View key={i} className="flex-row items-start gap-3">
             <View className="size-6 items-center justify-center rounded-xs border border-hairline bg-panel">
               <Num className="text-11 text-ash">{i + 1}</Num>

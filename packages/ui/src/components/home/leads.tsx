@@ -2,6 +2,7 @@ import { memo, useCallback, useMemo } from 'react';
 import { FlatList, Text, View } from 'react-native';
 import { formatBps } from '@kanon/spec';
 import { Link } from '../../nav';
+import { cx } from '../../lib/cx';
 import type { CopyLeadSummary } from '../../lib/home-types';
 import { useCopyLeads, useFollows } from '../../lib/domains';
 import { routes } from '../../lib/routes';
@@ -19,13 +20,15 @@ import { Num } from '../ui';
 const CARD_W = 264;
 const GAP = 12;
 const GUTTER = 20;
+/** How many leads the desktop side column lists before "See all". */
+const LIST_MAX = 3;
 
 /**
  * A strategy to follow. Adherence and followers lead, because a lead is judged by how
  * faithfully it followed its own rule and not by profit. The whole card opens copy
  * trading, where the terms and a worked example come before any sign-off.
  */
-const LeadCard = memo(function LeadCard({ lead }: { lead: CopyLeadSummary }) {
+const LeadCard = memo(function LeadCard({ lead, fluid = false }: { lead: CopyLeadSummary; fluid?: boolean }) {
   const { tap } = useHaptics();
   const adherence = lead.adherenceBps;
   return (
@@ -36,7 +39,7 @@ const LeadCard = memo(function LeadCard({ lead }: { lead: CopyLeadSummary }) {
         adherence === null ? 'Not yet tested' : `Adherence ${formatBps(adherence, { dp: 1 })}`
       }, ${lead.followers} followers. Open copy trading.`}
       className="justify-between overflow-hidden rounded-sm border border-hairline bg-panel active:bg-raised hover:bg-raised"
-      style={{ width: CARD_W }}
+      style={fluid ? undefined : { width: CARD_W }}
     >
       <View className="gap-3 p-3.5">
         <View className="flex-row items-start gap-2.5">
@@ -80,9 +83,12 @@ const LeadCard = memo(function LeadCard({ lead }: { lead: CopyLeadSummary }) {
   );
 });
 
-function LeadSkeleton() {
+function LeadSkeleton({ fluid = false }: { fluid?: boolean }) {
   return (
-    <View className="gap-3 rounded-sm border border-hairline bg-panel p-3.5" style={{ width: CARD_W }}>
+    <View
+      className="gap-3 rounded-sm border border-hairline bg-panel p-3.5"
+      style={fluid ? undefined : { width: CARD_W }}
+    >
       <View className="flex-row items-center gap-2.5">
         <Skeleton width={32} height={32} />
         <View className="flex-1 gap-1.5">
@@ -108,7 +114,17 @@ const keyOf = (lead: CopyLeadSummary) => lead.leadId;
  * The carousel is a horizontal FlatList (it can grow), bleeding to the screen
  * edges so the next card peeks and the row reads as scrollable.
  */
-export function LeadsSection() {
+export function LeadsSection({
+  variant = 'carousel',
+  className,
+}: {
+  /**
+   * `carousel` is the phone's bleeding row. `list` is the desktop side column: the
+   * same cards stacked and full width, the first few, the rest one link away.
+   */
+  variant?: 'carousel' | 'list';
+  className?: string | undefined;
+}) {
   const leads = useCopyLeads();
   const follows = useFollows();
 
@@ -124,8 +140,10 @@ export function LeadsSection() {
 
   const renderItem = useCallback(({ item }: { item: CopyLeadSummary }) => <LeadCard lead={item} />, []);
 
+  const stacked = variant === 'list';
+
   return (
-    <View className="gap-2.5">
+    <View className={cx('gap-2.5', className)}>
       <SectionHeader title="Traders to follow" action={{ label: 'See all', href: routes.copy }} />
 
       {followingRow ? (
@@ -143,7 +161,12 @@ export function LeadsSection() {
         </Card>
       ) : null}
 
-      {leads.status === 'loading' ? (
+      {leads.status === 'loading' && stacked ? (
+        <View className="gap-3">
+          <LeadSkeleton fluid />
+          <LeadSkeleton fluid />
+        </View>
+      ) : leads.status === 'loading' ? (
         <View className="flex-row overflow-hidden" style={{ marginHorizontal: -GUTTER, paddingHorizontal: GUTTER, gap: GAP }}>
           <LeadSkeleton />
           <LeadSkeleton />
@@ -157,6 +180,12 @@ export function LeadsSection() {
             action={{ label: 'Open copy trading', href: routes.copy }}
           />
         </Card>
+      ) : stacked ? (
+        <View className="gap-3">
+          {list.slice(0, LIST_MAX).map((lead) => (
+            <LeadCard key={lead.leadId} lead={lead} fluid />
+          ))}
+        </View>
       ) : (
         <FlatList
           horizontal

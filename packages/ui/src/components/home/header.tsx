@@ -11,6 +11,8 @@ import { Icon } from '../icons';
 import { Skeleton } from '../skeleton';
 import { Label } from '../stat';
 import { Dot, Num } from '../ui';
+import { cx } from '../../lib/cx';
+import { web } from '../../lib/desktop';
 
 /**
  * Who is looking, and which wallet (if any) is signed in. The avatar and the wallet chip both open
@@ -27,7 +29,7 @@ export const HomeHeader = memo(function HomeHeader() {
   const kicker = session.pending ? '' : session.signedIn ? 'Welcome back' : 'Demo account';
 
   return (
-    <View className="flex-row items-center gap-3">
+    <View className={cx('flex-row items-center gap-3', web('lg:border-b lg:border-hairline lg:pb-6'))}>
       <Link
         href={routes.profile}
         aria-label="Open profile"
@@ -43,7 +45,10 @@ export const HomeHeader = memo(function HomeHeader() {
           ) : (
             <>
               <Label>{kicker}</Label>
-              <Text numberOfLines={1} className="font-sans text-18 font-medium tracking-t20 text-bone">
+              <Text
+                numberOfLines={1}
+                className={cx('font-sans text-18 font-medium tracking-t20 text-bone', web('lg:text-24'))}
+              >
                 {identity}
               </Text>
             </>

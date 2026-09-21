@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import type { Series, StrategySpec } from '@kanon/spec';
 import { Screen, StatusBar, TabBar } from '../components/chrome';
+import { DeskLegend, DeskPanel, DeskToolRail, DeskToolbar } from '../components/chart/chart-desk';
 import {
   ChartBottomBar,
   ChartHeader,
@@ -29,7 +30,9 @@ import { useKanonData, type SeriesState } from '../lib/data';
 import { SPEC } from '../lib/demo';
 import { routes } from '../lib/routes';
 import { useNavigator, useRouteParam } from '../nav';
-import { usePlatform } from '../platform';
+import { web } from '../lib/desktop';
+import { cx } from '../lib/cx';
+import { isWeb, usePlatform } from '../platform';
 
 /** Until the runtime reports the real one. */
 const DEFAULT_AXIS_WIDTH = 72;
@@ -195,92 +198,150 @@ export function ChartScreen() {
   const covering = state.status === 'loading' || state.status === 'empty';
 
   return (
-    <Screen label="02 · CHART">
+    // A column on a phone and a tablet, as it always was; the whole pane on desktop.
+    <Screen size="column" desktop="full" active="chart" nav={!fullscreen}>
       {fullscreen ? null : <StatusBar />}
 
-      <View className="min-h-0 flex-1 bg-panel">
-        <ChartHeader
-          symbol={asset}
-          price={last ? formatDecimalAt(last.close, decimals) : null}
-          change={change}
-          status={status}
-          collapsed={legendCollapsed}
-          onToggle={() => setLegendCollapsed((v) => !v)}
-        />
-        {legendCollapsed ? null : (
-          <>
-            <RuleLegend
-              name={rule.name}
-              predicates={rule.predicates}
-              structure={{ available: spec !== null, on: structureOn, onToggle: () => setStructureOn((v) => !v) }}
+      {/* Desktop: the chart and its chrome, then the panel. Below `lg` this is one column. */}
+      <View className={cx('min-h-0 flex-1 bg-panel', web('lg:flex-row'))}>
+        <View className="min-h-0 min-w-0 flex-1">
+          {isWeb ? (
+            <DeskToolbar
+              symbol={asset}
+              timeframe={timeframe}
+              onTimeframe={setTimeframe}
+              onOpenMarket={() => setSheet(true)}
+              canUndo={runtime.canUndo}
+              canRedo={runtime.canRedo}
+              hasDrawings={runtime.drawings.length > 0}
+              onUndo={() => dispatch({ type: 'undo' })}
+              onRedo={() => dispatch({ type: 'redo' })}
+              onClear={() => dispatch({ type: 'clear' })}
+              magnet={magnet}
+              onMagnet={() => setMagnet((v) => !v)}
+              fullscreen={fullscreen}
+              onFullscreen={() => setFullscreen((v) => !v)}
             />
-            <OhlcReadout readout={readout} />
-          </>
-        )}
-
-        <View className="min-h-0 flex-1">
-          <ChartView
-            ref={chart}
-            asset={asset}
-            bucketSeconds={timeframe.bucketSeconds}
-            series={series}
-            markers={allMarkers}
-            palette={palette}
-            tool={tool}
-            magnet={magnet}
-            structure={structure}
-            watermark={watermark}
-            store={store}
-            onCrosshair={setCrosshair}
-            onState={onState}
-            onPriceAxisWidth={setAxisWidth}
-          />
-
-          {covering ? (
-            <View
-              className="absolute inset-0 items-center justify-center gap-2 bg-panel/90 px-8"
-              // A screen reader hears that something is on its way, not an empty box.
-              accessibilityState={{ busy: state.status === 'loading' }}
-            >
-              <Meta>{state.status === 'loading' ? 'READING THE SERIES' : 'NO SAMPLES'}</Meta>
-              {state.status === 'empty' ? (
-                <Text className="text-center font-sans text-13 text-ash">
-                  The canonical series holds no {timeframe.label} candles for {asset} yet. They appear
-                  as prices are recorded. Nothing is drawn in the meantime.
-                </Text>
-              ) : null}
-            </View>
           ) : null}
 
-          <DrawingToolbar
-            tool={tool}
-            // Tapping the active tool again puts it down. `ChartView` sends the change to the runtime.
-            onTool={(next) => setToolState(next === tool ? null : next)}
-            magnet={magnet}
-            onMagnet={() => setMagnet((v) => !v)}
-            canDelete={runtime.selectedId !== null}
-            onDelete={() => dispatch({ type: 'deleteSelected' })}
-            collapsed={toolsCollapsed}
-            onCollapsed={setToolsCollapsed}
-            priceAxisWidth={axisWidth}
+          {/* The phone's header, rule and readout. Desktop has these in the panel and over the canvas. */}
+          <View className={cx('shrink-0', web('lg:hidden'))}>
+            <ChartHeader
+              symbol={asset}
+              price={last ? formatDecimalAt(last.close, decimals) : null}
+              change={change}
+              status={status}
+              collapsed={legendCollapsed}
+              onToggle={() => setLegendCollapsed((v) => !v)}
+            />
+            {legendCollapsed ? null : (
+              <>
+                <RuleLegend
+                  name={rule.name}
+                  predicates={rule.predicates}
+                  structure={{ available: spec !== null, on: structureOn, onToggle: () => setStructureOn((v) => !v) }}
+                />
+                <OhlcReadout readout={readout} />
+              </>
+            )}
+          </View>
+
+          <View className={cx('min-h-0 flex-1', web('lg:flex-row'))}>
+            {isWeb ? (
+              <DeskToolRail
+                tool={tool}
+                // Tapping the active tool again puts it down. `ChartView` sends the change to the runtime.
+                onTool={(next) => setToolState(next === tool ? null : next)}
+                canDelete={runtime.selectedId !== null}
+                onDelete={() => dispatch({ type: 'deleteSelected' })}
+              />
+            ) : null}
+
+            <View className="min-h-0 min-w-0 flex-1">
+              <ChartView
+                ref={chart}
+                asset={asset}
+                bucketSeconds={timeframe.bucketSeconds}
+                series={series}
+                markers={allMarkers}
+                palette={palette}
+                tool={tool}
+                magnet={magnet}
+                structure={structure}
+                watermark={watermark}
+                store={store}
+                onCrosshair={setCrosshair}
+                onState={onState}
+                onPriceAxisWidth={setAxisWidth}
+              />
+
+              {covering ? (
+                <View
+                  className="absolute inset-0 items-center justify-center gap-2 bg-panel/90 px-8"
+                  // A screen reader hears that something is on its way, not an empty box.
+                  accessibilityState={{ busy: state.status === 'loading' }}
+                >
+                  <Meta>{state.status === 'loading' ? 'READING THE SERIES' : 'NO SAMPLES'}</Meta>
+                  {state.status === 'empty' ? (
+                    <Text className="text-center font-sans text-13 text-ash">
+                      The canonical series holds no {timeframe.label} candles for {asset} yet. They appear
+                      as prices are recorded. Nothing is drawn in the meantime.
+                    </Text>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {isWeb ? <DeskLegend symbol={asset} timeframe={timeframe.label} status={status} readout={readout} /> : null}
+
+              <DrawingToolbar
+                tool={tool}
+                // Tapping the active tool again puts it down. `ChartView` sends the change to the runtime.
+                onTool={(next) => setToolState(next === tool ? null : next)}
+                magnet={magnet}
+                onMagnet={() => setMagnet((v) => !v)}
+                canDelete={runtime.selectedId !== null}
+                onDelete={() => dispatch({ type: 'deleteSelected' })}
+                collapsed={toolsCollapsed}
+                onCollapsed={setToolsCollapsed}
+                priceAxisWidth={axisWidth}
+                className={web('lg:hidden')}
+              />
+            </View>
+          </View>
+
+          {/* The phone's timeframes, history and quick trade. Desktop has these in the toolbar and the panel. */}
+          {fullscreen ? null : <TimeframeStrip value={timeframe} onChange={setTimeframe} className={web('lg:hidden')} />}
+          <ChartBottomBar
+            symbol={asset}
+            timeframe={timeframe.label}
+            onOpenMarket={() => setSheet(true)}
+            canUndo={runtime.canUndo}
+            canRedo={runtime.canRedo}
+            hasDrawings={runtime.drawings.length > 0}
+            onUndo={() => dispatch({ type: 'undo' })}
+            onRedo={() => dispatch({ type: 'redo' })}
+            onClear={() => dispatch({ type: 'clear' })}
+            fullscreen={fullscreen}
+            onFullscreen={() => setFullscreen((v) => !v)}
+            className={web('lg:hidden')}
           />
+          {fullscreen ? null : <QuickTradeBar onTrade={quickTrade} busy={busy} note={note} className={web('lg:hidden')} />}
         </View>
 
-        {fullscreen ? null : <TimeframeStrip value={timeframe} onChange={setTimeframe} />}
-        <ChartBottomBar
-          symbol={asset}
-          timeframe={timeframe.label}
-          onOpenMarket={() => setSheet(true)}
-          canUndo={runtime.canUndo}
-          canRedo={runtime.canRedo}
-          hasDrawings={runtime.drawings.length > 0}
-          onUndo={() => dispatch({ type: 'undo' })}
-          onRedo={() => dispatch({ type: 'redo' })}
-          onClear={() => dispatch({ type: 'clear' })}
-          fullscreen={fullscreen}
-          onFullscreen={() => setFullscreen((v) => !v)}
-        />
-        {fullscreen ? null : <QuickTradeBar onTrade={quickTrade} busy={busy} note={note} />}
+        {isWeb && !fullscreen ? (
+          <DeskPanel
+            asset={asset}
+            onAsset={setAsset}
+            price={last ? formatDecimalAt(last.close, decimals) : null}
+            change={change}
+            status={status}
+            rule={{ name: rule.name, predicates: rule.predicates }}
+            structure={{ available: spec !== null, on: structureOn, onToggle: () => setStructureOn((v) => !v) }}
+            onTrade={quickTrade}
+            busy={busy}
+            note={note}
+          />
+        ) : null}
       </View>
 
       {fullscreen ? null : <TabBar active="chart" />}
