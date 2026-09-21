@@ -33,10 +33,15 @@ export const colors = {
   /** Attestation links, proof chips. */
   verified: '#3D8BFD',
 
+  /** Dim behind a bottom sheet. Used with an alpha (`bg-scrim/70`), dark in both themes. */
+  scrim: '#07090B',
+
   /** Ground behind the device on wide viewports. Below `void`. */
   canvas: '#07090B',
-  /** Recessed drawer, e.g. the compiler's live spec pane. */
+  /** Recessed drawer, e.g. the compiler's live spec pane, and the track behind a segmented control. */
   sunken: '#0F1216',
+  /** The active thing sitting in a `sunken` track: the selected segment. Lighter than the track in both themes. */
+  lift: '#1D232A',
 
   /** Pressed/hover states. */
   'signal-hot': '#E4AF1C',
@@ -55,6 +60,104 @@ export const colors = {
 } as const;
 
 export type ColorToken = keyof typeof colors;
+
+/**
+ * The light palette. Same roles, same names, same semantics: `signal` is still
+ * the rule, `long`/`short` still direction, `refused` still hotter than `short`,
+ * `verified` still the proof blue. Every text-bearing token clears 4.5:1 on
+ * `panel` and `void` (asserted in `packages/ui/src/lib/theme-logic.test.ts`), so
+ * the accents are deliberately deeper than their dark-mode twins. Surfaces are
+ * cool-tinted (hue 210) to stay in the same family as the dark ramp.
+ */
+export const lightColors = {
+  void: '#F2F4F7',
+  panel: '#FFFFFF',
+  raised: '#E8ECF1',
+  hairline: '#D0D7DF',
+  bone: '#11161C',
+  ash: '#525D69',
+  signal: '#916400',
+  long: '#0A7551',
+  short: '#BE332B',
+  refused: '#CC2A10',
+  verified: '#1D5FD1',
+
+  scrim: '#0B1118',
+
+  canvas: '#E3E8EE',
+  sunken: '#E2E7ED',
+  lift: '#FFFFFF',
+
+  'signal-hot': '#7A5300',
+  'verified-hot': '#174FB0',
+  'raised-hot': '#DCE2E9',
+  'refused-wash': '#FCE8E4',
+
+  'diff-wash': '#FBF3DA',
+  'diff-gutter': '#D9AE3C',
+
+  'inferred-edge': '#E5CF94',
+  'inferred-wash': '#FBF6E4',
+} as const;
+
+export type ThemeScheme = 'dark' | 'light';
+export type ThemeMode = ThemeScheme | 'system';
+
+/** Both palettes by scheme. `useTheme().colors` is one of these. */
+export const themes = { dark: colors, light: lightColors } as const;
+
+/** Persisted under this key on both platforms; the web boot script reads it too. */
+export const THEME_STORAGE_KEY = 'kanon.theme';
+
+/** `#RRGGBB` to the space-separated triplet Tailwind's `rgb(var(--x) / <alpha-value>)` wants. */
+export function hexToTriplet(hex: string): string {
+  const n = Number.parseInt(hex.slice(1), 16);
+  return `${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255}`;
+}
+
+/**
+ * The CSS variables for a scheme, as `{ '--c-void': '11 13 16', ... }`. Web reads
+ * them from the generated `theme.css`; native hands this to NativeWind's `vars()`.
+ * Both come from the tables above, so they cannot drift.
+ */
+export function themeVars(scheme: ThemeScheme): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, hex] of Object.entries(themes[scheme])) {
+    out[`--c-${name}`] = hexToTriplet(hex);
+  }
+  return out;
+}
+
+/**
+ * Runs in `<head>` before first paint so a light-mode user never sees a dark
+ * flash. Mirrors `resolveScheme` in `@kanon/ui` (dark unless the stored mode is
+ * `light`, or `system` while the OS prefers light).
+ */
+export const themeBootScript = `(function(){try{var m=localStorage.getItem('${THEME_STORAGE_KEY}');var s=m==='light'?'light':m==='system'&&window.matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';var r=document.documentElement;r.setAttribute('data-theme',s);r.style.colorScheme=s;}catch(e){}})();`;
+
+/**
+ * Corner radius, px. Tight on purpose: 2 for chips/inputs/buttons, 3 for
+ * surfaces, 4 for sheets. Nothing softer than 4 except a full circle.
+ */
+export const radius = { none: 0, xs: 2, sm: 3, md: 4, full: 999 } as const;
+
+/**
+ * Spacing steps for layout rhythm (px). Stay on this scale for gaps and
+ * padding; 4-based, with 2 and 6 for tight optical fixes.
+ */
+export const space = { 0: 0, 0.5: 2, 1: 4, 1.5: 6, 2: 8, 3: 12, 4: 16, 5: 20, 6: 24, 8: 32, 10: 40 } as const;
+
+/**
+ * Elevation, as RN shadow tuples. `color` names a token so the shadow follows
+ * the theme; `opacity` is per scheme because a dark surface needs a heavier
+ * shadow to read at all and a light one a whisper.
+ */
+export const elevation = {
+  0: { y: 0, blur: 0, dark: 0, light: 0 },
+  1: { y: 1, blur: 3, dark: 0.35, light: 0.08 },
+  2: { y: 4, blur: 12, dark: 0.45, light: 0.12 },
+  3: { y: 12, blur: 32, dark: 0.55, light: 0.18 },
+} as const;
 
 /**
  * Type scale, keyed by px. `docs/DESIGN.md` names 32/24/18/15/13/11 as the
