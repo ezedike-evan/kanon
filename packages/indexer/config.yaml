@@ -1,0 +1,123 @@
+# yaml-language-server: $schema=../../node_modules/envio/evm.schema.json
+#
+# Kanon indexer, Envio HyperIndex v3, Monad mainnet (chain id 143).
+#
+# Event signatures are inlined (copied from packages/contracts/src/*.sol) so the
+# indexer builds without a forge artifact step. If the contract events change,
+# change them here and in the matching handler; `pnpm --filter @kanon/indexer
+# typecheck` fails loudly when the two drift apart.
+#
+# Deployment addresses come from the environment (see .env.example and
+# README.md). Variables carry the ENVIO_ prefix because that is the only prefix
+# Envio Cloud injects. The defaults below are inert placeholders so
+# `envio codegen` and the tests run without a deployment.
+name: kanon-indexer
+description: Trade history, refusals, strategy timelines and positions for Kanon on Monad.
+ecosystem: evm
+
+address_format: lowercase
+rollback_on_reorg: true
+
+# `hash` and `from` are the evidence anchors. Block number, timestamp and hash
+# are always available on `event.block`.
+field_selection:
+  transaction_fields:
+    - hash
+    - from
+
+contracts:
+  - name: StrategyRegistry
+    events:
+      - event: "StrategyPinned(uint256 indexed strategyId, address indexed owner, bytes32 specHash, uint256 bond, bytes32 predicatesCommitment, address series)"
+      - event: "Tightened(uint256 indexed strategyId, bytes32 oldSpecHash, bytes32 newSpecHash, bytes32 newPredicatesCommitment, address newSeries)"
+      - event: "LooseningProposed(uint256 indexed strategyId, bytes32 pendingSpecHash, bytes32 pendingPredicatesCommitment, address pendingSeries, uint256 cooldownEndsAt)"
+      - event: "LooseningFinalized(uint256 indexed strategyId, bytes32 oldSpecHash, bytes32 newSpecHash, bytes32 newPredicatesCommitment, address newSeries)"
+
+  - name: RefusalGate
+    events:
+      - event: "TradeProposed(uint256 indexed strategyId, bytes32 indexed specHash, address indexed proposer)"
+      - event: "TradeRefused(uint256 indexed strategyId, bytes32 indexed specHash, address indexed proposer, bytes32 predicateSymbol, int256 decidingValue)"
+
+  # Created by VaultFactory, so registered dynamically (contractRegister in
+  # src/handlers/vaultFactory.ts) rather than listed by address below.
+  - name: GuardedVault
+    events:
+      - event: "Deposited(address indexed from, uint256 amount)"
+      - event: "Withdrawn(address indexed to, uint256 amount)"
+      - event: "TradeProposed(bytes32 indexed assetId, address indexed proposer, bool isLong, uint256 size, int256 projectedPnL)"
+      - event: "TradeRefused(bytes32 indexed assetId, address indexed proposer, bytes32 reason, int256 decidingValue)"
+
+  - name: ThresholdMarket
+    events:
+      - event: "SeriesRegistered(bytes32 indexed seriesId, address indexed seriesContract)"
+      - event: "MarketOpened(uint256 indexed marketId, bytes32 indexed seriesId, int256 thresholdPrice, bool above, uint256 windowStart, uint256 windowEnd)"
+      - event: "SideTaken(uint256 indexed marketId, address indexed staker, bool takesYes, uint256 amount)"
+      - event: "MarketSettled(uint256 indexed marketId, bool yesWon)"
+      - event: "MarketUnresolvable(uint256 indexed marketId)"
+      - event: "Claimed(uint256 indexed marketId, address indexed staker, uint256 amount)"
+
+  - name: MarginAccount
+    events:
+      - event: "Deposited(address indexed account, uint256 amount)"
+      - event: "Withdrawn(address indexed account, uint256 amount)"
+      - event: "PositionOpened(address indexed account, uint256 indexed positionId, address indexed seriesContract, bool isLong, uint256 size, uint256 entryPrice)"
+      - event: "PositionClosed(address indexed account, uint256 indexed positionId, uint256 exitPrice, int256 pnl, bool wasLiquidation)"
+      - event: "PositionDeleveraged(address indexed account, uint256 indexed positionId, uint256 closedSize, uint256 remainingSize, uint256 exitPrice, int256 pnl, uint256 healthFactorBefore, uint256 healthFactorAfter)"
+      - event: "LiquidationPenaltyCharged(address indexed account, uint256 indexed positionId, uint256 penalty)"
+      - event: "StrategyBound(address indexed account, uint256 indexed strategyId)"
+      - event: "DebtIncurred(address indexed account, uint256 amount)"
+      - event: "DebtRepaid(address indexed account, uint256 amount)"
+      - event: "BadDebtResolved(address indexed account, uint256 debt, uint256 coveredByFund, uint256 uncovered)"
+
+  - name: InsuranceFund
+    events:
+      - event: "Deposited(address indexed from, uint256 amount)"
+      - event: "PenaltyReceived(uint256 amount)"
+      - event: "ShortfallCovered(uint256 requested, uint256 covered)"
+
+  - name: VaultFactory
+    events:
+      - event: "GuardedVaultCreated(address indexed vault, address indexed owner, uint256 indexed strategyId, address strategyExecutor, address series, uint256 maxDailyDrawdownBps, bytes32[] whitelistedAssetIds)"
+      - event: "CopyVaultCreated(address indexed vault, address indexed follower, uint256 indexed leaderStrategyId, address leaderExecutor, uint256 allocationBps, uint256 feeShareBps, address feeRecipient)"
+      - event: "LooserVaultRequested(address indexed owner, uint256 indexed strategyId, bytes32 indexed requestId, uint256 availableAt)"
+
+  - name: CopyVault
+    # Created by VaultFactory; registered dynamically like GuardedVault.
+    events:
+      - event: "Deposited(address indexed follower, uint256 amount)"
+      - event: "Withdrawn(address indexed follower, uint256 amount)"
+      - event: "FollowingToggled(bool active)"
+      - event: "TradeSkipped(bytes32 indexed assetId, bytes32 reason)"
+      - event: "PositionMirrored(uint256 indexed positionId, bytes32 indexed assetId, bool isLong, uint256 followerSize, uint256 entryPrice)"
+      - event: "PositionClosed(uint256 indexed positionId, uint256 exitPrice, int256 pnl, uint256 feeCharged)"
+
+  - name: CanonicalSeries
+    events:
+      - event: "SampleRecorded(uint256 indexed bucketIndex, int64 price, int32 expo, uint256 publishTime, address indexed caller)"
+
+chains:
+  - id: 143
+    start_block: ${ENVIO_START_BLOCK:-0}
+    contracts:
+      - name: StrategyRegistry
+        address: "${ENVIO_STRATEGY_REGISTRY:-0x0000000000000000000000000000000000000001}"
+      - name: RefusalGate
+        address: "${ENVIO_REFUSAL_GATE:-0x0000000000000000000000000000000000000002}"
+      - name: ThresholdMarket
+        address: "${ENVIO_THRESHOLD_MARKET:-0x0000000000000000000000000000000000000003}"
+      - name: MarginAccount
+        address: "${ENVIO_MARGIN_ACCOUNT:-0x0000000000000000000000000000000000000004}"
+      - name: InsuranceFund
+        address: "${ENVIO_INSURANCE_FUND:-0x0000000000000000000000000000000000000005}"
+      - name: VaultFactory
+        address: "${ENVIO_VAULT_FACTORY:-0x0000000000000000000000000000000000000006}"
+      # GuardedVault and CopyVault addresses are discovered from VaultFactory
+      # events. Entries without an address are the dynamic ones.
+      - name: GuardedVault
+      - name: CopyVault
+      # One CanonicalSeries contract per asset. Set both to your deployed
+      # series (BTC/USD and ETH/USD are the demo assets).
+      - name: CanonicalSeries
+        address:
+          - "${ENVIO_CANONICAL_SERIES_BTC:-0x0000000000000000000000000000000000000007}"
+          - "${ENVIO_CANONICAL_SERIES_ETH:-0x0000000000000000000000000000000000000008}"

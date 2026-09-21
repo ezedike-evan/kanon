@@ -1,0 +1,469 @@
+# Kanon indexer schema.
+#
+# Design goal: answer, from one endpoint,
+#   1. "every trade and refusal for this address, with evidence hashes"
+#   2. "how many refusals would have lost" (needs each refusal's timestamp and
+#      the price of the series at that time; see PriceSample and the
+#      getRefusalOutcomeInputs helper in src/client.ts)
+#
+# Conventions
+#   - Ids are strings prefixed with the chain id so one indexer can span chains.
+#   - Addresses are lowercase hex (address_format: lowercase in config.yaml).
+#   - Prices and sizes are BigInt integers exactly as emitted on-chain. Decimals
+#     are carried separately (PriceSample.expo). Never floats.
+#   - Evidence = (txHash, blockNumber, logIndex) plus the spec hash the check ran
+#     against. Anything displayed as a claim can link back to those.
+
+enum StrategyEventKind {
+  PINNED
+  TIGHTENED
+  LOOSENING_PROPOSED
+  LOOSENING_FINALIZED
+}
+
+enum TradeLogKind {
+  # RefusalGate / GuardedVault accepted a proposal.
+  PROPOSED
+  # RefusalGate / GuardedVault refused a proposal. Refusal is a success state.
+  REFUSED
+  # MarginAccount position opened.
+  OPENED
+  # MarginAccount position closed by its owner.
+  CLOSED
+  # MarginAccount position closed by liquidation.
+  LIQUIDATED
+  # MarginAccount position partially closed to restore health (not a full close).
+  DELEVERAGED
+  # CopyVault mirrored a leader trade.
+  MIRRORED
+  # CopyVault closed a mirrored position.
+  MIRROR_CLOSED
+  # CopyVault skipped a leader trade (for example follower inactive).
+  SKIPPED
+}
+
+enum PositionSource {
+  MARGIN_ACCOUNT
+  COPY_VAULT
+}
+
+enum PositionStatus {
+  OPEN
+  CLOSED
+  LIQUIDATED
+}
+
+enum VaultKind {
+  GUARDED
+  COPY
+  MARGIN
+}
+
+enum CollateralFlowKind {
+  DEPOSIT
+  WITHDRAWAL
+}
+
+enum MarketStatus {
+  OPEN
+  SETTLED
+  UNRESOLVABLE
+}
+
+# ---------------------------------------------------------------------------
+# StrategyRegistry
+# ---------------------------------------------------------------------------
+
+type Strategy {
+  id: ID!
+  chainId: Int!
+  registry: String!
+  # On-chain strategy id (uint256 as decimal string).
+  strategyId: String!
+  owner: String! @index
+  # The spec hash currently enforced by the gate.
+  activeSpecHash: String!
+  # Commitment to the strategy's predicate list, and the CanonicalSeries the
+  # strategy is pinned to. Both change with the spec (tighten / loosening).
+  predicatesCommitment: String!
+  series: String!
+  bond: BigInt!
+  pinnedAt: Int!
+  # Set while a loosening waits out its cooling-off period. Null otherwise.
+  pendingSpecHash: String
+  pendingPredicatesCommitment: String
+  pendingSeries: String
+  cooldownEndsAt: Int
+  tightenCount: Int!
+  looseningCount: Int!
+  proposalCount: Int!
+  refusalCount: Int!
+  lastActivityAt: Int!
+}
+
+type StrategyEvent {
+  id: ID!
+  strategy_id: String! @index
+  chainId: Int!
+  kind: StrategyEventKind!
+  # Hash the spec had before this event (null for PINNED and LOOSENING_PROPOSED).
+  oldSpecHash: String
+  # Hash after this event, or the proposed hash for LOOSENING_PROPOSED.
+  newSpecHash: String!
+  # Predicate-list commitment and series after this event (proposed values for
+  # LOOSENING_PROPOSED).
+  predicatesCommitment: String!
+  series: String!
+  # Values before this event (null for PINNED and LOOSENING_PROPOSED, where the
+  # active values do not change).
+  oldPredicatesCommitment: String
+  oldSeries: String
+  cooldownEndsAt: Int
+  bond: BigInt
+  actor: String
+  timestamp: Int! @index
+  blockNumber: Int!
+  logIndex: Int!
+  txHash: String!
+}
+
+# ---------------------------------------------------------------------------
+# RefusalGate and GuardedVault
+# ---------------------------------------------------------------------------
+
+type Refusal {
+  id: ID!
+  chainId: Int!
+  # RefusalGate address that emitted the refusal.
+  gate: String!
+  strategy_id: String! @index
+  # Spec hash the refused trade was checked against. Evidence anchor.
+  specHash: String!
+  # msg.sender of the gate call. For a trade routed through a GuardedVault this
+  # is the vault contract; `account` below is the human-facing address.
+  proposer: String! @index
+  # The address a client should filter on: the owner of the vault the trade was
+  # routed through when known (VaultFactory tells us), else the proposer.
+  account: String! @index
+  # Who actually made the call: the GuardedVault proposer (owner or executor
+  # key) when routed through a vault, else the gate caller.
+  actor: String
+  # GuardedVault the trade was routed through, if any.
+  vault: String @index
+  # Predicate symbol, decoded from bytes32 (for example "bos_long").
+  predicate: String!
+  predicateRaw: String!
+  # The number that failed the predicate. Predicate specific, NOT a price.
+  decidingValue: BigInt!
+  timestamp: Int! @index
+  blockNumber: Int!
+  logIndex: Int!
+  txHash: String! @index
+}
+
+type Account {
+  id: ID!
+  chainId: Int!
+  address: String!
+  proposalCount: Int!
+  refusalCount: Int!
+  openedCount: Int!
+  closedCount: Int!
+  liquidationCount: Int!
+  # Strategy this account's MarginAccount is bound to (one-way), if any.
+  boundStrategy_id: String @index
+  firstSeenAt: Int!
+  lastActivityAt: Int!
+}
+
+# Union log of everything an address did or was refused. This is the trade
+# history table. Kind-specific fields are null when not applicable.
+type TradeLog {
+  id: ID!
+  chainId: Int!
+  kind: TradeLogKind!
+  # Vault owner when the vault is known, else the acting address.
+  account: String! @index
+  # The address that made the call (an executor key for agent-driven trades).
+  actor: String @index
+  # Contract that emitted the event, and its role. For a trade routed through a
+  # GuardedVault the gate log is enriched in place (one row per trade, not two),
+  # so contractName stays RefusalGate and `vault` names the vault.
+  contractAddress: String! @index
+  contractName: String!
+  vault: String @index
+  strategy_id: String @index
+  specHash: String
+  # Asset identifier as emitted (bytes32 hex) where the contract uses one.
+  assetId: String
+  # Series contract for MarginAccount positions.
+  series: String
+  isLong: Boolean
+  size: BigInt
+  price: BigInt
+  pnl: BigInt
+  # Predicate name for gate refusals, or the guardrail reason for vault refusals.
+  reason: String
+  decidingValue: BigInt
+  position_id: String
+  refusal_id: String
+  timestamp: Int! @index
+  blockNumber: Int!
+  logIndex: Int!
+  txHash: String! @index
+}
+
+# ---------------------------------------------------------------------------
+# MarginAccount and CopyVault positions
+# ---------------------------------------------------------------------------
+
+type Position {
+  id: ID!
+  chainId: Int!
+  source: PositionSource!
+  # MarginAccount or CopyVault instance the position lives in.
+  contractAddress: String! @index
+  # Trader (MarginAccount) or follower is the CopyVault instance itself.
+  account: String! @index
+  positionId: String!
+  # Series contract (MarginAccount) or bytes32 asset id (CopyVault).
+  series: String
+  assetId: String
+  isLong: Boolean!
+  size: BigInt!
+  entryPrice: BigInt!
+  exitPrice: BigInt
+  pnl: BigInt
+  feeCharged: BigInt
+  status: PositionStatus!
+  openedAt: Int!
+  closedAt: Int
+  openTxHash: String!
+  closeTxHash: String
+  # For liquidations, the address that sent the liquidating transaction.
+  liquidator: String
+}
+
+# ---------------------------------------------------------------------------
+# Vault instances (GuardedVault, CopyVault, MarginAccount)
+# ---------------------------------------------------------------------------
+
+type Vault {
+  id: ID!
+  chainId: Int!
+  address: String!
+  kind: VaultKind!
+  # Owner (GuardedVault) or follower (CopyVault). Known from VaultFactory
+  # creation events; for MarginAccount it stays null (positions are per account).
+  ownerAddress: String @index
+  # Set when the vault was created through VaultFactory.
+  factory: String
+  createdAt: Int
+  # GuardedVault: bound strategy, executor key, canonical series, drawdown cap
+  # and asset whitelist (all immutable on-chain).
+  strategy_id: String @index
+  executor: String
+  series: String
+  maxDailyDrawdownBps: Int
+  whitelistedAssetIds: [String!]
+  # CopyVault: leader strategy and economics (all immutable on-chain).
+  leaderStrategy_id: String @index
+  allocationBps: Int
+  feeShareBps: Int
+  feeRecipient: String
+  # Net collateral flow indexed so far (deposits minus withdrawals).
+  netDeposits: BigInt!
+  depositCount: Int!
+  withdrawalCount: Int!
+  proposalCount: Int!
+  refusalCount: Int!
+  skippedCount: Int!
+  # CopyVault only.
+  following: Boolean
+  lastActivityAt: Int!
+}
+
+type CollateralFlow {
+  id: ID!
+  chainId: Int!
+  kind: CollateralFlowKind!
+  contractAddress: String! @index
+  contractName: String!
+  account: String! @index
+  amount: BigInt!
+  timestamp: Int! @index
+  blockNumber: Int!
+  logIndex: Int!
+  txHash: String!
+}
+
+# ---------------------------------------------------------------------------
+# ThresholdMarket
+# ---------------------------------------------------------------------------
+
+type Market {
+  id: ID!
+  chainId: Int!
+  contractAddress: String!
+  marketId: String!
+  # bytes32 series id as registered on ThresholdMarket.
+  seriesId: String! @index
+  thresholdPrice: BigInt!
+  above: Boolean!
+  windowStart: Int!
+  windowEnd: Int!
+  status: MarketStatus!
+  yesWon: Boolean
+  yesStake: BigInt!
+  noStake: BigInt!
+  betCount: Int!
+  openedAt: Int!
+  settledAt: Int
+  openTxHash: String!
+  settleTxHash: String
+}
+
+type MarketBet {
+  id: ID!
+  chainId: Int!
+  market_id: String! @index
+  staker: String! @index
+  takesYes: Boolean!
+  amount: BigInt!
+  timestamp: Int! @index
+  blockNumber: Int!
+  logIndex: Int!
+  txHash: String!
+}
+
+type MarketClaim {
+  id: ID!
+  chainId: Int!
+  market_id: String! @index
+  staker: String! @index
+  amount: BigInt!
+  timestamp: Int! @index
+  blockNumber: Int!
+  logIndex: Int!
+  txHash: String!
+}
+
+type MarketSeries {
+  id: ID!
+  chainId: Int!
+  contractAddress: String!
+  # bytes32 series id.
+  seriesId: String!
+  # CanonicalSeries contract this id resolves to.
+  seriesContract: String! @index
+  registeredAt: Int!
+}
+
+# ---------------------------------------------------------------------------
+# CanonicalSeries price samples. The raw material for "would this refusal have
+# lost": compare the sample at refusal time with the later ones.
+# ---------------------------------------------------------------------------
+
+type PriceSample {
+  id: ID!
+  chainId: Int!
+  # CanonicalSeries contract address.
+  series: String! @index
+  bucketIndex: String!
+  # Integer price and exponent exactly as emitted (Pyth conventions).
+  price: BigInt!
+  expo: Int!
+  # Pyth publish time, seconds.
+  publishTime: Int! @index
+  caller: String!
+  blockNumber: Int!
+  logIndex: Int!
+  txHash: String!
+}
+
+# ---------------------------------------------------------------------------
+# MarginAccount risk events and InsuranceFund
+# ---------------------------------------------------------------------------
+
+enum MarginEventKind {
+  STRATEGY_BOUND
+  DELEVERAGED
+  LIQUIDATION_PENALTY
+  DEBT_INCURRED
+  DEBT_REPAID
+  BAD_DEBT_RESOLVED
+}
+
+# Risk-side log of the MarginAccount. Numeric fields are null when the event
+# does not carry them. Amounts are collateral-token base units.
+type MarginEvent {
+  id: ID!
+  chainId: Int!
+  kind: MarginEventKind!
+  contractAddress: String! @index
+  account: String! @index
+  position_id: String
+  # STRATEGY_BOUND
+  strategy_id: String
+  # DELEVERAGED
+  closedSize: BigInt
+  remainingSize: BigInt
+  exitPrice: BigInt
+  pnl: BigInt
+  healthFactorBefore: BigInt
+  healthFactorAfter: BigInt
+  # LIQUIDATION_PENALTY, DEBT_INCURRED, DEBT_REPAID (the amount moved)
+  amount: BigInt
+  # BAD_DEBT_RESOLVED
+  debt: BigInt
+  coveredByFund: BigInt
+  uncovered: BigInt
+  timestamp: Int! @index
+  blockNumber: Int!
+  logIndex: Int!
+  txHash: String!
+}
+
+enum FundEventKind {
+  DEPOSIT
+  PENALTY_RECEIVED
+  SHORTFALL_COVERED
+}
+
+type FundEvent {
+  id: ID!
+  chainId: Int!
+  kind: FundEventKind!
+  contractAddress: String! @index
+  # Depositor for DEPOSIT, null otherwise.
+  account: String
+  amount: BigInt
+  # SHORTFALL_COVERED: what was asked for and what the fund could cover.
+  requested: BigInt
+  covered: BigInt
+  timestamp: Int! @index
+  blockNumber: Int!
+  logIndex: Int!
+  txHash: String!
+}
+
+# ---------------------------------------------------------------------------
+# VaultFactory cooling-off for looser vaults
+# ---------------------------------------------------------------------------
+
+# A request to create a vault LOOSER than the owner's current posture starts the
+# cooling-off clock. Repeating the same request does not restart it, so rows with
+# the same requestId carry the same availableAt.
+type LooserVaultRequest {
+  id: ID!
+  chainId: Int!
+  factory: String! @index
+  owner: String! @index
+  strategy_id: String! @index
+  requestId: String! @index
+  availableAt: Int!
+  timestamp: Int! @index
+  blockNumber: Int!
+  logIndex: Int!
+  txHash: String!
+}

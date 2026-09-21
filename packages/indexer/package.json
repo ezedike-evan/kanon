@@ -1,0 +1,28 @@
+{
+  "name": "@kanon/indexer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Envio HyperIndex indexer for Kanon: trade history, refusals and strategy timelines on Monad.",
+  "main": "./src/client.ts",
+  "types": "./src/client.ts",
+  "exports": {
+    ".": "./src/client.ts"
+  },
+  "scripts": {
+    "codegen": "envio codegen",
+    "dev": "envio dev",
+    "start": "envio start",
+    "test": "vitest run",
+    "typecheck": "envio codegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "envio": "3.12.1",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}
