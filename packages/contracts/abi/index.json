@@ -1,0 +1,12 @@
+[
+  "CanonicalSeries",
+  "StrategyRegistry",
+  "RefusalGate",
+  "ThresholdMarket",
+  "InsuranceFund",
+  "MarginAccount",
+  "GuardedVault",
+  "CopyVault",
+  "VaultFactory",
+  "IERC20"
+]

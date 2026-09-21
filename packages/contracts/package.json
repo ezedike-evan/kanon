@@ -1,0 +1,11 @@
+{
+  "name": "@kanon/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test",
+    "abi": "./script/export-abi.sh",
+    "e2e": "./script/e2e-local.sh"
+  }
+}

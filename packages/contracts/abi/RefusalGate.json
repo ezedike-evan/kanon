@@ -1,0 +1,453 @@
+[
+  {
+    "type": "constructor",
+    "inputs": [
+      {
+        "name": "registry_",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "evaluateOnChain",
+    "inputs": [
+      {
+        "name": "strategyId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "isLong",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "predicates",
+        "type": "tuple[]",
+        "internalType": "struct RefusalGate.PredicateDefinition[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.PredicateKind"
+          },
+          {
+            "name": "symbol",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "direction",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.Direction"
+          },
+          {
+            "name": "swingLookbackCandles",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minGapBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "referenceExtreme",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.ReferenceExtreme"
+          },
+          {
+            "name": "lookback",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.Lookback"
+          },
+          {
+            "name": "timeframeSeconds",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "allSatisfied",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "evaluatePredicate",
+    "inputs": [
+      {
+        "name": "series",
+        "type": "address",
+        "internalType": "contract ICanonicalSeries"
+      },
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct RefusalGate.PredicateDefinition",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.PredicateKind"
+          },
+          {
+            "name": "symbol",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "direction",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.Direction"
+          },
+          {
+            "name": "swingLookbackCandles",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minGapBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "referenceExtreme",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.ReferenceExtreme"
+          },
+          {
+            "name": "lookback",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.Lookback"
+          },
+          {
+            "name": "timeframeSeconds",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "latest",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "bucketSeconds",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct PredicateEngine.PredicateResult",
+        "components": [
+          {
+            "name": "satisfied",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "decidingValue",
+            "type": "int256",
+            "internalType": "int256"
+          },
+          {
+            "name": "referenceValue",
+            "type": "int256",
+            "internalType": "int256"
+          },
+          {
+            "name": "atBucketIndex",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "atTimestamp",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "previewOnChain",
+    "inputs": [
+      {
+        "name": "strategyId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "isLong",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "predicates",
+        "type": "tuple[]",
+        "internalType": "struct RefusalGate.PredicateDefinition[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.PredicateKind"
+          },
+          {
+            "name": "symbol",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "direction",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.Direction"
+          },
+          {
+            "name": "swingLookbackCandles",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minGapBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "referenceExtreme",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.ReferenceExtreme"
+          },
+          {
+            "name": "lookback",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.Lookback"
+          },
+          {
+            "name": "timeframeSeconds",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "allSatisfied",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "failingSymbol",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "decidingValue",
+        "type": "int256",
+        "internalType": "int256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "registry",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract StrategyRegistry"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "TradeProposed",
+    "inputs": [
+      {
+        "name": "strategyId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "specHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "proposer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TradeRefused",
+    "inputs": [
+      {
+        "name": "strategyId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "specHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "proposer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "predicateSymbol",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "decidingValue",
+        "type": "int256",
+        "indexed": false,
+        "internalType": "int256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "CommitmentMismatch",
+    "inputs": [
+      {
+        "name": "committed",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "supplied",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InconsistentSweepDirection",
+    "inputs": [
+      {
+        "name": "predicateIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientCandles",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidPredicate",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidWindow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MixedDirections",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoPredicates",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NoReferenceHistory",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlySelf",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StaleSeries",
+    "inputs": [
+      {
+        "name": "bucketIndex",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TimeframeMismatch",
+    "inputs": [
+      {
+        "name": "seriesBucketSeconds",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "predicateTimeframeSeconds",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnknownStrategy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WindowTooWide",
+    "inputs": []
+  }
+]
