@@ -1,7 +1,7 @@
 import { Pressable, Text, View } from 'react-native';
 import { OnboardingScreen } from '../components/onboarding';
 import { GhostButton, Num } from '../components/ui';
-import { ONBOARDING } from '../lib/demo';
+import { useKanonData } from '../lib/data';
 import { routes } from '../lib/routes';
 import { cx } from '../lib/cx';
 
@@ -12,6 +12,8 @@ import { cx } from '../lib/cx';
  * enforced either way, and enforcement is what the product is.
  */
 export function OnboardingFundScreen() {
+  const { onboardingFund } = useKanonData();
+  const options = onboardingFund.options;
   return (
     <OnboardingScreen
       step={2}
@@ -21,13 +23,13 @@ export function OnboardingFundScreen() {
       footer={<GhostButton href={routes.onboardingStrategy}>SKIP FOR NOW</GhostButton>}
     >
       <View className="mt-8.5">
-        {ONBOARDING.fund.map((option, i) => (
+        {options.map((option, i) => (
           <Pressable
             key={option.title}
             role="button"
             className={cx(
               'flex-row items-center justify-between gap-3 border-t border-hairline py-4.25',
-              i === ONBOARDING.fund.length - 1 && 'border-b',
+              i === options.length - 1 && 'border-b',
             )}
           >
             <View className="gap-1.75">

@@ -3,8 +3,8 @@ import { Pressable, Text, TextInput, View } from 'react-native';
 import { OnboardingScreen } from '../components/onboarding';
 import { Num, PrimaryButton } from '../components/ui';
 import { useNavigator } from '../nav';
-import { colors } from '@kanon/tokens';
-import { ONBOARDING } from '../lib/demo';
+import { useTheme } from '../theme';
+import { useKanonData } from '../lib/data';
 import { routes } from '../lib/routes';
 import { cx } from '../lib/cx';
 
@@ -18,7 +18,9 @@ const LIMIT = 400;
  * to translate it, not to improve it.
  */
 export function OnboardingStrategyScreen() {
+  const { colors } = useTheme();
   const nav = useNavigator();
+  const { onboardingStrategy, sendCompilerMessage, mode } = useKanonData();
   const [text, setText] = useState('');
   const [focused, setFocused] = useState(false);
 
@@ -29,7 +31,16 @@ export function OnboardingStrategyScreen() {
       title="Describe the rule you keep breaking."
       blurb="Write it the way you'd say it out loud. Kanon compiles it into something a contract can check."
       footer={
-        <PrimaryButton onPress={() => nav.push(routes.compile)}>COMPILE</PrimaryButton>
+        <PrimaryButton
+          disabled={mode === 'live' && text.trim().length === 0}
+          onPress={() => {
+            // The compile starts here and finishes on the compiler screen, which shows it working.
+            void sendCompilerMessage(text);
+            nav.push(routes.compile);
+          }}
+        >
+          COMPILE
+        </PrimaryButton>
       }
     >
       <View
@@ -64,7 +75,7 @@ export function OnboardingStrategyScreen() {
       <View className="mt-4 gap-2.5">
         <Text className="font-mono text-9 tracking-w20 text-ash">OR START FROM</Text>
         <View className="flex-row flex-wrap gap-2">
-          {ONBOARDING.starters.map((starter) => (
+          {onboardingStrategy.starters.map((starter) => (
             <Pressable
               key={starter}
               role="button"

@@ -3,8 +3,8 @@ import { formatDecimal } from '@kanon/spec';
 import { Body, Screen, StatusBar, TabBar } from '../components/chrome';
 import { Dot, Meta, Num } from '../components/ui';
 import { Link } from '../nav';
-import { BLOCKED } from '../lib/demo';
-import { routes } from '../lib/routes';
+import { useBlockedLog } from '../lib/domains';
+import { routes, tradeRoute } from '../lib/routes';
 
 /**
  * 07 · BLOCKED TRADES LOG.
@@ -14,6 +14,7 @@ import { routes } from '../lib/routes';
  * and nothing apologises: a refusal is the product working.
  */
 export function BlockedLogScreen() {
+  const BLOCKED = useBlockedLog();
   return (
     <Screen rail="bg-hairline" label="07 · BLOCKED TRADES LOG">
       <StatusBar />
@@ -33,19 +34,32 @@ export function BlockedLogScreen() {
           <View className="flex-[1.5] items-end gap-2 py-4">
             <Meta>WOULD HAVE LOST</Meta>
             <Num className="font-mono-medium text-31 tracking-t30 leading-[0.9]">
-              {formatDecimal(BLOCKED.wouldHaveLost)}
+              {BLOCKED.loading ? '—' : formatDecimal(BLOCKED.wouldHaveLost)}
             </Num>
           </View>
         </View>
         <Text className="mt-2.5 font-mono text-10 text-ash leading-[1.5]">
           {BLOCKED.note}
         </Text>
+        <Link
+          href={routes.analytics}
+          aria-label="Analytics: adherence, risk and smart-money flow"
+          className="mt-3.5 flex-row items-center justify-between border-y border-hairline py-3"
+        >
+          <Text className="font-mono text-11 tracking-w06 text-bone">ANALYTICS</Text>
+          <Text className="font-mono text-10 tracking-w06 text-verified">ADHERENCE · RISK · FLOW ›</Text>
+        </Link>
 
         <View className="mt-6 pb-5">
+          {BLOCKED.rows.length === 0 ? (
+            <Text className="border-t border-hairline pt-4 font-mono text-11 text-ash leading-[1.5]">
+              Every setup put to the rule so far satisfied it.
+            </Text>
+          ) : null}
           {BLOCKED.rows.map((row, i) => (
             <Link
-              key={`${row.symbol}-${row.at}`}
-              href={routes.refused}
+              key={row.tradeId ?? `${row.symbol}-${row.at}`}
+              href={row.tradeId ? tradeRoute(row.tradeId) : routes.refused}
               className="flex-row gap-3 border-t border-hairline py-3.5"
               aria-label={`Refusal ${i + 1} of ${BLOCKED.rows.length}: ${row.symbol}`}
             >
@@ -63,7 +77,7 @@ export function BlockedLogScreen() {
         </View>
       </Body>
 
-      <TabBar active="trades" />
+      <TabBar active="home" />
     </Screen>
   );
 }

@@ -1,9 +1,9 @@
 import { Text, View } from 'react-native';
-import { formatBps, formatDecimal } from '@kanon/spec';
-import { Body, BrandBar, Footer, Screen, StatusBar } from '../components/chrome';
+import { formatBps, formatDecimal, type Decimal } from '@kanon/spec';
+import { Body, BrandBar, Footer, NavBar, Screen, StatusBar } from '../components/chrome';
 import { Enter } from '../components/motion';
 import { Dot, EvidenceLink, GhostButton, Meta, Num, Panel } from '../components/ui';
-import { REFUSAL, RULE, TRADE_ID } from '../lib/demo';
+import { useKanonData } from '../lib/data';
 import { routes, tradeRoute } from '../lib/routes';
 
 /**
@@ -14,6 +14,32 @@ import { routes, tradeRoute } from '../lib/routes';
  * nothing here is styled as an error.
  */
 export function RefusalScreen() {
+  const { refusal: REFUSAL, rule: RULE, latestTradeId: TRADE_ID, mode } = useKanonData();
+
+  if (!REFUSAL) {
+    return (
+      <Screen rail="bg-hairline" label="00 · REFUSAL">
+        <NavBar left="REFUSALS" leftHref={routes.home} right="NONE YET" />
+        <Body contentClassName="justify-center">
+          <Meta className="tracking-w20">NOTHING REFUSED</Meta>
+          <Text className="mt-3 font-sans text-24 font-medium tracking-t20 text-bone leading-[1.15]">
+            No setup has failed your rule.
+          </Text>
+          <Text className="mt-3.5 font-sans text-14 text-ash leading-[1.5]">
+            When one does, this screen names the predicate and the number that decided it.
+          </Text>
+        </Body>
+        <Footer>
+          <GhostButton href={routes.home}>BACK TO RULE</GhostButton>
+        </Footer>
+      </Screen>
+    );
+  }
+
+  // A fair value gap is decided in basis points, the others in price: write each in its own unit.
+  const fmt = (d: Decimal) =>
+    REFUSAL.unit === 'bps' ? formatBps(Number(d.atoms)) : formatDecimal(d);
+
   return (
     <Screen rail="bg-refused" label="00 · REFUSAL">
       <StatusBar />
@@ -24,7 +50,7 @@ export function RefusalScreen() {
           <View className="mt-11 flex-row items-center gap-2.25">
             <Dot size="size-2" className="bg-refused" />
             <Text className="font-mono-bold text-11 tracking-w20 text-refused">
-              REFUSED ON-CHAIN
+              {REFUSAL.label}
             </Text>
           </View>
 
@@ -49,33 +75,37 @@ export function RefusalScreen() {
           <Panel className="mt-7.5">
             <View className="flex-row items-end justify-between gap-4.5 border-b border-hairline px-4 pt-4 pb-3.5">
               <View className="gap-1.75">
-                <Meta>REQUIRED HIGH</Meta>
+                <Meta>{REFUSAL.requiredLabel}</Meta>
                 <Text className="font-mono text-10 tracking-w10 text-ash">
-                  PRIOR SWING
+                  {REFUSAL.requiredSub}
                 </Text>
               </View>
               <Num className="font-mono-medium text-31 tracking-t30">
-                {formatDecimal(REFUSAL.requiredHigh)}
+                {fmt(REFUSAL.requiredHigh)}
               </Num>
             </View>
             <View className="flex-row items-end justify-between gap-4.5 border-b border-hairline px-4 pt-4 pb-3.5">
               <View className="gap-1.75">
-                <Meta>CURRENT PRICE</Meta>
+                <Meta>{REFUSAL.actualLabel}</Meta>
                 <Text className="font-mono text-10 tracking-w10 text-ash">
-                  {RULE.asset} · {RULE.timeframe}
+                  {REFUSAL.actualSub}
                 </Text>
               </View>
               <Num className="font-mono-medium text-31 tracking-t30">
-                {formatDecimal(REFUSAL.currentPrice)}
+                {fmt(REFUSAL.currentPrice)}
               </Num>
             </View>
             {/* The number that failed it, given its own row and its own colour. */}
             <View className="flex-row items-center justify-between bg-raised px-4 py-3">
               <Meta>SHORTFALL</Meta>
               <View className="flex-row items-baseline gap-2.5">
-                <Num className="text-11 text-ash">{formatBps(REFUSAL.shortfallBps)}</Num>
+                {REFUSAL.unit === 'price' ? (
+                  <Num className="text-11 text-ash">{formatBps(REFUSAL.shortfallBps)}</Num>
+                ) : null}
                 <Num className="font-mono-medium text-18 tracking-t20 text-refused">
-                  {formatDecimal(REFUSAL.shortfall)}
+                  {REFUSAL.unit === 'bps'
+                    ? formatBps(Number(REFUSAL.shortfall.atoms))
+                    : formatDecimal(REFUSAL.shortfall)}
                 </Num>
               </View>
             </View>
@@ -83,7 +113,9 @@ export function RefusalScreen() {
 
           <View className="mt-4.5 mb-5 flex-row items-center justify-between">
             <Num className="text-10 tracking-w08 text-ash">{REFUSAL.at}</Num>
-            <Num className="text-10 tracking-w08 text-ash">BLOCK {REFUSAL.block}</Num>
+            <Num className="text-10 tracking-w08 text-ash">
+              {mode === 'demo' ? `BLOCK ${REFUSAL.block}` : REFUSAL.block}
+            </Num>
           </View>
         </Enter>
       </Body>
@@ -93,7 +125,7 @@ export function RefusalScreen() {
           className="mb-4.5"
           label="View on-chain evidence"
           hash={RULE.txAbbrev}
-          href={tradeRoute(TRADE_ID)}
+          href={tradeRoute(REFUSAL.tradeId || TRADE_ID)}
         />
         <GhostButton href={routes.home}>ACKNOWLEDGE</GhostButton>
       </Footer>

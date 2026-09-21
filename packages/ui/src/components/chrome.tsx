@@ -1,14 +1,15 @@
-import { ReactNode, useEffect, useRef } from 'react';
-import { Platform, ScrollView, Text, View, Animated } from 'react-native';
+import { type ReactNode, useRef } from 'react';
+import { ScrollView, Text, View, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { device } from '@kanon/tokens';
 import { Dot, Num } from './ui';
+import { Icon, type Icon as IconName } from './icons';
 import { Link } from '../nav';
 import { cx } from '../lib/cx';
-import { routes, shareRoute, tradeRoute } from '../lib/routes';
-import { RULE, TRADE_ID } from '../lib/demo';
-
-const isWeb = Platform.OS === 'web';
+import { withAlpha } from '../lib/elevation';
+import { routes } from '../lib/routes';
+import { isWeb, useHaptics } from '../platform';
+import { useTheme } from '../theme';
 
 /**
  * The device.
@@ -127,179 +128,102 @@ export function NavBar({
   );
 }
 
-type TabKey = 'rules' | 'chart' | 'create' | 'predict' | 'profile';
+export type TabKey = 'home' | 'chart' | 'create' | 'predict' | 'profile';
 
-const TABS: Array<{ key: TabKey; label: string; href: string; round?: boolean; isSphere?: boolean }> = [
-  { key: 'rules', label: 'RULES', href: routes.home },
-  { key: 'chart', label: 'CHART', href: routes.chart },
-  { key: 'create', label: 'CREATE', href: routes.create, isSphere: true },
-  { key: 'predict', label: 'PREDICT', href: routes.predict },
-  { key: 'profile', label: 'PROFILE', href: shareRoute(RULE.id), round: true },
+interface TabDef {
+  key: TabKey;
+  label: string;
+  href: string;
+  icon: IconName;
+}
+
+/** Home, Chart, AI, Predict, Profile. The middle one is the AI strategy builder. */
+const TABS: readonly TabDef[] = [
+  { key: 'home', label: 'HOME', href: routes.home, icon: 'home' },
+  { key: 'chart', label: 'CHART', href: routes.chart, icon: 'chart' },
+  { key: 'create', label: 'AI', href: routes.create, icon: 'sparkles' },
+  { key: 'predict', label: 'PREDICT', href: routes.predict, icon: 'zap' },
+  { key: 'profile', label: 'PROFILE', href: routes.profile, icon: 'user' },
 ];
 
-function AnimatedOrb() {
-  const anim = useRef(new Animated.Value(0)).current;
+/**
+ * A regular tab: icon over label, a short signal bar on the top edge when it is
+ * the current one. The bar, the bone icon and the bone label all change
+ * together, so the state does not rest on colour alone.
+ */
+function Tab({ tab, on }: { tab: TabDef; on: boolean }) {
+  const { select } = useHaptics();
+  return (
+    <Link
+      href={tab.href}
+      role="tab"
+      aria-selected={on}
+      aria-label={tab.label}
+      onPressIn={on ? undefined : select}
+      className="relative flex-1 items-center gap-1 pb-1 pt-2.5 active:opacity-70"
+    >
+      <View
+        className={cx('absolute top-0 h-0.5 w-6 bg-signal', on ? 'opacity-100' : 'opacity-0')}
+      />
+      <Icon name={tab.icon} size={22} color={on ? 'bone' : 'ash'} strokeWidth={on ? 2 : 1.75} />
+      <Text
+        className={cx(
+          'font-mono-medium text-10 tracking-w08',
+          on ? 'text-bone' : 'text-ash',
+        )}
+      >
+        {tab.label}
+      </Text>
+    </Link>
+  );
+}
 
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(anim, {
-          toValue: 1,
-          duration: 1500,
-          useNativeDriver: true,
-        }),
-        Animated.timing(anim, {
-          toValue: 0,
-          duration: 1500,
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
-  }, [anim]);
-
-  const scale = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 1.25], // scales up by 25%
-  });
-
-  const opacity = anim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.6, 1],
-  });
+/**
+ * The centre tab: the AI strategy builder. A raised `signal` button carrying the
+ * sparkles glyph and, like every tab, a label under it that says what it is.
+ * There is one spring on press and nothing that animates on its own.
+ */
+function AiTab({ tab, on }: { tab: TabDef; on: boolean }) {
+  const { colors } = useTheme();
+  const { tap } = useHaptics();
+  const scale = useRef(new Animated.Value(1)).current;
+  const spring = (to: number) =>
+    Animated.spring(scale, { toValue: to, useNativeDriver: true, speed: 40, bounciness: to === 1 ? 6 : 0 }).start();
 
   return (
-    <View className="items-center justify-center" style={{ width: 64, height: 64 }}>
-      {/* Massive soft ambient aura */}
-      <Animated.View
-        style={{
-          position: 'absolute',
-          width: 72,
-          height: 72,
-          borderRadius: 36,
-          backgroundColor: 'rgba(212, 160, 23, 0.2)', // Faint signal gold
-          transform: [{ scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.4] }) }],
-          opacity: anim.interpolate({ inputRange: [0, 1], outputRange: [0.2, 0.6] }),
-        }}
-      />
-
-      {/* Intense Animated Outer Glow */}
-      <Animated.View
-        style={{
-          position: 'absolute',
-          width: 48,
-          height: 48,
-          borderRadius: 24,
-          backgroundColor: '#D4A017',
-          shadowColor: '#FFCC40',
-          shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: opacity,
-          shadowRadius: 24,
-          elevation: 20,
-          transform: [{ scale }],
-        }}
-      />
-
-      {/* 3D Orb Body */}
-      <View
-        style={{
-          width: 56,
-          height: 56,
-          borderRadius: 28,
-          backgroundColor: '#825600', // Core deep shadow color
-          overflow: 'hidden',
-        }}
-      >
-        {/* Mid-tone offset */}
-        <View
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: 56,
-            height: 56,
-            borderRadius: 28,
-            backgroundColor: '#BC8500',
-            transform: [{ translateY: -4 }, { translateX: -4 }],
-          }}
-        />
-        {/* Main light face */}
-        <View
-          style={{
-            position: 'absolute',
-            top: -4,
-            left: -4,
-            width: 50,
-            height: 50,
-            borderRadius: 25,
-            backgroundColor: '#EAA610',
-          }}
-        />
-        {/* Soft top gradient/highlight area */}
-        <View
-          style={{
-            position: 'absolute',
-            top: -10,
-            left: -6,
-            width: 44,
-            height: 44,
-            borderRadius: 22,
-            backgroundColor: '#FFCC40',
-          }}
-        />
-
-        {/* Sharp Specular Highlight (The glassy shine) */}
-        <View
-          style={{
-            position: 'absolute',
-            top: 6,
-            left: 12,
-            width: 18,
-            height: 8,
-            borderRadius: 6,
-            backgroundColor: 'rgba(255, 255, 255, 0.85)',
-            transform: [{ rotate: '-25deg' }],
-          }}
-        />
-        {/* Secondary small sharp dot */}
-        <View
-          style={{
-            position: 'absolute',
-            top: 10,
-            left: 10,
-            width: 4,
-            height: 4,
-            borderRadius: 2,
-            backgroundColor: 'rgba(255, 255, 255, 0.95)',
-          }}
-        />
-
-        {/* Bottom rim light (Ambient bounce) */}
-        <View
-          style={{
-            position: 'absolute',
-            bottom: -2,
-            right: 2,
-            width: 36,
-            height: 14,
-            borderRadius: 10,
-            backgroundColor: 'rgba(255, 220, 100, 0.35)',
-            transform: [{ rotate: '-20deg' }],
-          }}
-        />
-        {/* Subtle inner dark shadow top right */}
-        <View
-          style={{
-            position: 'absolute',
-            top: 4,
-            right: -10,
-            width: 20,
-            height: 40,
-            borderRadius: 10,
-            backgroundColor: 'rgba(0, 0, 0, 0.15)',
-          }}
-        />
+    <Link
+      href={tab.href}
+      role="tab"
+      aria-selected={on}
+      aria-label="AI strategy builder"
+      onPressIn={() => {
+        tap();
+        spring(0.93);
+      }}
+      onPressOut={() => spring(1)}
+      className="flex-[1.15] items-center gap-1 pb-1"
+    >
+      {/* className does not reach Animated.View, so the spring wraps a plain View. */}
+      <View className="-mt-4.5">
+        <Animated.View style={{ transform: [{ scale }] }}>
+          <View
+            className="size-11 items-center justify-center rounded-md bg-signal"
+            style={{
+              // Static lift: a signal-tinted shadow and a 1px top highlight, and a
+              // bone ring when this is the current tab.
+              boxShadow: on
+                ? `0px 0px 0px 2px ${colors.bone}, 0px 6px 14px ${withAlpha(colors.signal, 0.35)}`
+                : `0px 6px 14px ${withAlpha(colors.signal, 0.35)}, inset 0px 1px 0px ${withAlpha(colors.bone, 0.28)}`,
+            }}
+          >
+            <Icon name="sparkles" size={22} color="void" strokeWidth={2} />
+          </View>
+        </Animated.View>
       </View>
-    </View>
+      <Text className={cx('font-mono-bold text-10 tracking-w08', on ? 'text-bone' : 'text-signal')}>
+        {tab.label}
+      </Text>
+    </Link>
   );
 }
 
@@ -307,48 +231,17 @@ export function TabBar({ active }: { active: TabKey }) {
   const insets = useSafeAreaInsets();
   return (
     <View
-      className="shrink-0 flex-row border-t border-hairline pt-3 pb-7.5"
-      style={isWeb ? undefined : { paddingBottom: Math.max(insets.bottom, 12) + 12 }}
+      className="shrink-0 flex-row border-t border-hairline bg-panel px-1 pb-4"
+      style={isWeb ? undefined : { paddingBottom: Math.max(insets.bottom, 8) + 6 }}
       role="tablist"
     >
-      {TABS.map((tab) => {
-        const on = tab.key === active;
-
-        if (tab.isSphere) {
-          return (
-            <Link
-              key={tab.key}
-              href={tab.href}
-              className="flex-[1.2] items-center justify-center -mt-8"
-              aria-selected={on}
-            >
-              <AnimatedOrb />
-            </Link>
-          );
-        }
-
-        return (
-          <Link
-            key={tab.key}
-            href={tab.href}
-            className="flex-1 items-center gap-1.75"
-            aria-selected={on}
-          >
-            <View
-              className={cx(
-                'size-2.25',
-                tab.round && 'rounded-full',
-                on ? 'bg-signal' : 'border border-ash',
-              )}
-            />
-            <Text
-              className={cx('font-mono text-9 tracking-w12', on ? 'text-bone' : 'text-ash')}
-            >
-              {tab.label}
-            </Text>
-          </Link>
-        );
-      })}
+      {TABS.map((tab) =>
+        tab.key === 'create' ? (
+          <AiTab key={tab.key} tab={tab} on={tab.key === active} />
+        ) : (
+          <Tab key={tab.key} tab={tab} on={tab.key === active} />
+        ),
+      )}
     </View>
   );
 }

@@ -7,6 +7,9 @@ export interface Claim {
   readonly symbol: string;
   readonly summary: string;
   readonly fields: readonly (readonly [string, string])[];
+  /** Right-edge label. Defaults to `SIGNED`; live claims say what they are. */
+  readonly badge?: string;
+  readonly tone?: 'long' | 'ash';
 }
 
 /**
@@ -40,7 +43,14 @@ export function EvidenceChain({ claims }: { claims: readonly Claim[] }) {
                 )}
               </View>
               <View className="shrink-0 flex-row items-center gap-2.5">
-                <Text className="font-mono text-10 tracking-w10 text-long">SIGNED</Text>
+                <Text
+                  className={cx(
+                    'font-mono text-10 tracking-w10',
+                    claim.tone === 'ash' ? 'text-ash' : 'text-long',
+                  )}
+                >
+                  {claim.badge ?? 'SIGNED'}
+                </Text>
                 <Text className="font-mono text-11 text-ash" aria-hidden>
                   {expanded ? '▾' : '▸'}
                 </Text>

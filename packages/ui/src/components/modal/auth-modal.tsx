@@ -1,9 +1,11 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, Pressable, Platform } from 'react-native';
 import { PrimaryButton } from '../ui';
 import { cx } from '../../lib/cx';
+import { withAlpha } from '../../lib/elevation';
+import { useTheme } from '../../theme';
 
 export interface AuthModalProps {
   isOpen: boolean;
@@ -32,6 +34,7 @@ export function AuthModal({
   emailError,
   forceStep
 }: AuthModalProps) {
+  const { colors } = useTheme();
   const [step, setStep] = useState<1 | 'otp' | 2 | 3>(1);
 
   useEffect(() => {
@@ -48,6 +51,8 @@ export function AuthModal({
   const [termsAgreed, setTermsAgreed] = useState(false);
   const [privacyAgreed, setPrivacyAgreed] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Hooks must all run before the `!isOpen` early return below.
+  const verifyInFlight = useRef(false);
 
   if (!isOpen) return null;
 
@@ -62,9 +67,17 @@ export function AuthModal({
     }
   };
 
+  // A one-time code can only be spent once. The button disables only after the
+  // parent's state catches up, so a quick second press would send it again and
+  // get a 422 even though the first attempt signed the user in.
   const handleOtpSubmit = async () => {
-    if (!otp || !onVerifyEmailCode) return;
-    await onVerifyEmailCode(otp);
+    if (!otp || !onVerifyEmailCode || verifyInFlight.current) return;
+    verifyInFlight.current = true;
+    try {
+      await onVerifyEmailCode(otp);
+    } finally {
+      verifyInFlight.current = false;
+    }
     // Modal state transitions will be managed by parent checking isNewUser
     // But for safety, we won't force a step transition here unless parent tells us.
   };
@@ -86,12 +99,12 @@ export function AuthModal({
 
   return (
     <View 
-      className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-void/80" 
+      className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-scrim/70" 
       style={Platform.OS === 'web' ? { backdropFilter: 'blur(12px)' } as any : undefined}
     >
       <Pressable className="absolute inset-0" onPress={onClose} />
       
-      <View className="w-full max-w-md bg-panel border border-hairline overflow-hidden p-8" style={{ shadowColor: '#D4A017', shadowOpacity: 0.1, shadowRadius: 40, elevation: 10 }}>
+      <View className="w-full max-w-md bg-panel border border-hairline overflow-hidden p-8" style={{ boxShadow: `0px 12px 40px ${withAlpha(colors.signal, 0.12)}`, elevation: 10 }}>
         <Pressable onPress={onClose} className="absolute top-4 right-4 p-2 z-10">
           <Text className="text-ash text-lg font-mono">✕</Text>
         </Pressable>
@@ -106,7 +119,7 @@ export function AuthModal({
                 value={email}
                 onChangeText={setEmail}
                 placeholder="Email address" 
-                placeholderTextColor="#8A949E"
+                placeholderTextColor={colors.ash}
                 autoCapitalize="none"
                 keyboardType="email-address"
                 className="w-full bg-void border border-hairline text-bone px-4 py-3 text-14 focus:border-signal outline-none" 
@@ -147,7 +160,7 @@ export function AuthModal({
                 value={otp}
                 onChangeText={setOtp}
                 placeholder="000000" 
-                placeholderTextColor="#8A949E"
+                placeholderTextColor={colors.ash}
                 keyboardType="number-pad"
                 maxLength={6}
                 className="w-full bg-void border border-hairline text-bone px-4 py-3 text-24 text-center tracking-[1em] focus:border-signal outline-none" 
@@ -172,7 +185,7 @@ export function AuthModal({
                   value={name}
                   onChangeText={setName}
                   placeholder="John Doe" 
-                  placeholderTextColor="#8A949E"
+                  placeholderTextColor={colors.ash}
                   className="w-full bg-void border border-hairline text-bone px-4 py-3 text-14 focus:border-signal outline-none" 
                 />
               </View>
@@ -186,7 +199,7 @@ export function AuthModal({
                     value={username}
                     onChangeText={setUsername}
                     placeholder="trader" 
-                    placeholderTextColor="#8A949E"
+                    placeholderTextColor={colors.ash}
                     autoCapitalize="none"
                     className="flex-1 bg-void border border-hairline text-bone px-4 py-3 text-14 focus:border-signal outline-none" 
                   />
@@ -198,7 +211,7 @@ export function AuthModal({
                   value={experience}
                   onChangeText={setExperience}
                   placeholder="e.g. 3" 
-                  placeholderTextColor="#8A949E"
+                  placeholderTextColor={colors.ash}
                   keyboardType="numeric"
                   className="w-full bg-void border border-hairline text-bone px-4 py-3 text-14 focus:border-signal outline-none" 
                 />

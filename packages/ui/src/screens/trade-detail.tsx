@@ -3,7 +3,7 @@ import { formatBps, formatDecimal } from '@kanon/spec';
 import { Body, Footer, NavBar, Screen } from '../components/chrome';
 import { EvidenceChain } from '../components/evidence-chain';
 import { EvidenceLink, Meta, Num } from '../components/ui';
-import { RULE, TRADE } from '../lib/demo';
+import { useKanonData } from '../lib/data';
 import { routes, shareRoute } from '../lib/routes';
 
 /**
@@ -14,6 +14,30 @@ import { routes, shareRoute } from '../lib/routes';
  * this audience would treat it as marketing.
  */
 export function TradeDetailScreen({ id }: { id: string }) {
+  const { rule: RULE, tradeDetail } = useKanonData();
+  const TRADE = tradeDetail(id);
+
+  if (!TRADE) {
+    return (
+      <Screen rail="bg-hairline" label="06 · TRADE DETAIL · EVIDENCE">
+        <NavBar left="←  TRADES" leftHref={routes.blocked} leftClassName="text-ash tracking-w12" />
+        <Body contentClassName="justify-center">
+          <Meta className="tracking-w20">NO SUCH TRADE</Meta>
+          <Text className="mt-3 font-sans text-24 font-medium tracking-t20 text-bone leading-[1.15]">
+            This trade is not on your rule.
+          </Text>
+          <Text className="mt-3.5 font-sans text-14 text-ash leading-[1.5]">
+            It may belong to another strategy, or it may not have loaded yet.
+          </Text>
+        </Body>
+        <Footer>
+          <EvidenceLink label="Blocked trades" hash="" href={routes.blocked} />
+        </Footer>
+      </Screen>
+    );
+  }
+
+  const refused = TRADE.side.includes('REFUSED');
   return (
     <Screen rail="bg-hairline" label="06 · TRADE DETAIL · EVIDENCE">
       <NavBar
@@ -26,13 +50,28 @@ export function TradeDetailScreen({ id }: { id: string }) {
       <Body>
         <View className="mt-6.5 flex-row items-end justify-between">
           <View className="gap-2.25">
-            <Text className="font-mono text-11 tracking-w14 text-long">{TRADE.side}</Text>
+            <Text
+              className={
+                refused
+                  ? 'font-mono text-11 tracking-w14 text-refused'
+                  : 'font-mono text-11 tracking-w14 text-long'
+              }
+            >
+              {TRADE.side}
+            </Text>
             <Num className="font-mono-medium text-20 tracking-t20">{RULE.asset}</Num>
           </View>
           <View className="items-end gap-1.75">
             <Meta>RESULT</Meta>
-            <Num className="font-mono-medium text-31 tracking-t30 text-long leading-[0.9]">
-              {formatDecimal(TRADE.result, { signed: true })}
+            {/* No result exists until the trade has closed. A dash, never an estimate. */}
+            <Num
+              className={
+                TRADE.result
+                  ? 'font-mono-medium text-31 tracking-t30 text-long leading-[0.9]'
+                  : 'font-mono-medium text-31 tracking-t30 text-ash leading-[0.9]'
+              }
+            >
+              {TRADE.result ? formatDecimal(TRADE.result, { signed: true }) : '—'}
             </Num>
           </View>
         </View>
@@ -44,12 +83,20 @@ export function TradeDetailScreen({ id }: { id: string }) {
           </View>
           <View className="flex-1 gap-1.75 py-3.25">
             <Meta>EXIT</Meta>
-            <Num className="font-mono-medium text-15">{formatDecimal(TRADE.exit)}</Num>
+            <Num className="font-mono-medium text-15">
+              {TRADE.exit ? formatDecimal(TRADE.exit) : '—'}
+            </Num>
           </View>
           <View className="flex-1 items-end gap-1.75 py-3.25">
             <Meta>RETURN</Meta>
-            <Num className="font-mono-medium text-15 text-long">
-              {formatBps(TRADE.returnBps, { signed: true })}
+            <Num
+              className={
+                TRADE.returnBps !== null
+                  ? 'font-mono-medium text-15 text-long'
+                  : 'font-mono-medium text-15 text-ash'
+              }
+            >
+              {TRADE.returnBps !== null ? formatBps(TRADE.returnBps, { signed: true }) : '—'}
             </Num>
           </View>
         </View>
