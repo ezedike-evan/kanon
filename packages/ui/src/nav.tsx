@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { Platform, Pressable, type PressableProps } from 'react-native';
 
 /**
@@ -12,6 +12,13 @@ export interface Navigator {
   push(href: string): void;
   replace(href: string): void;
   back(): void;
+  /**
+   * Optional: reads one query or route parameter of the current route. It is a
+   * hook (it is called during render), so an implementation is a hook such as
+   * expo-router's `useLocalSearchParams`, and its identity must not change.
+   * The web needs none: `useRouteParam` reads the address bar itself.
+   */
+  useParam?(name: string): string | undefined;
 }
 
 const NavContext = createContext<Navigator | null>(null);
@@ -24,6 +31,33 @@ export function NavProvider({
   children: ReactNode;
 }) {
   return <NavContext.Provider value={navigator}>{children}</NavContext.Provider>;
+}
+
+const noParam = (): undefined => undefined;
+
+/**
+ * One optional parameter of the current route, e.g. `/chart?asset=ETH/USD`.
+ *
+ * On a device the app's navigator supplies it (`Navigator.useParam`). On the
+ * web it is read from the address bar after mount, never during the first
+ * render, so a server-rendered page and its hydrated twin agree; it follows
+ * back/forward too. A screen mounted by a link from another screen sees the
+ * value on its first effect. Returns `undefined` when the parameter is absent.
+ */
+export function useRouteParam(name: string): string | undefined {
+  const nav = useContext(NavContext);
+  const useRouterParam = nav?.useParam ?? noParam;
+  const fromRouter = useRouterParam(name);
+  const [fromLocation, setFromLocation] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const read = () =>
+      setFromLocation(new URLSearchParams(window.location.search).get(name) ?? undefined);
+    read();
+    window.addEventListener('popstate', read);
+    return () => window.removeEventListener('popstate', read);
+  }, [name]);
+  return fromRouter ?? fromLocation;
 }
 
 export function useNavigator(): Navigator {

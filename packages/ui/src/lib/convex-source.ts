@@ -1,0 +1,308 @@
+import { useMemo } from 'react';
+import { createChartReads } from './chart-reads';
+import { createAnalyticsReads } from './analytics-reads';
+import { demoDataSource, type KanonDataSource } from './data';
+import {
+  useLiveKanonSource,
+  type LiveActions,
+} from './live';
+import { pickStrategies, type LiveStrategy, type LiveTrade } from './live-map';
+import type { PinClient } from './pin';
+import { unavailableMarketClient, type MarketClient } from './market-client';
+import { createPredictReads } from './predict-reads';
+import { predicateSymbol } from '@kanon/spec';
+import type { VaultClient } from './vault-client';
+import { createVaultReads } from './vault-reads';
+import { resolveVaultConfig, type VaultConfigResult } from './vault-config';
+import { safeSpec } from './live-map';
+import { createDomainReads } from './domain-reads';
+import { createHomeReads } from './home-reads';
+import { ruleHistory } from './domain-map';
+import type { KanonSession, ProfileSettings } from './domain-types';
+
+/**
+ * Convex, wired to the live data source, once for both clients.
+ *
+ * `packages/ui` must not depend on Convex, so each app injects the three hooks
+ * it already has (`useQuery`, `useMutation`, `useAction`) and its `api` object.
+ * Everything else — which strategy is active, which trades to subscribe to,
+ * which action each flow calls — lives here, so the web and the phone cannot
+ * drift.
+ *
+ * What subscribes where. The app root holds only what every screen needs and
+ * that is small and rarely changes: the caller's `users` row, their strategies
+ * and the active strategy's trades. Everything else is a screen-scoped hook on
+ * the source (`useSeries`, `usePredict`, `useAnalytics`, `useMarkets`,
+ * `useActivity`, `useVaults`, `useBlockedLog`, ...): it subscribes, and reads the
+ * chain, only while the component that shows it is mounted. The returned source
+ * is memoised, so it changes only when something it exposes changed.
+ *
+ * `api` is passed loosely typed on purpose: `convex/_generated/api.d.ts` is
+ * stale until `npx convex dev` regenerates it, and at runtime `api` resolves
+ * any module path.
+ */
+
+export interface ConvexHooks {
+  useQuery(ref: unknown, args: unknown): unknown;
+  useMutation(ref: unknown): (args: any) => Promise<any>;
+  useAction(ref: unknown): (args: any) => Promise<any>;
+}
+
+export interface ConvexSession {
+  /** Privy, or Convex confirming its token, has not said yet whether anyone is signed in. */
+  pending: boolean;
+  /**
+   * Convex has accepted the person's Privy access token. Nothing below is
+   * queried before this is true, so a logged-out visitor makes no Convex
+   * calls and sees the demo fixtures. Who they are is never sent: the server
+   * derives it from that token.
+   */
+  signedIn: boolean;
+}
+
+/** The fallback when an app passes no vault config: a stable object, so it never rebuilds the vault reads. */
+const NO_VAULT_CONFIG = resolveVaultConfig({});
+
+export function useConvexKanonSource(input: {
+  hooks: ConvexHooks;
+  api: any;
+  session: ConvexSession;
+  pinClient: PinClient;
+  /** The ThresholdMarket client. Absent, taking a side reports that nothing is deployed. */
+  marketClient?: MarketClient | undefined;
+  /** The vault factory client. Absent, vaults and copy trading report that nothing is deployed. */
+  vaultClient?: VaultClient | null | undefined;
+  vaultConfig?: VaultConfigResult | undefined;
+  /** Whether a signer exists, so an action can say why it cannot run before it is tried. */
+  hasWallet?: boolean | undefined;
+}): KanonDataSource {
+  const { hooks, api, session, pinClient } = input;
+
+  // The caller's own `users` row, found from the token. `userId` is only a
+  // gate ("signed in, and signup has created a row"); it is never an argument.
+  const dbUser = hooks.useQuery(api.users.me, session.signedIn ? {} : 'skip') as
+    | { _id: string; _creationTime?: number; name?: string; username?: string; email?: string }
+    | null
+    | undefined;
+  const userId = dbUser?._id;
+
+  const strategies = hooks.useQuery(
+    api.strategies.listStrategiesByOwner,
+    userId ? {} : 'skip',
+  ) as LiveStrategy[] | undefined;
+  const picked = useMemo(() => pickStrategies(strategies), [strategies]);
+  const activeId = picked.active?._id;
+
+  const trades = hooks.useQuery(
+    api.trades.listTradesByStrategy,
+    activeId ? { strategyId: activeId } : 'skip',
+  ) as LiveTrade[] | undefined;
+
+  const compile = hooks.useAction(api.compiler.compileStrategy);
+  const saveDraft = hooks.useMutation(api.strategies.saveDraft);
+  const pinStrategy = hooks.useMutation(api.strategies.pinStrategy);
+  const amendStrategy = hooks.useMutation(api.strategies.amendStrategy);
+  const finalizeAmendment = hooks.useMutation(api.strategies.finalizeAmendment);
+  const withdrawAmendment = hooks.useMutation(api.strategies.withdrawAmendment);
+  const runProposer = hooks.useAction(api.proposer.runProposer);
+  const blockedReport = hooks.useAction(api.proposer.blockedReport);
+  const undoTrade = hooks.useMutation(api.trades.undoTrade);
+  const confirmTrade = hooks.useMutation(api.trades.confirmTrade);
+
+  const actions = useMemo<LiveActions>(
+    () => ({
+      compile: (args) => compile(args),
+      saveDraft: (args) => saveDraft(args),
+      pinStrategy: (args) => pinStrategy(args),
+      amendStrategy: (args) => amendStrategy(args),
+      finalizeAmendment: (args) => finalizeAmendment(args),
+      withdrawAmendment: (args) => withdrawAmendment(args),
+      runProposer: (args) => runProposer(args),
+      blockedReport: (args) => blockedReport(args),
+      undoTrade: (args) => undoTrade(args),
+      confirmTrade: (args) => confirmTrade(args),
+    }),
+    [
+      compile,
+      saveDraft,
+      pinStrategy,
+      amendStrategy,
+      finalizeAmendment,
+      withdrawAmendment,
+      runProposer,
+      blockedReport,
+      undoTrade,
+      confirmTrade,
+    ],
+  );
+
+  // Candles and trade markers: live once signed in, the demo fixture only while signed out.
+  const chartStrategyId = activeId ?? strategies?.[strategies.length - 1]?._id;
+  const chartReads = useMemo(
+    () =>
+      createChartReads({
+        useQuery: hooks.useQuery,
+        getSeries: api.series.getSeries,
+        getChartMarkers: api.series.getChartMarkers,
+        session: {
+          pending: session.pending,
+          signedIn: session.signedIn,
+          strategyId: chartStrategyId,
+        },
+        demo: demoDataSource,
+      }),
+    // `hooks` and `api` are module-level in both apps; the session is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hooks.useQuery, session.pending, session.signedIn, chartStrategyId],
+  );
+
+  // Predict: real markets and the person's stakes, once signed in; the demo cards while signed out.
+  const marketClient = useMemo(
+    () => input.marketClient ?? unavailableMarketClient({ marketAddress: undefined, hasWallet: false }),
+    [input.marketClient],
+  );
+  const linkChainMarket = hooks.useMutation(api.markets.linkChainMarket);
+  const recordPosition = hooks.useMutation(api.predictions.recordPosition);
+  const predictReads = useMemo(
+    () =>
+      createPredictReads({
+        useQuery: hooks.useQuery,
+        listMarkets: api.markets.list,
+        listPositions: api.predictions.listMarketPositions,
+        actions: {
+          linkChainMarket: (args) => linkChainMarket(args),
+          recordPosition: (args) => recordPosition(args),
+        },
+        marketClient,
+        session: { pending: session.pending, signedIn: session.signedIn, userId },
+        demo: demoDataSource,
+      }),
+    // `hooks` and `api` are module-level in both apps; the session and the client are what change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hooks.useQuery, linkChainMarket, recordPosition, marketClient, session.pending, session.signedIn, userId],
+  );
+
+  // Analytics: the owner's own report and Nansen flow once signed in; the demo report while signed out.
+  const analyticsReads = useMemo(
+    () =>
+      createAnalyticsReads({
+        useQuery: hooks.useQuery,
+        useAction: hooks.useAction,
+        report: api.analytics.report,
+        smartMoneyFlow: api.nansen.smartMoneyFlow,
+        session: {
+          pending: session.pending,
+          signedIn: session.signedIn,
+          strategyId: chartStrategyId,
+          userId,
+        },
+        demo: demoDataSource,
+      }),
+    // `hooks` and `api` are module-level in both apps; the session and the strategy are what change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hooks.useQuery, hooks.useAction, session.pending, session.signedIn, chartStrategyId, userId],
+  );
+
+  // Per-domain reads that need no root subscription: pairs, activity, follows.
+  const domainReads = useMemo(
+    () =>
+      createDomainReads({
+        useQuery: hooks.useQuery,
+        listTickers: api.series.listTickers,
+        getTicker: api.series.getTicker,
+        listRecentActivity: api.trades.listRecentActivity,
+        listFollows: api.copyRelationships.listCopyRelationshipsByOwner,
+        session: { pending: session.pending, signedIn: session.signedIn, userId },
+      }),
+    // `hooks` and `api` are module-level in both apps; the session is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hooks.useQuery, session.pending, session.signedIn, userId],
+  );
+
+  // Home's own reads: a pair's last-day line and the copy carousel. Market data, screen-scoped.
+  const homeReads = useMemo(
+    () =>
+      createHomeReads({
+        useQuery: hooks.useQuery,
+        sparkline: api.homeFeed.sparkline,
+        leadSummaries: api.homeFeed.leadSummaries,
+        session: { pending: session.pending, signedIn: session.signedIn },
+      }),
+    // `hooks` and `api` are module-level in both apps; the session is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hooks.useQuery, session.pending, session.signedIn],
+  );
+
+  // Guarded vaults and copy trading: the chain for what is true on-chain, Convex for finding it again.
+  // Read only while a vault or copy screen is mounted (`useVaults`), never at the root.
+  const vaultStrategy = useMemo(() => {
+    const active = picked.active;
+    const spec = safeSpec(active?.spec);
+    if (!active || !spec) return null;
+    return {
+      id: active._id,
+      chainStrategyId: active.chainStrategyId,
+      symbol: spec.series.asset,
+      name: spec.predicates.map((p) => predicateSymbol(p)).join(' + '),
+    };
+  }, [picked.active]);
+
+  const vaultConfig = input.vaultConfig ?? NO_VAULT_CONFIG;
+  const vaultReads = useMemo(
+    () =>
+      createVaultReads({
+        hooks,
+        api,
+        session: { pending: session.pending, userId },
+        config: vaultConfig,
+        client: input.vaultClient ?? null,
+        hasWallet: Boolean(input.hasWallet),
+        strategy: vaultStrategy,
+      }),
+    // `hooks` and `api` are module-level in both apps; the rest is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [session.pending, userId, vaultConfig, input.vaultClient, input.hasWallet, vaultStrategy],
+  );
+
+  const kanonSession = useMemo<KanonSession>(
+    () => ({
+      mode: userId ? 'live' : 'demo',
+      pending: session.pending,
+      signedIn: session.signedIn,
+      hasWallet: Boolean(input.hasWallet),
+    }),
+    [userId, session.pending, session.signedIn, input.hasWallet],
+  );
+  const settings = useMemo<ProfileSettings | null>(
+    () =>
+      dbUser
+        ? {
+            name: dbUser.name ?? '',
+            username: dbUser.username ?? '',
+            email: dbUser.email ?? null,
+            hasWallet: Boolean(input.hasWallet),
+            ...(dbUser._creationTime ? { joinedAt: dbUser._creationTime } : {}),
+          }
+        : null,
+    [dbUser, input.hasWallet],
+  );
+  const history = useMemo(() => ruleHistory(strategies, activeId), [strategies, activeId]);
+
+  const live = useLiveKanonSource({ userId, strategies, trades, actions, pinClient, chartReads, predictReads });
+
+  // One object, rebuilt only when a part of it is: spreading these inline would hand every
+  // consumer a new source on every render of the bridge, whatever had actually changed.
+  return useMemo<KanonDataSource>(
+    () => ({
+      ...live,
+      ...analyticsReads,
+      ...domainReads,
+      ...homeReads,
+      ...vaultReads,
+      session: kanonSession,
+      settings: userId ? settings : live.settings,
+      ruleHistory: userId ? history : live.ruleHistory,
+    }),
+    [live, analyticsReads, domainReads, homeReads, vaultReads, kanonSession, settings, history, userId],
+  );
+}

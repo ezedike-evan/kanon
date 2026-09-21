@@ -16,6 +16,7 @@ export const routes = {
   chart: '/chart',
   refused: '/refused',
   blocked: '/blocked',
+  analytics: '/analytics',
   compile: '/compile',
   compileReview: '/compile/review',
   compilePin: '/compile/pin',
@@ -24,16 +25,39 @@ export const routes = {
   onboardingFund: '/onboarding/fund',
   onboardingStrategy: '/onboarding/strategy',
   screenIndex: '/screens',
+  vault: '/vault',
+  copy: '/copy',
+  profile: '/profile',
+  profileRecords: '/profile/records',
+  profileRules: '/profile/rules',
+  profileSecurity: '/profile/security',
+  profileSettings: '/profile/settings',
+  /** The signed-out front door. Where sign-out lands. */
+  landing: '/',
 } as const;
 
 export const tradeRoute = (id: string) => `/trades/${id}`;
 export const loosenRoute = (ruleId: string) => `/rules/${ruleId}/loosen`;
 export const shareRoute = (ruleId: string) => `/share/${ruleId}`;
 
+/**
+ * The chart, opened on one pair: `/chart?asset=BTC%2FUSD`. The chart reads it back
+ * with `parseChartAsset`; a chart that does not read it just opens on the rule's
+ * own pair, which is why the asset rides in the query and not in a route segment.
+ */
+export const chartRoute = (asset: string) => `${routes.chart}?asset=${encodeURIComponent(asset)}`;
+
+/** The asset in a chart query string (`asset=BTC%2FUSD`), normalised as the series is, or null. */
+export function parseChartAsset(search: string): string | null {
+  const raw = new URLSearchParams(search.replace(/^\?/, '')).get('asset');
+  const asset = raw?.replace(/\s+/g, '').toUpperCase();
+  return asset ? asset : null;
+}
+
 /** The design canvas, in order — the consistency check `docs/DESIGN.md` asks for. */
 export const SCREEN_INDEX: ReadonlyArray<{ label: string; href: string }> = [
   { label: '00 · REFUSAL', href: routes.refused },
-  { label: '01 · RULE CARD (HOME)', href: routes.home },
+  { label: '01 · HOME (RULE CARD)', href: routes.home },
   { label: '02 · CHAT-TO-SPEC COMPILER', href: routes.compile },
   { label: '03 · SPEC REVIEW', href: routes.compileReview },
   { label: '04 · PINNING CEREMONY', href: routes.compilePin },
@@ -45,4 +69,13 @@ export const SCREEN_INDEX: ReadonlyArray<{ label: string; href: string }> = [
   { label: '10A · ONBOARDING · PASSKEY', href: routes.onboarding },
   { label: '10B · ONBOARDING · FUND', href: routes.onboardingFund },
   { label: '10C · ONBOARDING · FIRST STRATEGY', href: routes.onboardingStrategy },
+  { label: '11 · PREDICT', href: routes.predict },
+  { label: '12 · ANALYTICS · ADHERENCE, RISK, FLOW', href: routes.analytics },
+  { label: '13 · GUARDED AGENT VAULT', href: routes.vault },
+  { label: '14 · COPY TRADING', href: routes.copy },
+  { label: '15 · PROFILE', href: routes.profile },
+  { label: '15A · PROFILE · TRADING RECORDS', href: routes.profileRecords },
+  { label: '15B · PROFILE · PREVIOUS RULES', href: routes.profileRules },
+  { label: '15C · PROFILE · SECURITY', href: routes.profileSecurity },
+  { label: '15D · PROFILE · SETTINGS', href: routes.profileSettings },
 ];
