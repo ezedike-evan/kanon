@@ -1,0 +1,23 @@
+{
+  "name": "@kanon/keeper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "keep": "vite-node src/cli.ts",
+    "keep:dry": "vite-node src/cli.ts -- --dry-run",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.56.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "vite-node": "^3.2.4",
+    "vitest": "^3.2.4"
+  }
+}
