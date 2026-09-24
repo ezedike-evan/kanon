@@ -1,0 +1,22 @@
+{
+  "CanonicalSeriesBTCUSD": "0x6e0F330286C31C9c6c410c7379170AeC14Ea1902",
+  "CanonicalSeriesETHUSD": "0x2A2a93E63f77894e23b087Af8933784cF240209c",
+  "CollateralToken": "0x4119FE33430C6FCD6c131929C0Fd98cc68b99b0d",
+  "InsuranceFund": "0xF10560d3B54A4C6af1ce78B1A0867266A34dd4ee",
+  "MarginAccount": "0x6C792A025f81380116802776Bf132892364A2075",
+  "Pyth": "0xaA05aB7145A62b338DE0ea6dd62245C328203A61",
+  "RefusalGate": "0x6A3e9D7871f4fBf25DDB7dBC74054E65FA91cC58",
+  "StrategyRegistry": "0xd5C7f32d610D6c0945f11330b007783843C7d8e3",
+  "ThresholdMarket": "0xE8E209B1ccE9654D11865d3E2DAF11b78D248ba7",
+  "VaultFactory": "0x80597F6eA90e9ddF83E7AAC889296Bc5fdf31426",
+  "adlFractionBps": 2500,
+  "adlHealthThreshold": 1200000000000000000,
+  "chainId": 10143,
+  "deployer": "0xE0072e39D6Fb592BafB3c6783710C1b24EC601b4",
+  "liquidationPenaltyBps": 200,
+  "loosenCooldownSeconds": 86400,
+  "maintenanceMarginBps": 500,
+  "minBondWei": 10000000000000000,
+  "mocks": true,
+  "startBlock": 65399672
+}
