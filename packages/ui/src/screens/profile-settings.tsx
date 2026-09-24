@@ -9,7 +9,7 @@ import { SectionHeader } from '../components/section-header';
 import { SegmentedControl } from '../components/segmented-control';
 import { Label } from '../components/stat';
 import { CHART_TIMEFRAMES } from '../lib/chart-timeframes';
-import { monad } from '../lib/monad-chain';
+import { activeChain } from '../lib/monad-chain';
 import { updatePreferences, usePreference } from '../lib/preferences';
 import { isWeb, useHaptics, usePlatform } from '../platform';
 
@@ -113,10 +113,10 @@ function SettingsSections() {
       <View className="gap-2.5">
         <SectionHeader title="Network" />
         <Card pad="none">
-          <Fact label="Network" value={monad.name} mono={false} right={<Badge label="Read-only" icon="lock" />} />
-          <Fact label="Chain ID" value={String(monad.id)} />
-          <Fact label="Block time" value={`${(monad.blockTime / 1000).toFixed(1)} s`} />
-          <Fact label="Explorer" value={monad.blockExplorers.default.name} mono={false} />
+          <Fact label="Network" value={activeChain().name} mono={false} right={<Badge label="Read-only" icon="lock" />} />
+          <Fact label="Chain ID" value={String(activeChain().id)} />
+          <Fact label="Block time" value={`${(activeChain().blockTime / 1000).toFixed(1)} s`} />
+          <Fact label="Explorer" value={activeChain().blockExplorers.default.name} mono={false} />
         </Card>
         <Text className="px-0.5 font-sans text-12 leading-[1.5] text-ash">
           Fixed. Rules are pinned on this chain and the contract that refuses a trade lives on it.

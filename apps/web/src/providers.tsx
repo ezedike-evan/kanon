@@ -14,7 +14,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import {
   PlatformProvider,
   KanonDataProvider,
-  monad,
+  configureChain,
+  resolveChain,
   createViemMarketClient,
   createViemPinClient,
   createViemChainIO,
@@ -48,6 +49,13 @@ const browserPlatform: PlatformCapabilities = {
   hasBiometrics: false,
   authenticate: async () => false,
 };
+
+/**
+ * The chain this build targets, written out literally so Next inlines it. Only
+ * `10143` selects Monad testnet (the beta deployment); anything else is mainnet.
+ */
+const CHAIN = resolveChain(process.env.NEXT_PUBLIC_CHAIN_ID);
+configureChain(CHAIN);
 
 const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL || 'https://placeholder.convex.cloud');
 
@@ -180,7 +188,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
   const pinClient = useMemo(
     () =>
       createViemPinClient({
-        chain: monad,
+        chain: CHAIN,
         registryAddress: REGISTRY_ADDRESS,
         series: SERIES,
         hasWallet: Boolean(address),
@@ -200,7 +208,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
   const marketClient = useMemo(
     () =>
       createViemMarketClient({
-        chain: monad,
+        chain: CHAIN,
         marketAddress: THRESHOLD_MARKET_ADDRESS,
         hasWallet: Boolean(address),
         getSigner: async () => {
@@ -281,10 +289,11 @@ export function Providers({ children }: { children: ReactNode }) {
       appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID || ''}
       config={{
         loginMethods: ['email', 'wallet', 'google', 'twitter'],
-        // Monad mainnet, chain 143. Embedded wallets default to the first supported
-        // chain, so the pin transaction is sent where the registry lives.
-        defaultChain: monad,
-        supportedChains: [monad],
+        // The configured chain (Monad mainnet 143, or testnet 10143 for the beta).
+        // Embedded wallets default to the first supported chain, so the pin
+        // transaction is sent where the registry lives.
+        defaultChain: CHAIN,
+        supportedChains: [CHAIN],
         // Privy's default is 'off', which would leave an email or social
         // sign-in with no wallet to fund or sign with.
         embeddedWallets: { ethereum: { createOnLogin: 'users-without-wallets' } },

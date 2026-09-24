@@ -12,7 +12,7 @@ import { Body } from '../components/chrome';
 import { GhostButton, Num } from '../components/ui';
 import { useAccount } from '../lib/account';
 import { useSession } from '../lib/domains';
-import { monad } from '../lib/monad-chain';
+import { activeChain } from '../lib/monad-chain';
 import { explorerUrl, loginLabel } from '../lib/profile-logic';
 import { routes } from '../lib/routes';
 import { usePlatform } from '../platform';
@@ -150,7 +150,7 @@ function SecuritySections({ onSheet }: { onSheet: (sheet: Sheet) => void }) {
           <Fact label="Wallet" value={walletLabel} mono={false} sub={walletKind === 'embedded' ? 'Made when you signed up. Only you can sign with it.' : undefined} />
           <Fact
             label="Network"
-            value={`${monad.name} · chain ${monad.id}`}
+            value={`${activeChain().name} · chain ${activeChain().id}`}
             sub="Read-only. Rules are pinned on this chain."
           />
           {account.loginMethods.length > 0 ? (
@@ -159,10 +159,10 @@ function SecuritySections({ onSheet }: { onSheet: (sheet: Sheet) => void }) {
           {address ? (
             <ListRow
               leading="external-link"
-              title={`View on ${monad.blockExplorers.default.name}`}
+              title={`View on ${activeChain().blockExplorers.default.name}`}
               subtitle="Balances and every transaction this wallet signed"
               onPress={() =>
-                void Linking.openURL(explorerUrl(monad.blockExplorers.default.url, 'address', address))
+                void Linking.openURL(explorerUrl(activeChain().blockExplorers.default.url, 'address', address))
               }
               divider={false}
             />

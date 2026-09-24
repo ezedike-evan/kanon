@@ -10,7 +10,8 @@ import {
 import { useEmbeddedEthereumWallet, usePrivy } from '@privy-io/expo';
 import {
   KanonDataProvider,
-  monad,
+  configureChain,
+  resolveChain,
   createViemMarketClient,
   createViemPinClient,
   createViemChainIO,
@@ -32,6 +33,13 @@ import { AccountProvider, type KanonAccount } from '@kanon/ui';
 import { api as generatedApi } from '@kanon/backend/convex/_generated/api';
 
 const api = generatedApi as any;
+
+/**
+ * The chain this build targets, written out literally so Expo inlines it. Only
+ * `10143` selects Monad testnet (the beta deployment); anything else is mainnet.
+ */
+export const CHAIN = resolveChain(process.env.EXPO_PUBLIC_CHAIN_ID);
+configureChain(CHAIN);
 
 export const convex = new ConvexReactClient(
   process.env.EXPO_PUBLIC_CONVEX_URL || 'https://placeholder.convex.cloud',
@@ -166,7 +174,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
   const pinClient = useMemo(
     () =>
       createViemPinClient({
-        chain: monad,
+        chain: CHAIN,
         registryAddress: REGISTRY_ADDRESS,
         series: SERIES,
         hasWallet: Boolean(address),
@@ -186,7 +194,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
   const marketClient = useMemo(
     () =>
       createViemMarketClient({
-        chain: monad,
+        chain: CHAIN,
         marketAddress: THRESHOLD_MARKET_ADDRESS,
         hasWallet: Boolean(address),
         getSigner: async () => {

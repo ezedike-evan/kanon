@@ -12,7 +12,7 @@ import { Label } from '../components/stat';
 import { Num } from '../components/ui';
 import { Link } from '../nav';
 import { useHaptics } from '../platform';
-import { monad } from '../lib/monad-chain';
+import { activeChain } from '../lib/monad-chain';
 import { useRules } from '../lib/profile-hooks';
 import {
   explorerUrl,
@@ -176,7 +176,7 @@ const RuleCard = memo(function RuleCard({
             label="Pin tx"
             value={abbreviateHash(rule.pinTxHash, 6, 4)}
             onPress={() =>
-              void Linking.openURL(explorerUrl(monad.blockExplorers.default.url, 'tx', rule.pinTxHash ?? ''))
+              void Linking.openURL(explorerUrl(activeChain().blockExplorers.default.url, 'tx', rule.pinTxHash ?? ''))
             }
           />
         ) : null}

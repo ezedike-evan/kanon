@@ -10,11 +10,11 @@ import {
   JetBrainsMono_500Medium,
   JetBrainsMono_700Bold,
 } from '@expo-google-fonts/jetbrains-mono';
-import { PlatformProvider, ThemeProvider, monad, useTheme } from '@kanon/ui';
+import { PlatformProvider, ThemeProvider, useTheme } from '@kanon/ui';
 import { colors } from '@kanon/tokens';
 import { ExpoNavProvider } from '../src/nav';
 import { devicePlatform } from '../src/platform';
-import { ConvexDataProviders } from '../src/providers';
+import { CHAIN, ConvexDataProviders } from '../src/providers';
 import '../global.css';
 
 LogBox.ignoreLogs([
@@ -55,9 +55,10 @@ export default function RootLayout() {
       <PrivyProvider
         appId={process.env.EXPO_PUBLIC_PRIVY_APP_ID!}
         clientId={process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID!}
-        // Monad mainnet (143). Embedded wallets default to the first supported chain,
-        // so the pin transaction is sent where the StrategyRegistry lives.
-        supportedChains={[monad]}
+        // The configured chain (Monad mainnet 143, or testnet 10143 for the beta).
+        // Embedded wallets default to the first supported chain, so the pin
+        // transaction is sent where the StrategyRegistry lives.
+        supportedChains={[CHAIN]}
       >
         <PlatformProvider capabilities={devicePlatform}>
           <ThemeProvider>

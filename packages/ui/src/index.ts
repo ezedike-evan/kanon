@@ -167,4 +167,4 @@ export type * from './lib/domain-types';
 export { createDomainReads, type DomainReadsDeps, type DomainSession } from './lib/domain-reads';
 export { createVaultReads, type VaultReadsDeps } from './lib/vault-reads';
 export { createStore, shallowEqual, shareStructure, useStoreSelector, type Store } from './lib/store';
-export { monad } from './lib/monad-chain';
+export { monad, monadTestnet, resolveChain, configureChain, activeChain } from './lib/monad-chain';
