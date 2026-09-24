@@ -9,6 +9,7 @@
   "scripts": {
     "relay": "vite-node src/cli.ts",
     "relay:dry": "vite-node src/cli.ts -- --dry-run",
+    "mirror": "vite-node src/mirror-cli.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
