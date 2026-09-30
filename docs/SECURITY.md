@@ -101,13 +101,12 @@ the same candles from the same samples, but it does not prevent it.
 
 ## Known gaps (do not assume these are done)
 
-1. **Tighten vs loosen is claimed by the caller.** The registry sees only hashes,
-   so it cannot tell whether a new spec is tighter or looser. The caller chooses
-   `tighten` or `proposeLoosening`. A caller who mislabels a loosening as a
-   tightening gets it applied immediately. Closing this needs an on-chain
-   partial-order check over decoded parameters, or a signed attestation from the
-   review UI. Proposed, not built. The app enforces the classification honestly;
-   the contract does not.
+1. **Tighten vs loosen is enforced on-chain, conservatively.** `tighten` takes the
+   old and new predicate arrays, checks both against their commitments, and accepts
+   only a same-series change where every existing predicate is identical except
+   `minGapBps` may rise, plus appended predicates. Anything else (including a longer
+   lookback, whose direction is ambiguous) reverts `NotATightening` and must go
+   through `proposeLoosening`. `packages/spec` mirrors the rule exactly.
 2. **No liquidity pool backs profits.** `MarginAccount` is a ledger. Real
    execution goes through Perpl and Kuru; nothing on-chain pays out a winning
    `MarginAccount` position.
@@ -115,12 +114,21 @@ the same candles from the same samples, but it does not prevent it.
 4. **Vault, follow and position records in Convex are claims,** not on-chain
    proofs. Someone could pre-record another user's vault address. Verifying
    against `VaultFactory.isVault` on-chain is not built.
-5. **No rate limits** on the compiler or Nansen. Any signed-in user can call them.
+5. **No per-user rate limit** on the compiler or Nansen. The compiler now caps
+   input size and has a timeout; a limiter is still to do.
 6. **Not exercised live:** Perpl order encodings, the Perpl three-step
    safeguard (API key, `createAccount`, `allowOrderForwarding`), all Kuru
    on-chain behaviour, the Envio indexer against a chain, Nansen's real API,
    Privy's token handshake.
 7. **No third-party audit.**
+8. **Mainnet scope is the core only.** `Deploy.s.sol` on chain 143 refuses mocks and
+   skips `MarginAccount`, `InsuranceFund` and `VaultFactory` (gap 2). `CanonicalSeries`
+   now rejects non-positive prices, positive exponents and confidence wider than 2%.
+9. **Executed trades are paper fills** and are labelled so (`executionMode`).
+10. **Open audit findings, not fixed:** `ThresholdMarket` settlement uses whole
+    buckets, so samples outside the window can flip an outcome; raw ERC20 calls with
+    no SafeERC20 or reentrancy guard; `StrategyRegistry` bond has no exit; client
+    tx hashes and equity are not verified server-side.
 
 ## Perpl safeguard
 

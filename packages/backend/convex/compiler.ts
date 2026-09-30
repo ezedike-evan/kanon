@@ -80,18 +80,54 @@ type CompileResult =
   | { status: 'rejected'; reply: string; reason: string }
   | { status: 'failed'; error: string };
 
+/** Input caps. Every call spends model credits, so nothing unbounded reaches the prompt. */
+const MAX_PROMPT_CHARS = 4_000;
+const MAX_HISTORY_TURNS = 20;
+const MAX_TURN_CHARS = 4_000;
+const REQUEST_TIMEOUT_MS = 60_000;
+
 export const compileStrategy = action({
   args: {
     prompt: v.string(),
     previousSpec: v.optional(v.any()),
-    conversationHistory: v.optional(v.array(v.object({ from: v.string(), text: v.string() }))),
+    conversationHistory: v.optional(
+      v.array(v.object({ from: v.union(v.literal('user'), v.literal('assistant')), text: v.string() })),
+    ),
   },
   handler: async (ctx, args): Promise<CompileResult> => {
     // Every call spends model credits: signed-in users only.
     await requireSubject(ctx);
+
+    const history = args.conversationHistory ?? [];
+    if (
+      args.prompt.length === 0 ||
+      args.prompt.length > MAX_PROMPT_CHARS ||
+      history.length > MAX_HISTORY_TURNS ||
+      history.some((turn) => turn.text.length > MAX_TURN_CHARS)
+    ) {
+      return { status: 'failed', error: 'Input is empty or too long. Shorten it and try again.' };
+    }
+
+    // previousSpec is user-controlled and is interpolated into the prompt: it must be a real spec.
+    let previousSpec: StrategySpec | undefined;
+    if (args.previousSpec !== undefined) {
+      try {
+        previousSpec = parseSpec(args.previousSpec);
+      } catch {
+        return { status: 'failed', error: 'The previous spec is not a valid strategy spec.' };
+      }
+    }
+
+    const apiKey = process.env.DASHSCOPE_API_KEY;
+    if (!apiKey) {
+      console.error('compileStrategy: DASHSCOPE_API_KEY is not set');
+      return { status: 'failed', error: 'The compiler is unavailable right now.' };
+    }
     const client = new OpenAI({
-      apiKey: process.env.DASHSCOPE_API_KEY,
+      apiKey,
       baseURL: DASHSCOPE_BASE_URL,
+      timeout: REQUEST_TIMEOUT_MS,
+      maxRetries: 1,
     });
 
     let retryFeedback: string | undefined;
@@ -100,7 +136,7 @@ export const compileStrategy = action({
       const request = buildCompilerPrompt(
         {
           prompt: args.prompt,
-          previousSpec: args.previousSpec,
+          previousSpec,
           conversationHistory: args.conversationHistory as CompilerTurn[] | undefined,
         },
         retryFeedback,
@@ -134,20 +170,12 @@ export const compileStrategy = action({
           tool_choice: { type: 'function', function: { name: request.tool.name } },
         });
       } catch (err) {
-        if (err instanceof OpenAI.AuthenticationError) {
-          return {
-            status: 'failed',
-            error: 'DashScope API authentication failed — check DASHSCOPE_API_KEY.',
-          };
-        }
+        // Provider detail stays in the server log; the client gets a generic message.
+        console.error('compileStrategy: provider call failed', err);
         if (err instanceof OpenAI.RateLimitError) {
-          return { status: 'failed', error: 'Rate limited by the DashScope API. Try again shortly.' };
+          return { status: 'failed', error: 'The compiler is busy. Try again shortly.' };
         }
-        if (err instanceof OpenAI.APIError) {
-          return { status: 'failed', error: `DashScope API error (${err.status}): ${err.message}` };
-        }
-        const message = err instanceof Error ? err.message : String(err);
-        return { status: 'failed', error: `Compiler request failed: ${message}` };
+        return { status: 'failed', error: 'The compiler is unavailable right now.' };
       }
 
       const choice = response.choices[0];
@@ -182,16 +210,7 @@ export const compileStrategy = action({
 
       if (parsed.ok) {
         const hash = await specHash(parsed.spec);
-        let diff: SpecDiff | null = null;
-        if (args.previousSpec !== undefined) {
-          try {
-            const previous = parseSpec(args.previousSpec);
-            diff = diffSpec(previous, parsed.spec);
-          } catch {
-            // previousSpec wasn't itself a valid spec — no diff to show.
-            diff = null;
-          }
-        }
+        const diff: SpecDiff | null = previousSpec ? diffSpec(previousSpec, parsed.spec) : null;
         return { status: 'compiled', spec: parsed.spec, reply: parsed.reply, specHash: hash, diff };
       }
 

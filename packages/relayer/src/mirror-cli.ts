@@ -54,6 +54,13 @@ function addressOf(deployment: Record<string, unknown>, key: string): Address {
   return v;
 }
 
+/** Per-request timeout and retries for every RPC call, so one hung endpoint cannot stall a pass. */
+const RPC_TIMEOUT_MS = 15_000;
+const RPC_RETRIES = 2;
+/** A long-running mirror that fails this many passes in a row exits non-zero so its supervisor alerts. */
+const MAX_CONSECUTIVE_FAILURES = 5;
+const rpcTransport = (rpc: string) => http(rpc, { timeout: RPC_TIMEOUT_MS, retryCount: RPC_RETRIES });
+
 const testnet = (rpc: string) =>
   defineChain({
     id: 10143,
@@ -91,13 +98,13 @@ async function main() {
 
   const account = privateKeyToAccount(key as Hex);
   const testChain = testnet(testnetRpc);
-  const test = createPublicClient({ chain: testChain, transport: http(testnetRpc) });
-  const wallet = createWalletClient({ account, chain: testChain, transport: http(testnetRpc) });
-  const main = createPublicClient({ chain: mainnet(mainnetRpc), transport: http(mainnetRpc) });
+  const test = createPublicClient({ chain: testChain, transport: rpcTransport(testnetRpc) });
+  const wallet = createWalletClient({ account, chain: testChain, transport: rpcTransport(testnetRpc) });
+  const main = createPublicClient({ chain: mainnet(mainnetRpc), transport: rpcTransport(mainnetRpc) });
 
   const send = async (request: Parameters<typeof wallet.writeContract>[0]) => {
     const hash = await wallet.writeContract(request);
-    const receipt = await test.waitForTransactionReceipt({ hash });
+    const receipt = await test.waitForTransactionReceipt({ hash, timeout: 60_000 });
     if (receipt.status !== 'success') throw new Error(`transaction ${hash} reverted`);
     return hash;
   };
@@ -148,11 +155,30 @@ async function main() {
   }
 
   console.error(`mirror: ${account.address} -> MockPyth ${mock} on chain 10143`);
-  do {
+  let stopping = false;
+  let wake: (() => void) | undefined;
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(signal, () => {
+      stopping = true;
+      wake?.();
+    });
+  }
+
+  let failures = 0;
+  while (!stopping) {
     const ok = await pass();
     if (once) process.exit(ok ? 0 : 1);
-    await new Promise((r) => setTimeout(r, intervalSeconds * 1000));
-  } while (!once);
+    failures = ok ? 0 : failures + 1;
+    if (failures >= MAX_CONSECUTIVE_FAILURES) {
+      console.error(`mirror: ${failures} failed passes in a row, exiting`);
+      process.exit(1);
+    }
+    await new Promise<void>((r) => {
+      wake = r;
+      setTimeout(r, intervalSeconds * 1000);
+    });
+  }
+  console.error('mirror: stopped');
 }
 
 void main();

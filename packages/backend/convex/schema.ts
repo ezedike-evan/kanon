@@ -135,6 +135,11 @@ export default defineSchema({
     /** Milliseconds. A proposed trade executes on its own at this time unless undone. */
     undoExpiresAt: v.optional(v.number()),
     executedAt: v.optional(v.number()),
+    /**
+     * How an executed trade was filled. Every fill is `paper` until a venue fill is confirmed;
+     * nothing may present a paper fill as a real one.
+     */
+    executionMode: v.optional(v.union(v.literal("paper"), v.literal("live"))),
     feed: v.optional(v.string()),
   })
     .index("by_strategy", ["strategyId"])

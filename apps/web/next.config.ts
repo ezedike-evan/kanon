@@ -1,5 +1,40 @@
 import type { NextConfig } from 'next';
 
+const isDev = process.env.NODE_ENV !== 'production';
+
+/**
+ * Wallet app: lock down framing, sniffing and referrers, and restrict what can load.
+ * Privy (embedded wallet) renders in iframes and WalletConnect talks over wss, so
+ * `connect-src` stays on https/wss rather than a host list that would rot. Inline scripts
+ * are required by the Next App Router without a nonce middleware.
+ */
+const csp = [
+  "default-src 'self'",
+  `script-src 'self' 'unsafe-inline'${isDev ? " 'unsafe-eval'" : ''}`,
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: blob: https:",
+  "connect-src 'self' https: wss:",
+  'frame-src https://auth.privy.io https://*.privy.io https://verify.walletconnect.com https://verify.walletconnect.org https://challenges.cloudflare.com',
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+const securityHeaders = [
+  { key: 'Content-Security-Policy', value: csp },
+  { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'X-Frame-Options', value: 'DENY' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  {
+    key: 'Permissions-Policy',
+    value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  },
+];
+
 /**
  * The web app renders the same React Native screens the phone does, through
  * react-native-web. Everything below is what that costs: the RN packages ship
@@ -19,6 +54,10 @@ const config: NextConfig = {
     'react-native-css-interop',
   ],
   typedRoutes: true,
+  poweredByHeader: false,
+  async headers() {
+    return [{ source: '/:path*', headers: securityHeaders }];
+  },
   experimental: {
     // `@kanon/ui` and `@kanon/spec` are barrels: one `import { X } from '@kanon/ui'` otherwise
     // pulls in every screen, the chart engine and the chain clients into every route. This

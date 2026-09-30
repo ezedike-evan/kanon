@@ -201,7 +201,11 @@ export const confirmTrade = mutation({
     const next = confirmTransition(trade, Date.now());
     if (!next.ok) return { ok: false as const, reason: next.reason, status: trade.status };
     if (trade.status !== next.status) {
-      await ctx.db.patch(trade._id, { status: next.status, executedAt: Date.now() });
+      await ctx.db.patch(trade._id, {
+        status: next.status,
+        executedAt: Date.now(),
+        executionMode: "paper",
+      });
     }
     return { ok: true as const, status: next.status };
   },
@@ -220,7 +224,11 @@ export const finalizeTrade = internalMutation({
     const next = finalizeTransition(trade, Date.now());
     if (!next.ok) return { ok: false as const, reason: next.reason, status: trade.status };
     if (trade.status !== next.status) {
-      await ctx.db.patch(trade._id, { status: next.status, executedAt: Date.now() });
+      await ctx.db.patch(trade._id, {
+        status: next.status,
+        executedAt: Date.now(),
+        executionMode: "paper",
+      });
     }
     return { ok: true as const, status: next.status };
   },

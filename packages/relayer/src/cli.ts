@@ -13,6 +13,10 @@ import { ConfigError, loadConfig } from './config';
 import { createViemPort } from './viem-port';
 import { relayOnce, reportOk, type RelayReport } from './relay';
 
+const HERMES_TIMEOUT_MS = 15_000;
+/** A watching relayer that fails this many passes in a row exits non-zero so its supervisor alerts. */
+const MAX_CONSECUTIVE_FAILURES = 5;
+
 function parseArgs(argv: string[]) {
   const flags = new Set(argv.filter((a) => a.startsWith('--')));
   const at = argv.indexOf('--interval');
@@ -41,18 +45,41 @@ async function main() {
   console.error(cfg.broadcast ? 'relayer: BROADCAST mode, transactions will be sent' : 'relayer: dry run, nothing will be sent');
   const port = createViemPort(cfg);
 
+  // Every Hermes request gets a hard timeout so one hung connection cannot stall the loop.
+  const timedFetch: typeof fetch = (input, init) =>
+    fetch(input, { ...init, signal: AbortSignal.timeout(HERMES_TIMEOUT_MS) });
+
+  let stopping = false;
+  let wake: (() => void) | undefined;
+  for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+    process.on(signal, () => {
+      stopping = true;
+      wake?.();
+    });
+  }
+
   let ok = true;
+  let failures = 0;
   do {
     try {
-      const report = await relayOnce(cfg, { port, fetchFn: fetch });
+      const report = await relayOnce(cfg, { port, fetchFn: timedFetch });
       print(report);
       ok = reportOk(report);
     } catch (e) {
       console.error(e instanceof Error ? e.message : e);
       ok = false;
     }
-    if (args.watch) await new Promise((r) => setTimeout(r, args.interval * 1000));
-  } while (args.watch);
+    if (!args.watch) break;
+    failures = ok ? 0 : failures + 1;
+    if (failures >= MAX_CONSECUTIVE_FAILURES) {
+      console.error(`relayer: ${failures} failed passes in a row, exiting`);
+      process.exit(1);
+    }
+    await new Promise<void>((r) => {
+      wake = r;
+      setTimeout(r, args.interval * 1000);
+    });
+  } while (!stopping);
 
   process.exit(ok ? 0 : 1);
 }
