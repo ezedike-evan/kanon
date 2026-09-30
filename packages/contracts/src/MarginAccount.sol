@@ -3,6 +3,8 @@ pragma solidity 0.8.26;
 
 import { ICanonicalSeries } from "./CanonicalSeries.sol";
 import { IERC20 } from "./interfaces/IERC20.sol";
+import { SafeERC20 } from "./SafeERC20.sol";
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
 import { InsuranceFund } from "./InsuranceFund.sol";
 import { RefusalGate } from "./RefusalGate.sol";
 import { StrategyRegistry } from "./StrategyRegistry.sol";
@@ -110,7 +112,7 @@ import { StrategyRegistry } from "./StrategyRegistry.sol";
  *         fund) and fund coverage (from the fund). The liquidator/caller
  *         receives nothing and can direct nothing.
  */
-contract MarginAccount {
+contract MarginAccount is ReentrancyGuard {
     struct Position {
         address seriesContract; // CanonicalSeries this position's asset is priced from
         bool isLong;
@@ -239,6 +241,7 @@ contract MarginAccount {
     error NotLiquidatable();
     error NotDeleverageable();
     error NothingToDeleverage();
+    error StrategyRetired();
     error TransferFailed();
     error NotStrategyOwner();
     error AlreadyBound();
@@ -284,7 +287,7 @@ contract MarginAccount {
     ///         another address, so there is no path to inflate someone else's
     ///         ledger without their own token approval. Any outstanding debt
     ///         is repaid from the deposit first.
-    function deposit(uint256 amount) external {
+    function deposit(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
 
         uint256 debt = debtOf[msg.sender];
@@ -298,8 +301,7 @@ contract MarginAccount {
         collateralOf[msg.sender] += credit;
         totalCollateral += credit;
 
-        bool ok = collateralToken.transferFrom(msg.sender, address(this), amount);
-        if (!ok) revert TransferFailed();
+        SafeERC20.safeTransferFromExact(collateralToken, msg.sender, address(this), amount);
         emit Deposited(msg.sender, amount);
     }
 
@@ -307,7 +309,7 @@ contract MarginAccount {
     ///         the withdrawal would leave any open position under-margined —
     ///         pure arithmetic against the account's own recorded positions,
     ///         never a judgment call.
-    function withdraw(uint256 amount) external {
+    function withdraw(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         if (amount > collateralOf[msg.sender]) revert InsufficientCollateral();
 
@@ -317,8 +319,7 @@ contract MarginAccount {
             revert InsufficientCollateral();
         }
 
-        bool ok = collateralToken.transfer(msg.sender, amount);
-        if (!ok) revert TransferFailed();
+        SafeERC20.safeTransfer(collateralToken, msg.sender, amount);
         emit Withdrawn(msg.sender, amount);
     }
 
@@ -329,7 +330,11 @@ contract MarginAccount {
     ///         this contract will not open a position that is unhealthy from
     ///         the first block. Not available to a strategy-bound account:
     ///         those open through `openGuardedPosition`.
-    function openPosition(address seriesContract, bool isLong, uint256 size) external returns (uint256 positionId) {
+    function openPosition(address seriesContract, bool isLong, uint256 size)
+        external
+        nonReentrant
+        returns (uint256 positionId)
+    {
         if (isStrategyBound[msg.sender]) revert AccountIsStrategyBound();
         return _open(msg.sender, seriesContract, isLong, size);
     }
@@ -339,6 +344,7 @@ contract MarginAccount {
     function bindStrategy(uint256 strategyId) external {
         if (isStrategyBound[msg.sender]) revert AlreadyBound();
         if (registry.ownerOf(strategyId) != msg.sender) revert NotStrategyOwner();
+        if (registry.isRetired(strategyId)) revert StrategyRetired();
         isStrategyBound[msg.sender] = true;
         boundStrategyOf[msg.sender] = strategyId;
         emit StrategyBound(msg.sender, strategyId);
@@ -353,6 +359,7 @@ contract MarginAccount {
     /// @param predicates The bound strategy's predicates exactly as pinned.
     function openGuardedPosition(bool isLong, uint256 size, RefusalGate.PredicateDefinition[] calldata predicates)
         external
+        nonReentrant
         returns (bool opened, uint256 positionId)
     {
         if (!isStrategyBound[msg.sender]) revert NotBound();
@@ -390,7 +397,7 @@ contract MarginAccount {
     ///         permissionless but gated on the account actually being
     ///         unhealthy — nobody can close someone else's position through
     ///         this path.
-    function closePosition(uint256 positionId) external {
+    function closePosition(uint256 positionId) external nonReentrant {
         Position storage p = _position(msg.sender, positionId);
         if (!p.open) revert PositionNotOpen();
 
@@ -408,7 +415,7 @@ contract MarginAccount {
     ///         moment of the call. There is no allowlist of who may call this
     ///         and no way for the account owner to block it. The caller
     ///         receives nothing: the penalty goes to the insurance fund.
-    function liquidate(address account, uint256 positionId) external {
+    function liquidate(address account, uint256 positionId) external nonReentrant {
         Position storage p = _position(account, positionId);
         if (!p.open) revert PositionNotOpen();
         if (healthFactor(account) >= LIQUIDATION_THRESHOLD) revert NotLiquidatable();
@@ -431,25 +438,31 @@ contract MarginAccount {
     ///         See contract-level NatSpec for the exact rule.
     /// @return positionId The position that was reduced.
     /// @return closedSize The notional size that was closed.
-    function deleverage(address account) external returns (uint256 positionId, uint256 closedSize) {
+    function deleverage(address account) external nonReentrant returns (uint256 positionId, uint256 closedSize) {
         uint256 healthBefore = healthFactor(account);
         if (healthBefore < LIQUIDATION_THRESHOLD || healthBefore >= adlHealthThreshold) revert NotDeleverageable();
 
         positionId = _largestOpenPosition(account);
         Position storage p = _positions[account][positionId];
 
-        closedSize = (p.size * adlFractionBps) / BPS_DENOMINATOR;
-        if (closedSize == 0) revert NothingToDeleverage();
+        // Round UP so a dust position (size * fraction < 1 unit) is still
+        // reducible instead of stuck. `adlFractionBps < 10_000` keeps
+        // `closedSize <= size`; it equals `size` only for dust, in which case
+        // the position is closed whole.
+        closedSize = (p.size * adlFractionBps + BPS_DENOMINATOR - 1) / BPS_DENOMINATOR;
+        if (closedSize == 0) revert NothingToDeleverage(); // unreachable for size > 0
 
         int256 exitPrice = _currentPrice(p.seriesContract);
         int256 pnl = _pnl(closedSize, p.entryPrice, exitPrice, p.isLong);
 
         p.size -= closedSize;
+        if (p.size == 0) _closeWhole(account, positionId, p);
         _realize(account, pnl);
 
         emit PositionDeleveraged(
             account, positionId, closedSize, p.size, uint256(exitPrice), pnl, healthBefore, healthFactor(account)
         );
+        if (p.size == 0) _resolveIfFlat(account);
     }
 
     /// @notice Distance to liquidation, pure arithmetic over this account's
@@ -576,8 +589,7 @@ contract MarginAccount {
         collateralOf[account] = collateral - penalty;
         totalCollateral -= penalty;
 
-        bool ok = collateralToken.transfer(address(insuranceFund), penalty);
-        if (!ok) revert TransferFailed();
+        SafeERC20.safeTransfer(collateralToken, address(insuranceFund), penalty);
         insuranceFund.recordPenalty(penalty);
         emit LiquidationPenaltyCharged(account, positionId, penalty);
     }

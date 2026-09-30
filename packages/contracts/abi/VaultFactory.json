@@ -641,6 +641,11 @@
   },
   {
     "type": "error",
+    "name": "StrategyRetired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "UnknownStrategy",
     "inputs": []
   }

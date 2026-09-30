@@ -45,6 +45,22 @@ interface ICanonicalSeries {
         external
         view
         returns (int64 low, bool found);
+
+    /// @notice Highest recorded sample whose Pyth PUBLISH time lies in
+    ///         [startTime, endTime] (both inclusive). Samples published
+    ///         outside the window never participate, however they were bucketed.
+    function windowHigh(uint256 startTime, uint256 endTime) external view returns (int64 high, bool found);
+
+    /// @notice Lowest recorded sample published in [startTime, endTime], inclusive.
+    function windowLow(uint256 startTime, uint256 endTime) external view returns (int64 low, bool found);
+
+    /// @notice Max age a Pyth price may have when pulled. A sample published at
+    ///         time `t` can be recorded no later than `t + maxPriceAgeSeconds`.
+    function maxPriceAgeSeconds() external view returns (uint256);
+
+    function pyth() external view returns (IPyth);
+    function feedId() external view returns (bytes32);
+    function priceExpo() external view returns (int32);
 }
 
 /**
@@ -122,6 +138,24 @@ contract CanonicalSeries is ICanonicalSeries {
     uint256 public lastSampleTimestamp;
 
     mapping(uint256 => Candle) private _candles;
+
+    /// @dev One recorded sample: Pyth publish time and price, packed in a
+    ///      single slot. Kept per bucket in recording order.
+    struct Sample {
+        uint64 publishTime;
+        int64 price;
+    }
+
+    /// @dev Per-bucket sample trail. It exists so a consumer can ask "what did
+    ///      the tape show between t0 and t1" without a whole bucket leaking
+    ///      samples from outside [t0, t1] (the candle's high/low cannot be
+    ///      windowed). Growth per bucket is bounded: calls are >= `cadenceSeconds`
+    ///      apart and a sample published in bucket b can only be recorded
+    ///      within `maxPriceAgeSeconds` of its publish time, so a bucket holds
+    ///      at most about `(bucketSeconds + maxPriceAgeSeconds) / cadenceSeconds + 1`
+    ///      samples. `windowHigh/Low` read the trail for at most the two
+    ///      partially covered edge buckets; fully covered buckets use the candle.
+    mapping(uint256 => Sample[]) private _samples;
 
     event SampleRecorded(
         uint256 indexed bucketIndex, int64 price, int32 expo, uint256 publishTime, address indexed caller
@@ -205,6 +239,8 @@ contract CanonicalSeries is ICanonicalSeries {
             c.sampleCount += 1;
         }
 
+        _samples[bucketIndex].push(Sample({ publishTime: uint64(p.publishTime), price: p.price }));
+
         lastSampleTimestamp = block.timestamp;
 
         emit SampleRecorded(bucketIndex, p.price, p.expo, p.publishTime, msg.sender);
@@ -221,6 +257,54 @@ contract CanonicalSeries is ICanonicalSeries {
     {
         Candle storage c = _candles[bucketIndex];
         return (c.open, c.high, c.low, c.close, c.sampleCount, c.recorded);
+    }
+
+    /// @notice Highest recorded sample published in [startTime, endTime] (inclusive).
+    /// @dev Buckets fully inside the window use the candle's high; the (at most
+    ///      two) edge buckets scan the per-sample trail and keep only samples
+    ///      whose publish time is in the window. `found == false` when none.
+    function windowHigh(uint256 startTime, uint256 endTime) public view returns (int64 high, bool found) {
+        return _windowExtreme(startTime, endTime, true);
+    }
+
+    /// @notice Lowest recorded sample published in [startTime, endTime] (inclusive).
+    function windowLow(uint256 startTime, uint256 endTime) public view returns (int64 low, bool found) {
+        return _windowExtreme(startTime, endTime, false);
+    }
+
+    function _windowExtreme(uint256 startTime, uint256 endTime, bool wantHigh)
+        internal
+        view
+        returns (int64 best, bool found)
+    {
+        if (startTime > endTime) revert InvalidWindow();
+        uint256 fromBucket = startTime / bucketSeconds;
+        uint256 toBucket = endTime / bucketSeconds;
+        if (toBucket - fromBucket >= MAX_LOOKBACK_BUCKETS) revert WindowTooWide();
+
+        for (uint256 i = fromBucket; i <= toBucket; i++) {
+            Candle storage c = _candles[i];
+            if (!c.recorded) continue;
+            uint256 bStart = i * bucketSeconds;
+            if (startTime <= bStart && endTime >= bStart + bucketSeconds - 1) {
+                int64 v = wantHigh ? c.high : c.low;
+                if (!found || (wantHigh ? v > best : v < best)) {
+                    best = v;
+                    found = true;
+                }
+                continue;
+            }
+            Sample[] storage trail = _samples[i];
+            uint256 n = trail.length;
+            for (uint256 j = 0; j < n; j++) {
+                Sample memory sm = trail[j];
+                if (sm.publishTime < startTime || sm.publishTime > endTime) continue;
+                if (!found || (wantHigh ? sm.price > best : sm.price < best)) {
+                    best = sm.price;
+                    found = true;
+                }
+            }
+        }
     }
 
     /// @notice Maximum `high` over recorded candles in [fromBucketInclusive, toBucketInclusive].

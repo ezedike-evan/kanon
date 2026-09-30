@@ -73,7 +73,7 @@ contract ThresholdMarketTest is Test {
         vm.warp(block.timestamp + BUCKET);
         _record(95_000);
 
-        vm.warp(windowStart + 3 * BUCKET + 1);
+        vm.warp(windowStart + 3 * BUCKET + MAX_AGE + 1);
         market.settle(marketId);
 
         (,,,,,,, bool settled, bool unresolvable, bool yesWon) = market.markets(marketId);
@@ -107,7 +107,7 @@ contract ThresholdMarketTest is Test {
         vm.warp(block.timestamp + BUCKET);
         _record(95_000); // never reaches 200_000
 
-        vm.warp(windowStart + 2 * BUCKET + 1);
+        vm.warp(windowStart + 2 * BUCKET + MAX_AGE + 1);
         market.settle(marketId);
 
         (,,,,,,, bool settled, bool unresolvable, bool yesWon) = market.markets(marketId);
@@ -134,7 +134,7 @@ contract ThresholdMarketTest is Test {
         vm.warp(block.timestamp + BUCKET);
         _record(75_000); // dips below threshold
 
-        vm.warp(windowStart + 2 * BUCKET + 1);
+        vm.warp(windowStart + 2 * BUCKET + MAX_AGE + 1);
         market.settle(marketId);
 
         (,,,,,,, bool settled, bool unresolvable, bool yesWon) = market.markets(marketId);
@@ -156,7 +156,7 @@ contract ThresholdMarketTest is Test {
         vm.prank(bob);
         market.takeSide{ value: 1 ether }(marketId, false);
 
-        vm.warp(windowStart + 2 * BUCKET + 1);
+        vm.warp(windowStart + 2 * BUCKET + MAX_AGE + 1);
         market.settle(marketId);
 
         (,,,,,,, bool settled, bool unresolvable,) = market.markets(marketId);
@@ -212,7 +212,7 @@ contract ThresholdMarketTest is Test {
 
         vm.warp(block.timestamp + BUCKET);
         _record(150_000);
-        vm.warp(windowStart + 2 * BUCKET + 1);
+        vm.warp(windowStart + 2 * BUCKET + MAX_AGE + 1);
         market.settle(marketId);
 
         uint256 aliceBefore = alice.balance;
@@ -301,7 +301,7 @@ contract ThresholdMarketTest is Test {
         // ...and it is not counted at settlement either: NO wins.
         vm.warp(windowStart + BUCKET);
         _record(90_000);
-        vm.warp(windowStart + 3 * BUCKET + 1);
+        vm.warp(windowStart + 3 * BUCKET + MAX_AGE + 1);
         market.settle(0);
         (,,,,,,,,, bool yesWon) = market.markets(0);
         assertFalse(yesWon);
@@ -540,7 +540,7 @@ contract ThresholdMarketTest is Test {
         }
 
         // Settle and check the payout side of the property.
-        vm.warp(wEnd + 1);
+        vm.warp(wEnd + MAX_AGE + 1);
         market.settle(0);
         (,,,,,,, , bool unresolvable, bool yesWon) = market.markets(0);
 

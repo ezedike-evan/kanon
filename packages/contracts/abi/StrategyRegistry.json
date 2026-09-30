@@ -79,6 +79,19 @@
   },
   {
     "type": "function",
+    "name": "cancelRetire",
+    "inputs": [
+      {
+        "name": "strategyId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "canonicalSeries",
     "inputs": [],
     "outputs": [
@@ -105,12 +118,44 @@
   },
   {
     "type": "function",
+    "name": "finalizeRetire",
+    "inputs": [
+      {
+        "name": "strategyId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "isCanonicalSeries",
     "inputs": [
       {
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isRetired",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -236,6 +281,38 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "requestRetire",
+    "inputs": [
+      {
+        "name": "strategyId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "retireEndsAt",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -499,6 +576,38 @@
   },
   {
     "type": "event",
+    "name": "RetireCancelled",
+    "inputs": [
+      {
+        "name": "strategyId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RetireRequested",
+    "inputs": [
+      {
+        "name": "strategyId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "retireEndsAt",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "StrategyPinned",
     "inputs": [
       {
@@ -536,6 +645,31 @@
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "StrategyRetired",
+    "inputs": [
+      {
+        "name": "strategyId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "bondRefunded",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -615,6 +749,11 @@
   },
   {
     "type": "error",
+    "name": "NoPendingRetire",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotATightening",
     "inputs": [
       {
@@ -636,6 +775,21 @@
   },
   {
     "type": "error",
+    "name": "Reentrancy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefundFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RetireAlreadyRequested",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SeriesChangeIsLoosening",
     "inputs": []
   },
@@ -649,6 +803,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "StrategyIsRetired",
+    "inputs": []
   },
   {
     "type": "error",

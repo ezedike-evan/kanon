@@ -172,6 +172,8 @@ contract RefusalGate {
         address seriesAddress = registry.activeSeries(strategyId);
         if (seriesAddress == address(0)) revert UnknownStrategy();
         if (predicates.length == 0) revert NoPredicates();
+        // A retired strategy's rules are no longer pinned by a bond: fail closed.
+        if (registry.isRetired(strategyId)) return (false, "RETIRED", 0);
 
         bytes32 committed = registry.activePredicatesCommitment(strategyId);
         bytes32 supplied = keccak256(abi.encode(predicates));

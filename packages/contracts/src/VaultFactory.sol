@@ -116,6 +116,7 @@ contract VaultFactory {
     );
 
     error UnknownStrategy();
+    error StrategyRetired();
     error NotStrategyOwner();
     error NoLoosenRequest();
     error LoosenHold(uint256 availableAt);
@@ -146,6 +147,7 @@ contract VaultFactory {
         address strategyOwner = registry.ownerOf(strategyId);
         if (strategyOwner == address(0)) revert UnknownStrategy();
         if (strategyOwner != msg.sender) revert NotStrategyOwner();
+        if (registry.isRetired(strategyId)) revert StrategyRetired();
 
         _enforceLoosenHold(strategyId, whitelistedAssetIds, maxDailyDrawdownBps);
 
@@ -288,6 +290,7 @@ contract VaultFactory {
         address feeRecipient
     ) external returns (address vault) {
         if (registry.ownerOf(leaderStrategyId) == address(0)) revert UnknownStrategy();
+        if (registry.isRetired(leaderStrategyId)) revert StrategyRetired();
 
         vault = address(
             new CopyVault(

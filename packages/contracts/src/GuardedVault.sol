@@ -3,6 +3,8 @@ pragma solidity 0.8.26;
 
 import { StrategyRegistry } from "./StrategyRegistry.sol";
 import { IERC20 } from "./interfaces/IERC20.sol";
+import { SafeERC20 } from "./SafeERC20.sol";
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
 import { RefusalGate } from "./RefusalGate.sol";
 
 /**
@@ -78,7 +80,7 @@ import { RefusalGate } from "./RefusalGate.sol";
  *         different guardrails, they deploy a new `GuardedVault`. That is a
  *         feature of this contract, not a limitation to be patched later.
  */
-contract GuardedVault {
+contract GuardedVault is ReentrancyGuard {
     uint256 public constant BPS_DENOMINATOR = 10_000;
     uint256 public constant SECONDS_PER_DAY = 1 days;
 
@@ -198,20 +200,18 @@ contract GuardedVault {
     /// @notice Deposits collateral. Anyone may top up the vault, but only
     ///         `owner` may withdraw — matching how deposits work everywhere
     ///         else in this package (adding funds is never gated).
-    function deposit(uint256 amount) external {
+    function deposit(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         totalCollateral += amount;
-        bool ok = collateralToken.transferFrom(msg.sender, address(this), amount);
-        if (!ok) revert TransferFailed();
+        SafeERC20.safeTransferFromExact(collateralToken, msg.sender, address(this), amount);
         emit Deposited(msg.sender, amount);
     }
 
-    function withdraw(uint256 amount) external onlyOwner {
+    function withdraw(uint256 amount) external nonReentrant onlyOwner {
         if (amount == 0) revert ZeroAmount();
         if (amount > totalCollateral) revert InsufficientBalance();
         totalCollateral -= amount;
-        bool ok = collateralToken.transfer(msg.sender, amount);
-        if (!ok) revert TransferFailed();
+        SafeERC20.safeTransfer(collateralToken, msg.sender, amount);
         emit Withdrawn(msg.sender, amount);
     }
 
@@ -248,7 +248,7 @@ contract GuardedVault {
         uint256 size,
         int256 projectedPnL,
         RefusalGate.PredicateDefinition[] calldata predicates
-    ) external onlyExecutorOrOwner returns (bool allowed) {
+    ) external onlyExecutorOrOwner nonReentrant returns (bool allowed) {
         uint256 day = _currentDay();
         _ensureDayInitialized(day);
 

@@ -2,6 +2,8 @@
 pragma solidity 0.8.26;
 
 import { IERC20 } from "./interfaces/IERC20.sol";
+import { SafeERC20 } from "./SafeERC20.sol";
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
 
 /**
  * @title InsuranceFund
@@ -44,7 +46,7 @@ import { IERC20 } from "./interfaces/IERC20.sol";
  *         Arithmetic only. Nothing here calls a model, an oracle or an
  *         off-chain service.
  */
-contract InsuranceFund {
+contract InsuranceFund is ReentrancyGuard {
     IERC20 public immutable collateralToken;
 
     /// @notice The only address allowed to draw from this fund, and the only
@@ -76,11 +78,10 @@ contract InsuranceFund {
 
     /// @notice Explicit top-up. Anyone may add to the fund; nobody may take
     ///         from it.
-    function deposit(uint256 amount) external {
+    function deposit(uint256 amount) external nonReentrant {
         if (amount == 0) revert ZeroAmount();
         totalDeposited += amount;
-        bool ok = collateralToken.transferFrom(msg.sender, address(this), amount);
-        if (!ok) revert TransferFailed();
+        SafeERC20.safeTransferFromExact(collateralToken, msg.sender, address(this), amount);
         emit Deposited(msg.sender, amount);
     }
 
@@ -97,7 +98,7 @@ contract InsuranceFund {
     /// @notice Pays up to `amount` to the bound `MarginAccount` to cover a
     ///         liquidation shortfall. Returns what was actually paid, which is
     ///         less than `amount` only when the fund's balance is.
-    function coverShortfall(uint256 amount) external returns (uint256 covered) {
+    function coverShortfall(uint256 amount) external nonReentrant returns (uint256 covered) {
         if (msg.sender != margin) revert NotMargin();
         uint256 available = collateralToken.balanceOf(address(this));
         covered = amount < available ? amount : available;
@@ -106,8 +107,7 @@ contract InsuranceFund {
         emit ShortfallCovered(amount, covered);
 
         if (covered > 0) {
-            bool ok = collateralToken.transfer(margin, covered);
-            if (!ok) revert TransferFailed();
+            SafeERC20.safeTransfer(collateralToken, margin, covered);
         }
     }
 

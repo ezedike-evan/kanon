@@ -2,6 +2,8 @@
 pragma solidity 0.8.26;
 
 import { ICanonicalSeries } from "./CanonicalSeries.sol";
+import { PythStructs } from "./pyth/PythStructs.sol";
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
 
 /**
  * @title ThresholdMarket
@@ -36,6 +38,19 @@ import { ICanonicalSeries } from "./CanonicalSeries.sol";
  *         detect on its own, since a series' `priceExpo` is only set after its
  *         first recorded sample.
  *
+ *         EXACT WINDOW. Both `settle` and the crossing check use the series'
+ *         `windowHigh/windowLow(windowStart, min(windowEnd, now))`, which look at
+ *         each recorded sample's Pyth PUBLISH time, inclusive at both ends. A
+ *         sample published before `windowStart` or after `windowEnd` never
+ *         counts, even when it shares a bucket with the window edge, so nobody
+ *         can flip an outcome by recording an out-of-window sample. A price
+ *         published AT `windowStart` or `windowEnd` counts. Because a sample
+ *         published at `t <= windowEnd` can still be recorded until
+ *         `t + maxPriceAgeSeconds`, `settle` waits until
+ *         `windowEnd + maxPriceAgeSeconds` has passed: after that no in-window
+ *         sample can be added, so the tape is final and settling early cannot
+ *         pre-empt a legitimate late recording.
+ *
  *         NO STAKING ON INFORMATION ALREADY IN THE SERIES. The question is
  *         monotone: once a recorded sample inside the window has touched the
  *         threshold, YES is decided and nothing that happens later can undo
@@ -59,11 +74,15 @@ import { ICanonicalSeries } from "./CanonicalSeries.sol";
  *         inside the same transaction, a staker cannot stake against a
  *         crossing the feed already shows: the fresh sample is scanned before
  *         the stake is accepted, and the whole transaction reverts if it
- *         crosses. Residual, stated plainly: information newer than the last
- *         recorded sample by up to `cadenceSeconds` (the series' own minimum
- *         sampling interval) is not in the tape; that is the series' sampling
- *         resolution, the same honesty limit docs/ARCHITECTURE.md names for
- *         event-driven feeds.
+ *         crosses. When the tape is still within its cadence (so no new
+ *         sample is possible), `takeSide` ALSO reads the live Pyth price and
+ *         reverts `MarketCrossed` if that price, published inside the window,
+ *         already satisfies the crossing condition; if the live price cannot
+ *         be read or recorded (too old, bad expo) it is ignored, since it can
+ *         never reach the tape. So a staker
+ *         cannot act on a live price that is ahead of the recorded tape.
+ *         Residual: a crossing Pyth publishes after this transaction but
+ *         before the next sample is, by construction, not yet knowable.
  *
  *         SERIES BINDING IS FIXED AT CONSTRUCTION. There is no
  *         `registerSeries`: the (seriesId -> CanonicalSeries) map is set once
@@ -84,7 +103,7 @@ import { ICanonicalSeries } from "./CanonicalSeries.sol";
  *         no odds that move as people bet — that is explicitly out of scope
  *         for this pass.
  */
-contract ThresholdMarket {
+contract ThresholdMarket is ReentrancyGuard {
     struct Market {
         address seriesContract;
         int256 thresholdPrice;
@@ -188,7 +207,7 @@ contract ThresholdMarket {
     ///         market's window ends, and closed the moment the series has
     ///         recorded a crossing sample inside the window (`MarketCrossed`).
     ///         Requires a fresh series (`StaleSeries`): see contract NatSpec.
-    function takeSide(uint256 marketId, bool takesAboveSide) external payable {
+    function takeSide(uint256 marketId, bool takesAboveSide) external payable nonReentrant {
         Market storage m = markets[marketId];
         if (m.seriesContract == address(0)) revert UnknownMarket();
         if (m.settled) revert MarketClosed();
@@ -198,6 +217,7 @@ contract ThresholdMarket {
         ICanonicalSeries s = ICanonicalSeries(m.seriesContract);
         _requireFresh(s);
         if (_crossed(m, s)) revert MarketCrossed();
+        _requireLiveNotCrossed(m, s);
 
         if (takesAboveSide) {
             yesStake[marketId][msg.sender] += msg.value;
@@ -234,21 +254,41 @@ contract ThresholdMarket {
         if (last == 0 || block.timestamp > last + cadence) revert StaleSeries();
     }
 
-    /// @dev The crossing condition `settle` uses, over the buckets `settle`
-    ///      uses, restricted to buckets that can hold a sample by now.
-    function _crossed(Market storage m, ICanonicalSeries s) internal view returns (bool) {
-        uint256 fromBucket = s.bucketIndexOf(m.windowStart);
-        uint256 toBucket = s.bucketIndexOf(m.windowEnd);
-        uint256 nowBucket = s.bucketIndexOf(block.timestamp);
-        if (nowBucket < toBucket) toBucket = nowBucket;
-        if (fromBucket > toBucket) return false; // the window has not begun
-
-        if (m.above) {
-            (int64 high, bool found) = s.swingHigh(fromBucket, toBucket);
-            return found && int256(high) >= m.thresholdPrice;
+    /// @dev Reads the live Pyth price the series samples and refuses a stake
+    ///      if that price, published inside the window, already crosses. A live price
+    ///      the series could not record anyway (too old, wrong expo) is ignored.
+    function _requireLiveNotCrossed(Market storage m, ICanonicalSeries s) internal view {
+        PythStructs.Price memory p;
+        try s.pyth().getPriceNoOlderThan(s.feedId(), s.maxPriceAgeSeconds()) returns (PythStructs.Price memory got) {
+            p = got;
+        } catch {
+            // Older than the series' max age, or no price: `recordSample` would
+            // reject it too, so it can never reach the tape. Nothing to guard.
+            return;
         }
-        (int64 low, bool foundLow) = s.swingLow(fromBucket, toBucket);
-        return foundLow && int256(low) <= m.thresholdPrice;
+        if (p.expo != s.priceExpo()) return; // unrecordable as well
+        if (p.publishTime < m.windowStart || p.publishTime > m.windowEnd) return;
+        bool crossed = m.above ? int256(p.price) >= m.thresholdPrice : int256(p.price) <= m.thresholdPrice;
+        if (crossed) revert MarketCrossed();
+    }
+
+    /// @dev Crossing test over recorded samples published in
+    ///      [windowStart, min(windowEnd, now)]; settlement uses the same test
+    ///      over the full window.
+    function _crossed(Market storage m, ICanonicalSeries s) internal view returns (bool) {
+        uint256 end = block.timestamp < m.windowEnd ? block.timestamp : m.windowEnd;
+        if (m.windowStart > end) return false; // the window has not begun
+        (bool found, bool hit) = _scan(m, s, end);
+        return found && hit;
+    }
+
+    function _scan(Market storage m, ICanonicalSeries s, uint256 end) internal view returns (bool found, bool hit) {
+        if (m.above) {
+            (int64 high, bool f) = s.windowHigh(m.windowStart, end);
+            return (f, int256(high) >= m.thresholdPrice);
+        }
+        (int64 low, bool fl) = s.windowLow(m.windowStart, end);
+        return (fl, int256(low) <= m.thresholdPrice);
     }
 
     /// @notice Permissionless. Reads only recorded candles in
@@ -258,31 +298,21 @@ contract ThresholdMarket {
     function settle(uint256 marketId) external {
         Market storage m = markets[marketId];
         if (m.settled) revert AlreadySettled();
-        if (block.timestamp <= m.windowEnd) revert WindowNotOver();
-
+        if (m.seriesContract == address(0)) revert UnknownMarket();
         ICanonicalSeries s = ICanonicalSeries(m.seriesContract);
-        uint256 fromBucket = s.bucketIndexOf(m.windowStart);
-        uint256 toBucket = s.bucketIndexOf(m.windowEnd);
+        // The tape for the window is final only once no sample published at or
+        // before `windowEnd` can still be recorded.
+        if (block.timestamp <= m.windowEnd + s.maxPriceAgeSeconds()) revert WindowNotOver();
 
         m.settled = true;
 
-        if (m.above) {
-            (int64 high, bool found) = s.swingHigh(fromBucket, toBucket);
-            if (!found) {
-                m.unresolvable = true;
-                emit MarketUnresolvable(marketId);
-                return;
-            }
-            m.yesWon = int256(high) >= m.thresholdPrice;
-        } else {
-            (int64 low, bool found) = s.swingLow(fromBucket, toBucket);
-            if (!found) {
-                m.unresolvable = true;
-                emit MarketUnresolvable(marketId);
-                return;
-            }
-            m.yesWon = int256(low) <= m.thresholdPrice;
+        (bool found, bool hit) = _scan(m, s, m.windowEnd);
+        if (!found) {
+            m.unresolvable = true;
+            emit MarketUnresolvable(marketId);
+            return;
         }
+        m.yesWon = hit;
 
         emit MarketSettled(marketId, m.yesWon);
     }
@@ -291,7 +321,7 @@ contract ThresholdMarket {
     ///         sides' principal. A settled, resolvable market with zero stake
     ///         on the winning side also refunds principal, since there is no
     ///         counterparty pool to pay winners from.
-    function claim(uint256 marketId) external {
+    function claim(uint256 marketId) external nonReentrant {
         Market storage m = markets[marketId];
         if (!m.settled) revert NotSettled();
         if (claimed[marketId][msg.sender]) revert AlreadyClaimed();

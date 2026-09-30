@@ -485,6 +485,11 @@
   },
   {
     "type": "error",
+    "name": "Reentrancy",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SeriesNotRegistered",
     "inputs": []
   },

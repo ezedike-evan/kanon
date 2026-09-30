@@ -977,7 +977,38 @@
   },
   {
     "type": "error",
+    "name": "ReceivedLessThanAmount",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "received",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "Reentrancy",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20Failed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SizeTooLarge",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "StrategyRetired",
     "inputs": []
   },
   {

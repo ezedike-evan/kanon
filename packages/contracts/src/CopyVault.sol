@@ -4,6 +4,8 @@ pragma solidity 0.8.26;
 import { StrategyRegistry } from "./StrategyRegistry.sol";
 import { RefusalGate } from "./RefusalGate.sol";
 import { IERC20 } from "./interfaces/IERC20.sol";
+import { SafeERC20 } from "./SafeERC20.sol";
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
 
 /**
  * @title CopyVault
@@ -62,7 +64,7 @@ import { IERC20 } from "./interfaces/IERC20.sol";
  *         no token transfer happens for it in this pass, for the same reason
  *         — there is no real settlement yet to draw a real fee from.
  */
-contract CopyVault {
+contract CopyVault is ReentrancyGuard {
     uint256 public constant BPS_DENOMINATOR = 10_000;
 
     struct MirroredPosition {
@@ -177,20 +179,18 @@ contract CopyVault {
         refusalGate = RefusalGate(refusalGate_);
     }
 
-    function deposit(uint256 amount) external onlyFollower {
+    function deposit(uint256 amount) external nonReentrant onlyFollower {
         if (amount == 0) revert ZeroAmount();
         collateral += amount;
-        bool ok = collateralToken.transferFrom(msg.sender, address(this), amount);
-        if (!ok) revert TransferFailed();
+        SafeERC20.safeTransferFromExact(collateralToken, msg.sender, address(this), amount);
         emit Deposited(msg.sender, amount);
     }
 
-    function withdraw(uint256 amount) external onlyFollower {
+    function withdraw(uint256 amount) external nonReentrant onlyFollower {
         if (amount == 0) revert ZeroAmount();
         if (amount > collateral) revert InsufficientBalance();
         collateral -= amount;
-        bool ok = collateralToken.transfer(msg.sender, amount);
-        if (!ok) revert TransferFailed();
+        SafeERC20.safeTransfer(collateralToken, msg.sender, amount);
         emit Withdrawn(msg.sender, amount);
     }
 
@@ -223,7 +223,7 @@ contract CopyVault {
         uint256 leaderSize,
         uint256 entryPrice,
         RefusalGate.PredicateDefinition[] calldata predicates
-    ) external onlyLeaderExecutor returns (bool mirrored, uint256 positionId) {
+    ) external onlyLeaderExecutor nonReentrant returns (bool mirrored, uint256 positionId) {
         if (!active) {
             emit TradeSkipped(assetId, "FOLLOWER_INACTIVE");
             return (false, 0);

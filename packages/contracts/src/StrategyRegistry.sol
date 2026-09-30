@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import { PredicateEngine } from "./PredicateEngine.sol";
+import { ReentrancyGuard } from "./ReentrancyGuard.sol";
 
 /**
  * @title StrategyRegistry
@@ -13,7 +14,18 @@ import { PredicateEngine } from "./PredicateEngine.sol";
  *           enters a cooling-off period with a visible, unskippable countdown.
  *           There is no override, no admin key, no support path.
  *
- * @dev    WHAT IS PINNED. Three things, always changed together and always
+ * @dev    BOND EXIT (two-step, no admin, no slashing). `requestRetire` starts a
+ *         `loosenCooldownSeconds` countdown; the strategy stays fully active
+ *         (and enforced) while it runs, so a bond cannot be pulled the moment
+ *         a trade has been approved. After it, anyone may call `finalizeRetire`,
+ *         which marks the strategy retired forever and refunds the bond to the
+ *         owner. A retired strategy fails closed: `RefusalGate` refuses it and
+ *         `MarginAccount.bindStrategy` / `VaultFactory` reject it. The owner may
+ *         `cancelRetire` before finalization. A pending loosening does NOT
+ *         block a retire request (retiring is the strictest outcome); once
+ *         retired, `finalizeLoosening` and `proposeLoosening` revert.
+ *
+ *         WHAT IS PINNED. Three things, always changed together and always
  *         under the same tighten/loosen rule:
  *
  *           - `specHash`: SHA-256 over the canonical spec JSON
@@ -54,7 +66,7 @@ import { PredicateEngine } from "./PredicateEngine.sol";
  *         has elapsed. There is no protocol-level admin key anywhere in this
  *         contract.
  */
-contract StrategyRegistry {
+contract StrategyRegistry is ReentrancyGuard {
     /// @dev MIRROR of `RefusalGate.PredicateDefinition`, field for field and in
     ///      the same order, so `abi.encode` of an array is byte-identical and
     ///      hashes to the same commitment. Mirrored (not imported) because
@@ -103,6 +115,11 @@ contract StrategyRegistry {
     uint256 public nextStrategyId;
     mapping(uint256 => Strategy) public strategies;
 
+    /// @notice Kept outside `Strategy` so the public `strategies` getter keeps its shape.
+    /// @dev `retireEndsAt[id]` is the countdown end of a pending retire, 0 if none.
+    mapping(uint256 => uint256) public retireEndsAt;
+    mapping(uint256 => bool) public isRetired;
+
     event StrategyPinned(
         uint256 indexed strategyId,
         address indexed owner,
@@ -133,6 +150,14 @@ contract StrategyRegistry {
         address newSeries
     );
 
+    event RetireRequested(uint256 indexed strategyId, uint256 retireEndsAt);
+    event RetireCancelled(uint256 indexed strategyId);
+    event StrategyRetired(uint256 indexed strategyId, address indexed owner, uint256 bondRefunded);
+
+    error StrategyIsRetired();
+    error RetireAlreadyRequested();
+    error NoPendingRetire();
+    error RefundFailed();
     error NotOwner();
     error BondTooLow();
     error NoPendingLoosening();
@@ -183,9 +208,8 @@ contract StrategyRegistry {
         if (!isCanonicalSeries[series]) revert SeriesNotCanonical(series);
     }
 
-    /// @notice Pins a brand-new strategy. The bond is held by this contract for
-    ///         the lifetime of the strategy; withdrawing it is out of scope for
-    ///         this pass (see README follow-ups).
+    /// @notice Pins a brand-new strategy. The bond is held by this contract
+    ///         until the strategy is retired (`requestRetire` / `finalizeRetire`).
     /// @param specHash SHA-256 of the canonical spec JSON.
     /// @param predicatesCommitment `keccak256(abi.encode(PredicateDefinition[]))`.
     /// @param series The canonical series the predicates are evaluated against.
@@ -248,6 +272,7 @@ contract StrategyRegistry {
         PredicateDefinition[] calldata newPredicates
     ) external onlyOwner(strategyId) {
         _validate(newSpecHash, newPredicatesCommitment, newSeries);
+        if (isRetired[strategyId]) revert StrategyIsRetired();
         Strategy storage s = strategies[strategyId];
         if (keccak256(abi.encode(oldPredicates)) != s.predicatesCommitment) revert OldPredicatesMismatch();
         if (keccak256(abi.encode(newPredicates)) != newPredicatesCommitment) revert NewPredicatesMismatch();
@@ -295,6 +320,7 @@ contract StrategyRegistry {
         address newSeries
     ) external onlyOwner(strategyId) {
         _validate(newSpecHash, newPredicatesCommitment, newSeries);
+        if (isRetired[strategyId]) revert StrategyIsRetired();
         Strategy storage s = strategies[strategyId];
         s.pendingSpecHash = newSpecHash;
         s.pendingPredicatesCommitment = newPredicatesCommitment;
@@ -309,6 +335,7 @@ contract StrategyRegistry {
     ///         `cooldownEndsAt` has passed. There is no path, for the owner or
     ///         anyone else, to make this succeed earlier.
     function finalizeLoosening(uint256 strategyId) external exists(strategyId) {
+        if (isRetired[strategyId]) revert StrategyIsRetired();
         Strategy storage s = strategies[strategyId];
         if (s.pendingSpecHash == bytes32(0)) revert NoPendingLoosening();
         if (block.timestamp < s.cooldownEndsAt) revert CoolingOff(s.cooldownEndsAt);
@@ -323,6 +350,51 @@ contract StrategyRegistry {
         s.cooldownEndsAt = 0;
 
         emit LooseningFinalized(strategyId, old, s.specHash, s.predicatesCommitment, s.series);
+    }
+
+    /// @notice Starts the retire countdown (`loosenCooldownSeconds`). The
+    ///         strategy stays active and enforced until `finalizeRetire`.
+    function requestRetire(uint256 strategyId) external onlyOwner(strategyId) {
+        if (isRetired[strategyId]) revert StrategyIsRetired();
+        if (retireEndsAt[strategyId] != 0) revert RetireAlreadyRequested();
+        uint256 endsAt = block.timestamp + loosenCooldownSeconds;
+        retireEndsAt[strategyId] = endsAt;
+        emit RetireRequested(strategyId, endsAt);
+    }
+
+    /// @notice Owner withdraws a pending retire request; the strategy carries on.
+    function cancelRetire(uint256 strategyId) external onlyOwner(strategyId) {
+        if (retireEndsAt[strategyId] == 0) revert NoPendingRetire();
+        retireEndsAt[strategyId] = 0;
+        emit RetireCancelled(strategyId);
+    }
+
+    /// @notice Permissionless once the countdown has elapsed. Marks the
+    ///         strategy retired (terminal) and refunds the whole bond to its
+    ///         owner. Cannot run earlier for anyone; there is no admin path
+    ///         and no slashing.
+    function finalizeRetire(uint256 strategyId) external nonReentrant exists(strategyId) {
+        if (isRetired[strategyId]) revert StrategyIsRetired();
+        uint256 endsAt = retireEndsAt[strategyId];
+        if (endsAt == 0) revert NoPendingRetire();
+        if (block.timestamp < endsAt) revert CoolingOff(endsAt);
+
+        Strategy storage s = strategies[strategyId];
+        address owner_ = s.owner;
+        uint256 bond = s.bond;
+
+        isRetired[strategyId] = true;
+        retireEndsAt[strategyId] = 0;
+        s.bond = 0;
+        s.pendingSpecHash = bytes32(0);
+        s.pendingPredicatesCommitment = bytes32(0);
+        s.pendingSeries = address(0);
+        s.cooldownEndsAt = 0;
+
+        (bool ok,) = owner_.call{ value: bond }("");
+        if (!ok) revert RefundFailed();
+
+        emit StrategyRetired(strategyId, owner_, bond);
     }
 
     function activeSpecHash(uint256 strategyId) external view returns (bytes32) {
