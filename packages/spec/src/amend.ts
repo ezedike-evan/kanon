@@ -16,6 +16,7 @@
 import { COOLING_OFF_SECONDS, diffSpec } from './diff';
 import type { SpecDiff } from './diff';
 import { canonicalizeSpec } from './hash';
+import { isSpecOnchainTightening, toPredicateDefinitions } from './onchain';
 import type { StrategySpec } from './spec';
 import { predicateSymbol } from './spec';
 
@@ -57,6 +58,21 @@ export interface AmendmentChain {
 
 const sameAddress = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 
+function encodable(s: StrategySpec): boolean {
+  try {
+    toPredicateDefinitions(s);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acceptedByChainTighten(current: StrategySpec, next: StrategySpec): boolean {
+  // A spec the gate cannot encode is refused long before the chain; keep diffSpec's answer.
+  if (!encodable(current) || !encodable(next)) return true;
+  return isSpecOnchainTightening(current, next);
+}
+
 export function planAmendment(
   current: StrategySpec,
   next: StrategySpec,
@@ -71,7 +87,10 @@ export function planAmendment(
 
   const diff = diffSpec(current, next);
   // A different series address cannot be ordered, so it waits like any loosening.
-  const cannotOrder = seriesMoved || unorderable(current, next);
+  // The registry's own `tighten` accepts a narrower set than `diffSpec` orders (a longer
+  // swing lookback reads as tighter here, but the chain treats any lookback change as a
+  // loosening). When both specs encode for the gate, the chain's rule is the final word.
+  const cannotOrder = seriesMoved || unorderable(current, next) || !acceptedByChainTighten(current, next);
 
   if (diff.requiresCoolingOff || cannotOrder) {
     return {

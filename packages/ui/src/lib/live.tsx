@@ -454,7 +454,7 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
 
     // --- Cooling-off --------------------------------------------------------
     const finalizeCoolingOff = () => runFinalizeFlow({ userId, strategy, pinClient, actions });
-    const withdrawCoolingOff = () => runWithdrawFlow({ userId, strategy, pinClient, actions });
+    const withdrawCoolingOff = () => runWithdrawFlow({ userId, strategy, activeSpec, pinClient, actions });
 
     const ordinal = picked.draft ? picked.ordinalOf(picked.draft._id) : picked.nextOrdinal;
 

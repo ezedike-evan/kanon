@@ -148,3 +148,44 @@ export function encodePredicates(spec: StrategySpec): Hex {
 export function predicatesCommitment(spec: StrategySpec): Hex {
   return keccak256(encodePredicates(spec));
 }
+
+/**
+ * Mirror of `StrategyRegistry._requireTightening`, rule for rule. `tighten`
+ * is accepted on-chain only if the new predicates keep every old predicate
+ * identical (same index, same fields) except `minGapBps`, which may stay equal
+ * or grow, and may append further predicates. Removal, reordering, a lower
+ * gap, or any changed lookback/timeframe/symbol is a loosening as far as the
+ * chain is concerned and must go through `proposeLoosening`.
+ */
+export function isOnchainTightening(
+  oldDefs: readonly PredicateDefinition[],
+  newDefs: readonly PredicateDefinition[],
+): boolean {
+  if (newDefs.length < oldDefs.length) return false;
+  return oldDefs.every((a, i) => {
+    const b = newDefs[i]!;
+    return (
+      a.kind === b.kind &&
+      a.symbol === b.symbol &&
+      a.direction === b.direction &&
+      a.swingLookbackCandles === b.swingLookbackCandles &&
+      a.referenceExtreme === b.referenceExtreme &&
+      a.lookback === b.lookback &&
+      a.timeframeSeconds === b.timeframeSeconds &&
+      b.minGapBps >= a.minGapBps
+    );
+  });
+}
+
+/**
+ * Whether `next` can be applied with the registry's `tighten`. False when the
+ * predicates are not provably stricter, or when either spec cannot be encoded
+ * for the gate (the chain could never have accepted it).
+ */
+export function isSpecOnchainTightening(current: StrategySpec, next: StrategySpec): boolean {
+  try {
+    return isOnchainTightening(toPredicateDefinitions(current), toPredicateDefinitions(next));
+  } catch {
+    return false;
+  }
+}

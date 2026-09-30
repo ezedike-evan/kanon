@@ -6,6 +6,7 @@ import {
   predicatesCommitment,
   specHash,
   stated,
+  toPredicateDefinitions,
   type StrategySpec,
 } from '@kanon/spec';
 import {
@@ -37,6 +38,8 @@ function edit(spec: StrategySpec, key: string, value: number): StrategySpec {
 }
 
 /** A pin client that records its calls and can be told to fail. */
+const tightenCalls: Array<{ old: unknown; next: unknown }> = [];
+
 function fakeClient(over: Partial<PinClient> = {}, ready = true) {
   const log: string[] = [];
   const client: PinClient = {
@@ -51,8 +54,9 @@ function fakeClient(over: Partial<PinClient> = {}, ready = true) {
       log.push(`chain.pin:${target.specHash}:${target.predicatesCommitment}:${target.series}`);
       return RECEIPT;
     },
-    tighten: async (id, target) => {
+    tighten: async (id, target, preds) => {
       log.push(`chain.tighten:${id}:${target.specHash}:${target.predicatesCommitment}:${target.series}`);
+      tightenCalls.push(preds);
       return { txHash: TX };
     },
     proposeLoosening: async (id, target) => {
@@ -262,6 +266,23 @@ describe('runAmendFlow', () => {
     });
   });
 
+  it('tighten carries the pinned predicates and the new ones', async () => {
+    tightenCalls.length = 0;
+    const next = edit(RULE_04, 'p2.minGapBps', 500);
+    const t = await setup(next);
+    expect(await runAmendFlow(t.input)).toEqual({ ok: true, kind: 'immediate' });
+    expect(tightenCalls).toEqual([
+      { old: toPredicateDefinitions(RULE_04), next: toPredicateDefinitions(next) },
+    ]);
+  });
+
+  it('a change the chain would not take as a tightening goes to proposeLoosening, never tighten', async () => {
+    const t = await setup(edit(RULE_04, 'p1.swingLookbackCandles', 9));
+    expect(await runAmendFlow(t.input)).toEqual({ ok: true, kind: 'cooling_off' });
+    expect(t.log).toHaveLength(1);
+    expect(t.log[0]).toMatch(/^chain\.proposeLoosening:/);
+  });
+
   it('a loosening goes on-chain as proposeLoosening, carrying the registry cooldown', async () => {
     const t = await setup(edit(RULE_04, 'risk.stopDistanceBps', 90));
     expect(await runAmendFlow(t.input)).toEqual({ ok: true, kind: 'cooling_off' });
@@ -361,9 +382,12 @@ describe('cooling-off flows', () => {
   });
 
   it('withdraw is a tighten to exactly what is in force: hash, commitment and series as recorded', async () => {
-    const t = setup();
+    tightenCalls.length = 0;
+    const t = setup({ activeSpec: RULE_04 });
     expect(await runWithdrawFlow(t.input)).toEqual({ ok: true, kind: 'immediate' });
     expect(t.log).toEqual([`chain.tighten:7:0xcurrent:${COMMIT}:${SERIES_BTC}`]);
+    const defs = toPredicateDefinitions(RULE_04);
+    expect(tightenCalls).toEqual([{ old: defs, next: defs }]);
     expect(t.actions.withdrawAmendment).toHaveBeenCalled();
   });
 

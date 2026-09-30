@@ -14,7 +14,7 @@
  *   - the hash that is signed is the hash of the spec that is saved
  */
 
-import { planAmendment, type StrategySpec } from '@kanon/spec';
+import { isSpecOnchainTightening, planAmendment, toPredicateDefinitions, type StrategySpec } from '@kanon/spec';
 import type { AmendOutcome, PinOutcome } from './flow-types';
 import type { LiveActions } from './live';
 import { PinError, buildPinTarget, type PinClient, type PinReceipt, type PinTarget } from './pin';
@@ -141,8 +141,12 @@ export async function runAmendFlow(i: AmendFlowInput): Promise<AmendOutcome> {
     });
     if (plan.kind === 'none') return { ok: false, message: 'Nothing has changed.' };
 
-    if (plan.kind === 'immediate') {
-      const { txHash } = await pinClient.tighten(strategy.chainStrategyId, target);
+    // The registry only accepts `tighten` when the decoded predicates prove it; anything else waits.
+    if (plan.kind === 'immediate' && isSpecOnchainTightening(current, staged)) {
+      const { txHash } = await pinClient.tighten(strategy.chainStrategyId, target, {
+        old: toPredicateDefinitions(current),
+        next: toPredicateDefinitions(staged),
+      });
       await actions.amendStrategy({
         strategyId: strategy._id,
         nextSpec: staged,
@@ -183,6 +187,8 @@ export interface PendingFlowInput {
         seriesAddress?: string | undefined;
       }
     | undefined;
+  /** The spec in force on-chain: a withdrawal re-asserts exactly its predicates. */
+  activeSpec?: StrategySpec | null | undefined;
   pinClient: PinClient;
   actions: Pick<LiveActions, 'finalizeAmendment' | 'withdrawAmendment'>;
 }
@@ -222,13 +228,18 @@ export async function runWithdrawFlow(i: PendingFlowInput): Promise<AmendOutcome
   if (!strategy!.predicatesCommitment || !strategy!.seriesAddress) {
     return { ok: false, message: 'This rule has no on-chain record to return to.' };
   }
+  if (!i.activeSpec) {
+    return { ok: false, message: 'This rule has no on-chain record to return to.' };
+  }
   const active: PinTarget = {
     specHash: strategy!.specHash,
     predicatesCommitment: strategy!.predicatesCommitment,
     series: strategy!.seriesAddress,
   };
   try {
-    const { txHash } = await pinClient.tighten(strategy!.chainStrategyId!, active);
+    // Old and new are the same predicates: equal is a valid tightening and clears the pending change.
+    const defs = toPredicateDefinitions(i.activeSpec);
+    const { txHash } = await pinClient.tighten(strategy!.chainStrategyId!, active, { old: defs, next: defs });
     await actions.withdrawAmendment({ strategyId: strategy!._id, txHash });
     return { ok: true, kind: 'immediate' };
   } catch (err) {

@@ -118,6 +118,7 @@ export interface LiveTrade {
   feed?: string;
   specHash?: string;
   executedAt?: number;
+  executionMode?: 'paper' | 'live';
 }
 
 /** What `blockedReport` returns per refusal. */
@@ -425,6 +426,7 @@ export function proposalFromTrade(
       : {}),
     checks,
     tradeId: trade._id,
+    paper: trade.status === 'executed' && trade.executionMode !== 'live',
     status: trade.status === 'proposed' ? 'proposed' : trade.status === 'undone' ? 'undone' : 'executed',
     direction: trade.direction,
     sizeUnit: (trade.asset.split('/')[0] ?? trade.asset).toUpperCase(),

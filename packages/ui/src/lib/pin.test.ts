@@ -82,7 +82,7 @@ describe('unavailablePinClient', () => {
 
   it('names a missing wallet, when the registry exists', async () => {
     const c = unavailablePinClient({ registryAddress: ADDR, hasWallet: false });
-    await expect(c.tighten('0', TARGET)).rejects.toMatchObject({ code: 'no_wallet' });
+    await expect(c.tighten('0', TARGET, { old: [], next: [] })).rejects.toMatchObject({ code: 'no_wallet' });
     await expect(c.finalizeLoosening('0')).rejects.toMatchObject({ code: 'no_wallet' });
   });
 });

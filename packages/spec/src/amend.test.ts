@@ -32,9 +32,16 @@ describe('planAmendment', () => {
     expect(plan.kind).toBe('immediate');
   });
 
-  it('a longer swing lookback is a tightening; a shorter one is a loosening', () => {
-    expect(planAmendment(RULE_04, edit(RULE_04, 'p1.swingLookbackCandles', 9)).kind).toBe('immediate');
+  it('any swing lookback change waits: the chain only accepts a raised minimum gap or an appended predicate', () => {
+    expect(planAmendment(RULE_04, edit(RULE_04, 'p1.swingLookbackCandles', 9)).kind).toBe('cooling_off');
     expect(planAmendment(RULE_04, edit(RULE_04, 'p1.swingLookbackCandles', 3)).kind).toBe('cooling_off');
+  });
+
+  it('a larger minimum gap applies at once; a smaller one waits', () => {
+    const gap = RULE_04.predicates.find((p) => p.kind === 'fair_value_gap');
+    const now = gap && gap.kind === 'fair_value_gap' ? gap.minGapBps.value : 0;
+    expect(planAmendment(RULE_04, edit(RULE_04, 'p2.minGapBps', now + 10)).kind).toBe('immediate');
+    expect(planAmendment(RULE_04, edit(RULE_04, 'p2.minGapBps', Math.max(1, now - 1))).kind).toBe('cooling_off');
   });
 
   it('a mix of tightening and loosening waits: the hash is one commitment', () => {

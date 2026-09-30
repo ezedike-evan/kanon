@@ -28,7 +28,7 @@ import { PinError, pinAvailability, type PinClient, type PinReceipt, type PinTar
 
 export const registryAbi = parseAbi([
   'function pinStrategy(bytes32 specHash, bytes32 predicatesCommitment, address series) payable returns (uint256 strategyId)',
-  'function tighten(uint256 strategyId, bytes32 newSpecHash, bytes32 newPredicatesCommitment, address newSeries)',
+  'function tighten(uint256 strategyId, bytes32 newSpecHash, bytes32 newPredicatesCommitment, address newSeries, (uint8 kind, bytes32 symbol, uint8 direction, uint256 swingLookbackCandles, uint256 minGapBps, uint8 referenceExtreme, uint8 lookback, uint256 timeframeSeconds)[] oldPredicates, (uint8 kind, bytes32 symbol, uint8 direction, uint256 swingLookbackCandles, uint256 minGapBps, uint8 referenceExtreme, uint8 lookback, uint256 timeframeSeconds)[] newPredicates)',
   'function proposeLoosening(uint256 strategyId, bytes32 newSpecHash, bytes32 newPredicatesCommitment, address newSeries)',
   'function finalizeLoosening(uint256 strategyId)',
   'function activeSpecHash(uint256 strategyId) view returns (bytes32)',
@@ -45,7 +45,11 @@ export const registryAbi = parseAbi([
   'error EmptyCommitment()',
   'error EmptySpecHash()',
   'error NoPendingLoosening()',
+  'error NewPredicatesMismatch()',
+  'error NotATightening(uint256 index)',
   'error NotOwner()',
+  'error OldPredicatesMismatch()',
+  'error SeriesChangeIsLoosening()',
   'error SeriesNotCanonical(address series)',
   'error UnknownStrategy()',
 ]);
@@ -117,6 +121,12 @@ function revertToPinError(name: string): PinError {
       return new PinError('failed', 'The cooling-off period has not ended, so the registry refused it.');
     case 'NotOwner':
       return new PinError('failed', 'This wallet does not own that strategy on the registry.');
+    case 'NotATightening':
+    case 'SeriesChangeIsLoosening':
+      return new PinError('failed', 'The registry does not treat this as a tightening, so it must wait out the hold.');
+    case 'OldPredicatesMismatch':
+    case 'NewPredicatesMismatch':
+      return new PinError('failed', 'The predicates sent do not match the registry commitment. Nothing changed.');
     case 'EmptyCommitment':
     case 'EmptySpecHash':
       return new PinError('failed', 'The registry refused an empty hash. Nothing was pinned.');
@@ -259,8 +269,13 @@ export function createViemPinClient(opts: ViemPinClientOptions): PinClient {
       };
     },
 
-    async tighten(chainStrategyId, target) {
-      const { hash } = await send('tighten', [asId(chainStrategyId), ...targetArgs(target)]);
+    async tighten(chainStrategyId, target, predicates) {
+      const { hash } = await send('tighten', [
+        asId(chainStrategyId),
+        ...targetArgs(target),
+        predicates.old,
+        predicates.next,
+      ]);
       return { txHash: hash };
     },
 

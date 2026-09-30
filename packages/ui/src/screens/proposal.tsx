@@ -123,7 +123,9 @@ export function ProposalScreen() {
             {PROPOSAL.status === 'proposed'
               ? 'SETUP VALID · EXECUTING'
               : PROPOSAL.status === 'executed'
-                ? 'SETUP VALID · EXECUTED'
+                ? PROPOSAL.paper
+                  ? 'SETUP VALID · EXECUTED (PAPER)'
+                  : 'SETUP VALID · EXECUTED'
                 : 'SETUP VALID · UNDONE BY YOU'}
           </Text>
         </View>
@@ -219,10 +221,12 @@ export function ProposalScreen() {
         ) : (
           <>
             <View className="mb-4 border-t border-hairline py-4">
-              <Meta>{PROPOSAL.status === 'executed' ? 'EXECUTED' : 'NOT EXECUTED'}</Meta>
+              <Meta>{PROPOSAL.status === 'executed' ? (PROPOSAL.paper ? 'EXECUTED · PAPER FILL' : 'EXECUTED') : 'NOT EXECUTED'}</Meta>
               <Text className="mt-1.75 font-mono text-10 tracking-w06 text-ash">
                 {PROPOSAL.status === 'executed'
-                  ? 'The undo window has closed.'
+                  ? PROPOSAL.paper
+                    ? 'The undo window has closed. This was a paper fill: no order reached a venue.'
+                    : 'The undo window has closed.'
                   : 'You cancelled inside the undo window.'}
               </Text>
             </View>

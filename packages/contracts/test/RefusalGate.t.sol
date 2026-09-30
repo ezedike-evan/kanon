@@ -610,16 +610,28 @@ contract RefusalGateTest is Test {
         assertTrue(gate.evaluateOnChain(id, true, easy));
     }
 
+    /// @dev Converts to the registry's mirror struct; also proves identical encoding.
+    function _reg(RefusalGate.PredicateDefinition[] memory p)
+        internal
+        pure
+        returns (StrategyRegistry.PredicateDefinition[] memory)
+    {
+        return abi.decode(abi.encode(p), (StrategyRegistry.PredicateDefinition[]));
+    }
+
     function test_CommitmentTightening_AppliesImmediately() public {
         RefusalGate.PredicateDefinition[] memory easy = _arr(_bos(true, 1));
-        RefusalGate.PredicateDefinition[] memory hard = _arr(_bos(true, 3));
+        // A tightening on-chain = the old rule plus an appended predicate.
+        RefusalGate.PredicateDefinition[] memory hard = new RefusalGate.PredicateDefinition[](2);
+        hard[0] = _bos(true, 1);
+        hard[1] = _bos(true, 3);
         uint256 id = _pin(easy);
         _risingTwoCandles();
         vm.prank(proposer);
         assertTrue(gate.evaluateOnChain(id, true, easy));
 
         vm.prank(owner);
-        registry.tighten(id, keccak256("hard-spec"), _commit(hard), address(series));
+        registry.tighten(id, keccak256("hard-spec"), _commit(hard), address(series), _reg(easy), _reg(hard));
 
         vm.prank(proposer);
         vm.expectRevert();
@@ -634,7 +646,7 @@ contract RefusalGateTest is Test {
         RefusalGate.PredicateDefinition[] memory easy = _arr(_bos(true, 1));
         vm.prank(proposer);
         vm.expectRevert(StrategyRegistry.NotOwner.selector);
-        registry.tighten(id, keccak256("x"), _commit(easy), address(series));
+        registry.tighten(id, keccak256("x"), _commit(easy), address(series), _reg(preds), _reg(easy));
         vm.prank(proposer);
         vm.expectRevert(StrategyRegistry.NotOwner.selector);
         registry.proposeLoosening(id, keccak256("x"), _commit(easy), address(series));

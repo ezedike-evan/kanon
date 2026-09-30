@@ -130,4 +130,44 @@ contract CanonicalSeriesTest is Test {
         vm.expectRevert();
         series.swingHigh(10, 5);
     }
+
+    // ---- oracle sanity checks ----
+
+    function test_RecordSample_RevertsOnZeroPrice() public {
+        pyth.setPrice(FEED, 0, 0, -8, block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(CanonicalSeries.NonPositivePrice.selector, int64(0)));
+        series.recordSample();
+    }
+
+    function test_RecordSample_RevertsOnNegativePrice() public {
+        pyth.setPrice(FEED, -5, 0, -8, block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(CanonicalSeries.NonPositivePrice.selector, int64(-5)));
+        series.recordSample();
+    }
+
+    function test_RecordSample_RevertsOnPositiveExpo() public {
+        pyth.setPrice(FEED, 100_000, 1, 2, block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(CanonicalSeries.PositiveExpo.selector, int32(2)));
+        series.recordSample();
+    }
+
+    function test_RecordSample_RevertsWhenConfidenceOverTwoPercent() public {
+        // 2% of 100_000 is 2_000; 2_001 is over.
+        pyth.setPrice(FEED, 100_000, 2_001, -8, block.timestamp);
+        vm.expectRevert(abi.encodeWithSelector(CanonicalSeries.ConfidenceTooWide.selector, uint64(2_001), int64(100_000)));
+        series.recordSample();
+    }
+
+    function test_RecordSample_AcceptsConfidenceExactlyTwoPercent() public {
+        pyth.setPrice(FEED, 100_000, 2_000, -8, block.timestamp);
+        series.recordSample();
+        assertEq(series.lastSampleTimestamp(), block.timestamp);
+    }
+
+    function test_RecordSample_HappyPathStillRecords() public {
+        _setAndRecord(65_000_00000000);
+        (,,,, uint32 n, bool recorded) = series.getCandle(series.bucketIndexOf(block.timestamp));
+        assertTrue(recorded);
+        assertEq(n, 1);
+    }
 }

@@ -21,6 +21,9 @@ const TARGET = { specHash: SPEC_HASH, predicatesCommitment: COMMITMENT, series: 
 const TX = `0x${'cd'.repeat(32)}` as Hex;
 const MIN_BOND = 250_000_000_000_000_000n;
 
+const TIGHTEN_SIG =
+  'tighten(uint256,bytes32,bytes32,address,(uint8,bytes32,uint8,uint256,uint256,uint8,uint8,uint256)[],(uint8,bytes32,uint8,uint256,uint256,uint8,uint8,uint256)[])';
+
 describe('registryAbi', () => {
   // The typed ABI here is hand-written. This pins it to the compiled contract's own ABI,
   // so the two cannot drift: a renamed function or a changed argument fails here.
@@ -308,16 +311,16 @@ describe('createViemPinClient', () => {
   it('tighten and finalizeLoosening send their calls and return the hash', async () => {
     const wallet = fakeWallet();
     const client = clientWith(wallet, fakeNode());
-    expect((await client.tighten('7', TARGET)).txHash).toBe(TX);
+    expect((await client.tighten('7', TARGET, { old: [], next: [] })).txHash).toBe(TX);
     expect((await client.finalizeLoosening('7')).txHash).toBe(TX);
     const sent = wallet.calls.filter((c) => c.method === 'eth_sendTransaction');
     expect(sent).toHaveLength(2);
     // tighten carries id, hash, commitment and series; finalize carries only the id.
     const tighten = (sent[0]!.params as Array<{ data: Hex }>)[0]!.data;
-    expect(tighten.startsWith(keccak256(toHex('tighten(uint256,bytes32,bytes32,address)')).slice(0, 10))).toBe(true);
-    expect(tighten.slice(10)).toBe(
+    expect(tighten.startsWith(keccak256(toHex(TIGHTEN_SIG)).slice(0, 10))).toBe(true);
+    expect(tighten.slice(10).startsWith(
       `${'7'.padStart(64, '0')}${SPEC_HASH.slice(2)}${COMMITMENT.slice(2)}${SERIES.slice(2).toLowerCase().padStart(64, '0')}`,
-    );
+    )).toBe(true);
   });
 
   it('proposeLoosening sends the new commitment and series too', async () => {

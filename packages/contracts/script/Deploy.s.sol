@@ -57,8 +57,11 @@ import { PythMonad } from "./PythMonad.sol";
  * one means redeploying, not calling anything.
  */
 contract Deploy is Script {
+    uint256 internal constant MONAD_MAINNET = 143;
+
     struct Params {
         bool mocks;
+        bool coreOnly;
         uint256 minBond;
         uint256 loosenCooldownSeconds;
         uint256 priceMaxAgeSeconds;
@@ -99,7 +102,8 @@ contract Deploy is Script {
             d.collateralToken = address(new MockERC20("Mock USDC", "USDC", 6));
         } else {
             d.pyth = PythMonad.PRICE_FEED;
-            d.collateralToken = vm.envAddress("COLLATERAL_TOKEN");
+            // Core-only deployments hold no collateral, so no token is required.
+            if (!p.coreOnly) d.collateralToken = vm.envAddress("COLLATERAL_TOKEN");
         }
 
         // BTC/USD and ETH/USD, 15m buckets, 60s cadence — the demo assets from
@@ -126,33 +130,38 @@ contract Deploy is Script {
         marketIds[1] = keccak256("ETH/USD");
         d.thresholdMarket = address(new ThresholdMarket(marketIds, canonical));
 
-        // InsuranceFund <-> MarginAccount reference each other. The fund is
-        // bound to the MarginAccount's *predicted* CREATE address (the fund is
-        // deployed at `nonce`, the margin at `nonce + 1`); MarginAccount's
-        // constructor then asserts `fund.margin() == address(this)`. No
-        // privileged binder, no setter.
-        uint256 nonce = vm.getNonce(d.deployer);
-        address predictedMargin = vm.computeCreateAddress(d.deployer, nonce + 1);
-        InsuranceFund fund = new InsuranceFund(d.collateralToken, predictedMargin);
-        MarginAccount margin = new MarginAccount(
-            d.collateralToken,
-            p.maintenanceMarginBps,
-            address(fund),
-            p.liquidationPenaltyBps,
-            p.adlHealthThreshold,
-            p.adlFractionBps,
-            d.refusalGate
-        );
-        require(address(margin) == predictedMargin, "margin address prediction failed");
-        d.insuranceFund = address(fund);
-        d.marginAccount = address(margin);
+        // Monad mainnet ships the core only (series, registry, gate, market). The margin ledger,
+        // insurance fund and vaults are unbacked or attested-input designs that are not safe
+        // with real deposits yet (docs/SECURITY.md), so they stay testnet-only.
+        if (!p.coreOnly) {
+            // InsuranceFund <-> MarginAccount reference each other. The fund is
+            // bound to the MarginAccount's *predicted* CREATE address (the fund is
+            // deployed at `nonce`, the margin at `nonce + 1`); MarginAccount's
+            // constructor then asserts `fund.margin() == address(this)`. No
+            // privileged binder, no setter.
+            uint256 nonce = vm.getNonce(d.deployer);
+            address predictedMargin = vm.computeCreateAddress(d.deployer, nonce + 1);
+            InsuranceFund fund = new InsuranceFund(d.collateralToken, predictedMargin);
+            MarginAccount margin = new MarginAccount(
+                d.collateralToken,
+                p.maintenanceMarginBps,
+                address(fund),
+                p.liquidationPenaltyBps,
+                p.adlHealthThreshold,
+                p.adlFractionBps,
+                d.refusalGate
+            );
+            require(address(margin) == predictedMargin, "margin address prediction failed");
+            d.insuranceFund = address(fund);
+            d.marginAccount = address(margin);
 
-        d.vaultFactory = address(new VaultFactory(d.collateralToken, d.registry, d.refusalGate));
+            d.vaultFactory = address(new VaultFactory(d.collateralToken, d.registry, d.refusalGate));
 
-        if (p.insuranceSeed > 0) {
-            if (p.mocks) MockERC20(d.collateralToken).mint(d.deployer, p.insuranceSeed);
-            MockERC20(d.collateralToken).approve(address(fund), p.insuranceSeed);
-            fund.deposit(p.insuranceSeed);
+            if (p.insuranceSeed > 0) {
+                if (p.mocks) MockERC20(d.collateralToken).mint(d.deployer, p.insuranceSeed);
+                MockERC20(d.collateralToken).approve(address(fund), p.insuranceSeed);
+                fund.deposit(p.insuranceSeed);
+            }
         }
 
         vm.stopBroadcast();
@@ -163,6 +172,8 @@ contract Deploy is Script {
 
     function _params() internal view returns (Params memory p) {
         p.mocks = block.chainid == 31337 || vm.envOr("USE_MOCKS", false);
+        p.coreOnly = block.chainid == MONAD_MAINNET;
+        require(!(p.mocks && block.chainid == MONAD_MAINNET), "mocks are never deployed to mainnet");
         p.minBond = vm.envOr("MIN_BOND_WEI", uint256(0.25 ether));
         p.loosenCooldownSeconds = vm.envOr("LOOSEN_COOLDOWN_SECONDS", uint256(86_400));
         p.priceMaxAgeSeconds = vm.envOr("PRICE_MAX_AGE_SECONDS", uint256(3600));

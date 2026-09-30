@@ -191,6 +191,8 @@ export interface ProposalData {
   undoExpiresAt?: number;
   checks: { label: string; evidence: string }[];
   tradeId: string;
+  /** True when an executed trade was a paper fill, not a venue fill. Shown, never hidden. */
+  paper?: boolean;
   /** `proposed` while the undo window runs; `executed` or `undone` once it has. */
   status: 'proposed' | 'executed' | 'undone';
   direction: 'long' | 'short';

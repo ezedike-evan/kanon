@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import { PredicateEngine } from "./PredicateEngine.sol";
+
 /**
  * @title StrategyRegistry
  * @notice Pins a strategy on-chain with a bond, per
@@ -29,29 +31,21 @@ pragma solidity 0.8.26;
  *
  *         TRUST BOUNDARY, read this before touching the contract:
  *
- *         Whether a new spec is a "tightening" or a "loosening" of the pinned
- *         one is a semantic comparison over the strategy spec's parameters
- *         (e.g. "is a wider stop distance looser?"). That comparison lives
- *         off-chain, in `packages/spec` and the spec-review UI, where the full
- *         typed spec is available. This contract only ever sees opaque
- *         `bytes32` hashes (the spec hash and the predicates commitment) — it has
- *         no spec to compare, so it cannot verify the caller's claim. In
- *         particular a `tighten` that swaps in a different commitment (easier
- *         predicates) applies immediately, exactly like any other `tighten`.
+ *         `tighten` is NOT trusted on the caller's say-so. The caller supplies
+ *         the decoded old and new predicate arrays; the contract checks that
+ *         `keccak256(abi.encode(old))` equals the pinned commitment and
+ *         `keccak256(abi.encode(new))` equals the new commitment, then checks a
+ *         deliberately CONSERVATIVE partial order over the decoded predicates
+ *         (see `tighten`). Anything the order cannot prove is a tightening must
+ *         go through `proposeLoosening` and wait out the cooldown. A compromised
+ *         owner key therefore cannot use `tighten` to swap in easier rules.
  *
- *         Instead, the caller *asserts* which kind of change this is by which
- *         function they call: `tighten` applies immediately, no questions
- *         asked; `proposeLoosening` + `finalizeLoosening` always pays the full
- *         cooldown. A malicious or buggy caller (i.e. a compromised owner key)
- *         could call `tighten` with a spec that is actually looser. That is a
- *         real gap in this pass — closing it requires either (a) an on-chain
- *         partial-order check over decoded spec parameters instead of opaque
- *         hashes, or (b) a signed attestation from the spec-review UI that
- *         itself proves the direction of change. Both are follow-up work, not
- *         silently assumed away. What this contract *does* guarantee, with no
- *         exception and no admin path: once `proposeLoosening` is called, the
- *         new hash cannot become active before `cooldownEndsAt`, for anyone,
- *         including the owner.
+ *         What the chain still cannot see is the off-chain `specHash` (SHA-256
+ *         over spec JSON): fields that never reach a predicate (e.g. sizing)
+ *         are bound only by the hash, so `tighten` only guarantees the
+ *         *predicate* set is no looser. Guarantee with no exception and no
+ *         admin path: once `proposeLoosening` is called, the new hash cannot
+ *         become active before `cooldownEndsAt`, for anyone, including the owner.
  *
  *         No function in this contract can be called by anyone other than the
  *         strategy's own owner except `finalizeLoosening`, which is
@@ -61,6 +55,22 @@ pragma solidity 0.8.26;
  *         contract.
  */
 contract StrategyRegistry {
+    /// @dev MIRROR of `RefusalGate.PredicateDefinition`, field for field and in
+    ///      the same order, so `abi.encode` of an array is byte-identical and
+    ///      hashes to the same commitment. Mirrored (not imported) because
+    ///      RefusalGate imports this contract. test/StrategyRegistry.t.sol
+    ///      proves the encodings are equal; keep the two in lockstep.
+    struct PredicateDefinition {
+        PredicateEngine.PredicateKind kind;
+        bytes32 symbol;
+        PredicateEngine.Direction direction;
+        uint256 swingLookbackCandles;
+        uint256 minGapBps;
+        PredicateEngine.ReferenceExtreme referenceExtreme;
+        PredicateEngine.Lookback lookback;
+        uint256 timeframeSeconds;
+    }
+
     struct Strategy {
         address owner;
         bytes32 specHash;
@@ -131,6 +141,13 @@ contract StrategyRegistry {
     error EmptySpecHash();
     error EmptyCommitment();
     error SeriesNotCanonical(address series);
+    error OldPredicatesMismatch();
+    error NewPredicatesMismatch();
+    error SeriesChangeIsLoosening();
+    /// @notice The change is not provably a tightening; use `proposeLoosening`.
+    ///         `index` is the first offending predicate (or the old length if
+    ///         predicates were removed).
+    error NotATightening(uint256 index);
 
     constructor(uint256 minBond_, uint256 loosenCooldownSeconds_, address[] memory canonicalSeries_) {
         require(loosenCooldownSeconds_ > 0, "cooldown required");
@@ -197,16 +214,46 @@ contract StrategyRegistry {
         emit StrategyPinned(strategyId, msg.sender, specHash, msg.value, predicatesCommitment, series);
     }
 
-    /// @notice Applies a tightened spec immediately. See the contract-level
-    ///         NatSpec: the caller is asserting this is a tightening by calling
-    ///         this function rather than `proposeLoosening`. Also cancels any
-    ///         in-flight loosening proposal, since a tighten supersedes it.
-    function tighten(uint256 strategyId, bytes32 newSpecHash, bytes32 newPredicatesCommitment, address newSeries)
-        external
-        onlyOwner(strategyId)
-    {
+    /// @notice Applies a tightened spec immediately, but only if the decoded
+    ///         predicates PROVE it is a tightening. Also cancels any in-flight
+    ///         loosening proposal, since a tighten supersedes it.
+    /// @dev    The rule is a conservative partial order. `newPredicates` is
+    ///         accepted iff:
+    ///           - `keccak256(abi.encode(oldPredicates))` is the pinned commitment
+    ///             and `keccak256(abi.encode(newPredicates))` is
+    ///             `newPredicatesCommitment`;
+    ///           - `newSeries` equals the pinned series (a different series is
+    ///             a different market; never provably stricter);
+    ///           - `newPredicates.length >= oldPredicates.length`;
+    ///           - for every index i < old.length every field is identical
+    ///             (kind, symbol, direction, swingLookbackCandles,
+    ///             referenceExtreme, lookback, timeframeSeconds) except
+    ///             `minGapBps`, which may stay equal or INCREASE;
+    ///           - predicates appended after the old ones are allowed (the
+    ///             rule is a conjunction, so extra terms only refuse more).
+    ///         Everything else (removal, reorder, lower minGapBps, changed
+    ///         lookback or timeframe) reverts `NotATightening`. Knobs such as
+    ///         lookbacks are ambiguous: a longer window can widen or narrow
+    ///         what passes depending on the kind and direction, and proving
+    ///         direction per kind on-chain is unnecessary risk. They are
+    ///         therefore treated as loosening and wait out the cooldown. Being
+    ///         conservative here only ever costs the owner a wait, never
+    ///         weakens the rule. No admin path exists.
+    function tighten(
+        uint256 strategyId,
+        bytes32 newSpecHash,
+        bytes32 newPredicatesCommitment,
+        address newSeries,
+        PredicateDefinition[] calldata oldPredicates,
+        PredicateDefinition[] calldata newPredicates
+    ) external onlyOwner(strategyId) {
         _validate(newSpecHash, newPredicatesCommitment, newSeries);
         Strategy storage s = strategies[strategyId];
+        if (keccak256(abi.encode(oldPredicates)) != s.predicatesCommitment) revert OldPredicatesMismatch();
+        if (keccak256(abi.encode(newPredicates)) != newPredicatesCommitment) revert NewPredicatesMismatch();
+        if (newSeries != s.series) revert SeriesChangeIsLoosening();
+        _requireTightening(oldPredicates, newPredicates);
+
         bytes32 old = s.specHash;
         s.specHash = newSpecHash;
         s.predicatesCommitment = newPredicatesCommitment;
@@ -220,6 +267,20 @@ contract StrategyRegistry {
         }
 
         emit Tightened(strategyId, old, newSpecHash, newPredicatesCommitment, newSeries);
+    }
+
+    function _requireTightening(PredicateDefinition[] calldata o, PredicateDefinition[] calldata n) internal pure {
+        if (n.length < o.length) revert NotATightening(o.length);
+        for (uint256 i = 0; i < o.length; i++) {
+            PredicateDefinition calldata a = o[i];
+            PredicateDefinition calldata b = n[i];
+            if (
+                a.kind != b.kind || a.symbol != b.symbol || a.direction != b.direction
+                    || a.swingLookbackCandles != b.swingLookbackCandles || a.referenceExtreme != b.referenceExtreme
+                    || a.lookback != b.lookback || a.timeframeSeconds != b.timeframeSeconds
+                    || b.minGapBps < a.minGapBps
+            ) revert NotATightening(i);
+        }
     }
 
     /// @notice Starts the cooling-off period for a loosened spec. Does not touch

@@ -11,7 +11,13 @@
  * accepted it. Nothing here returns a receipt it did not get.
  */
 
-import { predicatesCommitment, specHash as hashSpec, type Decimal, type StrategySpec } from '@kanon/spec';
+import {
+  predicatesCommitment,
+  specHash as hashSpec,
+  type Decimal,
+  type PredicateDefinition,
+  type StrategySpec,
+} from '@kanon/spec';
 import type { PinAvailability, PinFailure } from './flow-types';
 
 /**
@@ -20,6 +26,12 @@ import type { PinAvailability, PinFailure } from './flow-types';
  * checks a proposer's predicates against) and the canonical series the gate
  * reads. All three are derived from the spec, never typed in.
  */
+/** The predicates pinned now and the ones replacing them, as `StrategyRegistry.tighten` takes them. */
+export interface TightenPredicates {
+  old: readonly PredicateDefinition[];
+  next: readonly PredicateDefinition[];
+}
+
 export interface PinTarget {
   specHash: string;
   predicatesCommitment: string;
@@ -60,8 +72,15 @@ export interface PinClient {
   /** The CanonicalSeries contracts this build knows about. Empty means none is deployed. */
   series: SeriesMap;
   pin(target: PinTarget): Promise<PinReceipt>;
-  /** Applies a tightened spec at once. */
-  tighten(chainStrategyId: string, target: PinTarget): Promise<{ txHash: string }>;
+  /**
+   * Applies a tightened spec at once. The registry decodes the predicates and refuses anything that
+   * is not provably stricter, so the caller supplies the predicates now pinned and the new ones.
+   */
+  tighten(
+    chainStrategyId: string,
+    target: PinTarget,
+    predicates: TightenPredicates,
+  ): Promise<{ txHash: string }>;
   /** Starts the registry's own cooling-off for a loosened spec. */
   proposeLoosening(
     chainStrategyId: string,

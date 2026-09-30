@@ -324,6 +324,100 @@
         "name": "newSeries",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "oldPredicates",
+        "type": "tuple[]",
+        "internalType": "struct StrategyRegistry.PredicateDefinition[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.PredicateKind"
+          },
+          {
+            "name": "symbol",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "direction",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.Direction"
+          },
+          {
+            "name": "swingLookbackCandles",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minGapBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "referenceExtreme",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.ReferenceExtreme"
+          },
+          {
+            "name": "lookback",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.Lookback"
+          },
+          {
+            "name": "timeframeSeconds",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "newPredicates",
+        "type": "tuple[]",
+        "internalType": "struct StrategyRegistry.PredicateDefinition[]",
+        "components": [
+          {
+            "name": "kind",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.PredicateKind"
+          },
+          {
+            "name": "symbol",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "direction",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.Direction"
+          },
+          {
+            "name": "swingLookbackCandles",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minGapBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "referenceExtreme",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.ReferenceExtreme"
+          },
+          {
+            "name": "lookback",
+            "type": "uint8",
+            "internalType": "enum PredicateEngine.Lookback"
+          },
+          {
+            "name": "timeframeSeconds",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -511,12 +605,38 @@
   },
   {
     "type": "error",
+    "name": "NewPredicatesMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NoPendingLoosening",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "NotATightening",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NotOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OldPredicatesMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SeriesChangeIsLoosening",
     "inputs": []
   },
   {

@@ -127,10 +127,16 @@ contract CanonicalSeries is ICanonicalSeries {
         uint256 indexed bucketIndex, int64 price, int32 expo, uint256 publishTime, address indexed caller
     );
 
+    /// @notice Widest accepted confidence interval, as bps of price (2%).
+    uint256 public constant MAX_CONF_BPS = 200;
+
     error CadenceNotElapsed(uint256 nextAllowedAt);
     error PriceExpoDrift(int32 expected, int32 got);
     error InvalidWindow();
     error WindowTooWide();
+    error NonPositivePrice(int64 price);
+    error PositiveExpo(int32 expo);
+    error ConfidenceTooWide(uint64 conf, int64 price);
 
     constructor(
         string memory asset_,
@@ -166,6 +172,14 @@ contract CanonicalSeries is ICanonicalSeries {
         }
 
         PythStructs.Price memory p = pyth.getPriceNoOlderThan(feedId, maxPriceAgeSeconds);
+
+        // A zero or negative print, a positive exponent, or a wide confidence interval is
+        // not a price the rules can be evaluated over. Reject it rather than record it.
+        if (p.price <= 0) revert NonPositivePrice(p.price);
+        if (p.expo > 0) revert PositiveExpo(p.expo);
+        if (uint256(p.conf) * 10_000 > uint256(uint64(p.price)) * MAX_CONF_BPS) {
+            revert ConfidenceTooWide(p.conf, p.price);
+        }
 
         if (!priceExpoSet) {
             priceExpo = p.expo;

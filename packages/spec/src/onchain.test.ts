@@ -4,6 +4,8 @@ import { RULE_04 } from './fixtures';
 import { inferred, stated, SPEC_VERSION, type StrategySpec } from './spec';
 import {
   encodePredicates,
+  isOnchainTightening,
+  isSpecOnchainTightening,
   predicateSide,
   predicatesCommitment,
   toPredicateDefinitions,
@@ -132,5 +134,44 @@ describe('encodePredicates', () => {
 
   it('encodes the demo rule (RULE_04) without throwing', () => {
     expect(encodePredicates(RULE_04)).toMatch(/^0x[0-9a-f]+$/);
+  });
+});
+
+describe('isOnchainTightening (mirror of StrategyRegistry._requireTightening)', () => {
+  const base = toPredicateDefinitions(RULE_04);
+  const clone = () => base.map((d) => ({ ...d }));
+
+  it('accepts identical predicates', () => {
+    expect(isOnchainTightening(base, clone())).toBe(true);
+  });
+  it('accepts a raised minGapBps', () => {
+    const n = clone();
+    n[1]!.minGapBps += 5n;
+    expect(isOnchainTightening(base, n)).toBe(true);
+  });
+  it('accepts an appended predicate', () => {
+    expect(isOnchainTightening(base.slice(0, 2), base)).toBe(true);
+  });
+  it('rejects a lowered minGapBps', () => {
+    const n = clone();
+    n[1]!.minGapBps -= 1n;
+    expect(isOnchainTightening(base, n)).toBe(false);
+  });
+  it('rejects a changed lookback or swing lookback', () => {
+    const a = clone();
+    a[2]!.lookback += 1;
+    expect(isOnchainTightening(base, a)).toBe(false);
+    const b = clone();
+    b[0]!.swingLookbackCandles += 1n;
+    expect(isOnchainTightening(base, b)).toBe(false);
+  });
+  it('rejects removal and reorder', () => {
+    expect(isOnchainTightening(base, base.slice(0, 2))).toBe(false);
+    expect(isOnchainTightening(base, [base[1]!, base[0]!, base[2]!])).toBe(false);
+  });
+  it('spec-level helper agrees and is false for an unencodable spec', () => {
+    expect(isSpecOnchainTightening(RULE_04, RULE_04)).toBe(true);
+    const bad = { ...RULE_04, series: { ...RULE_04.series, bucketSeconds: 1 } };
+    expect(isSpecOnchainTightening(RULE_04, bad)).toBe(false);
   });
 });
