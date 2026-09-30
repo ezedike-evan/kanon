@@ -1,4 +1,5 @@
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { MAX_LIST_ROWS } from "./limits";
 import type { Id } from "./_generated/dataModel";
 import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
@@ -96,7 +97,8 @@ export const listTradesByStrategy = query({
     return await ctx.db
       .query("trades")
       .withIndex("by_strategy", (q) => q.eq("strategyId", args.strategyId))
-      .collect();
+      .order("desc")
+      .take(MAX_LIST_ROWS);
   },
 });
 
@@ -107,7 +109,7 @@ export const MAX_ACTIVITY = 50;
  * The signed-in user's newest trades across every strategy they own, slimmed
  * to what an activity row shows (no evidence chain: that is one tap away, on
  * the trade). Bounded by `limit` per strategy, so it costs the same however
- * long the history is, unlike `listTradesByStrategy`, which returns all of it.
+ * long the history is, unlike `listTradesByStrategy`, which returns the newest 500.
  */
 export const listRecentActivity = query({
   args: { limit: v.optional(v.number()) },
@@ -118,7 +120,7 @@ export const listRecentActivity = query({
     const strategies = await ctx.db
       .query("strategies")
       .withIndex("by_owner", (q) => q.eq("ownerUserId", user._id))
-      .collect();
+      .take(100);
     const rows = [];
     for (const strategy of strategies) {
       const trades = await ctx.db
@@ -159,7 +161,8 @@ export const listTradesByStrategyAndStatus = query({
       .withIndex("by_strategy_and_status", (q) =>
         q.eq("strategyId", args.strategyId).eq("status", args.status),
       )
-      .collect();
+      .order("desc")
+      .take(MAX_LIST_ROWS);
   },
 });
 
@@ -177,7 +180,8 @@ export const refusedForSubject = internalQuery({
       .withIndex("by_strategy_and_status", (q) =>
         q.eq("strategyId", args.strategyId).eq("status", "refused"),
       )
-      .collect();
+      .order("desc")
+      .take(MAX_LIST_ROWS);
   },
 });
 

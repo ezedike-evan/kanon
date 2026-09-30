@@ -29,7 +29,7 @@ import {
   type PlatformCapabilities,
   type Signer,
 } from '@kanon/ui';
-import { AccountProvider, type KanonAccount } from '@kanon/ui';
+import { AccountProvider, assertPublicEnv, type KanonAccount } from '@kanon/ui';
 // The generated `api` object only knows about the `users` module until
 // `npx convex dev` has run once against a real deployment and regenerated
 // `_generated/api.d.ts` — see that file's header. At runtime `api` is a
@@ -54,6 +54,25 @@ const browserPlatform: PlatformCapabilities = {
  * The chain this build targets, written out literally so Next inlines it. Only
  * `10143` selects Monad testnet (the beta deployment); anything else is mainnet.
  */
+// Wrong values stop the app at start, by variable name. The Convex URL and Privy id are
+// required only in the browser: a server-side build has no reason to hold them.
+assertPublicEnv(
+  {
+    convexUrl: process.env.NEXT_PUBLIC_CONVEX_URL,
+    privyAppId: process.env.NEXT_PUBLIC_PRIVY_APP_ID,
+    chainId: process.env.NEXT_PUBLIC_CHAIN_ID,
+    registryAddress: process.env.NEXT_PUBLIC_REGISTRY_ADDRESS,
+    thresholdMarketAddress: process.env.NEXT_PUBLIC_THRESHOLD_MARKET_ADDRESS,
+    vaultChainId: process.env.NEXT_PUBLIC_VAULT_CHAIN_ID,
+    vaultRpcUrl: process.env.NEXT_PUBLIC_VAULT_RPC_URL,
+    vaultFactoryAddress: process.env.NEXT_PUBLIC_VAULT_FACTORY_ADDRESS,
+    vaultCollateralAddress: process.env.NEXT_PUBLIC_VAULT_COLLATERAL_ADDRESS,
+    vaultStartBlock: process.env.NEXT_PUBLIC_VAULT_START_BLOCK,
+    vaultCollateralDecimals: process.env.NEXT_PUBLIC_VAULT_COLLATERAL_DECIMALS,
+  },
+  { platform: 'web', requireCore: typeof window !== 'undefined' },
+);
+
 const CHAIN = resolveChain(process.env.NEXT_PUBLIC_CHAIN_ID);
 configureChain(CHAIN);
 

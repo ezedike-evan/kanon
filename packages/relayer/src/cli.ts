@@ -6,12 +6,19 @@
  *                                              RELAYER_BROADCAST=true
  *   ... relay -- --watch [--interval 60]       repeat forever
  *
- * `--dry-run` always wins over the env flag.
+ * `--dry-run` always wins over the env flag. Logs are one JSON object per line.
+ *
+ * HEALTH_PORT (optional) serves `GET /healthz`: 200 while a pass has succeeded
+ * within three intervals, 503 once it has not.
  */
 
+import { CliArgError, parseHealthPort, parseIntervalArg } from './cli-args';
 import { ConfigError, loadConfig } from './config';
+import { createHealth, startHealthServer } from './health';
+import { withTimeout } from './http';
+import { createJsonLogger } from './log';
 import { createViemPort } from './viem-port';
-import { relayOnce, reportOk, type RelayReport } from './relay';
+import { relayOnce, reportOk } from './relay';
 
 const HERMES_TIMEOUT_MS = 15_000;
 /** A watching relayer that fails this many passes in a row exits non-zero so its supervisor alerts. */
@@ -19,35 +26,38 @@ const MAX_CONSECUTIVE_FAILURES = 5;
 
 function parseArgs(argv: string[]) {
   const flags = new Set(argv.filter((a) => a.startsWith('--')));
-  const at = argv.indexOf('--interval');
-  const interval = at === -1 ? 60 : Number(argv[at + 1]);
-  if (!Number.isInteger(interval) || interval < 1) throw new Error('--interval needs a positive integer of seconds');
+  const interval = parseIntervalArg(argv, 60);
   return { dryRun: flags.has('--dry-run'), watch: flags.has('--watch'), interval };
 }
 
-function print(report: RelayReport) {
-  console.log(JSON.stringify({ at: new Date().toISOString(), ...report }, null, 2));
-}
-
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  let args;
+  let healthPort;
   let cfg;
   try {
+    args = parseArgs(process.argv.slice(2));
+    healthPort = parseHealthPort(process.env.HEALTH_PORT);
     cfg = loadConfig(process.env, { dryRun: args.dryRun });
   } catch (e) {
-    if (e instanceof ConfigError) {
+    if (e instanceof ConfigError || e instanceof CliArgError) {
       console.error(e.message);
       process.exit(2);
     }
     throw e;
   }
 
-  console.error(cfg.broadcast ? 'relayer: BROADCAST mode, transactions will be sent' : 'relayer: dry run, nothing will be sent');
+  const log = createJsonLogger();
+  log({ level: 'info', event: 'start', mode: cfg.broadcast ? 'broadcast' : 'dry-run', chainId: cfg.chainId, watch: args.watch });
   const port = createViemPort(cfg);
 
   // Every Hermes request gets a hard timeout so one hung connection cannot stall the loop.
-  const timedFetch: typeof fetch = (input, init) =>
-    fetch(input, { ...init, signal: AbortSignal.timeout(HERMES_TIMEOUT_MS) });
+  const timedFetch = withTimeout(fetch, HERMES_TIMEOUT_MS);
+
+  const health = createHealth(args.interval);
+  if (healthPort !== undefined) {
+    startHealthServer(health, healthPort);
+    log({ level: 'info', event: 'health_listening', port: healthPort });
+  }
 
   let stopping = false;
   let wake: (() => void) | undefined;
@@ -63,16 +73,17 @@ async function main() {
   do {
     try {
       const report = await relayOnce(cfg, { port, fetchFn: timedFetch });
-      print(report);
+      log({ level: 'info', event: 'report', report });
       ok = reportOk(report);
     } catch (e) {
-      console.error(e instanceof Error ? e.message : e);
+      log({ level: 'error', event: 'pass_failed', error: e instanceof Error ? e.message : String(e) });
       ok = false;
     }
+    health.pass(ok);
     if (!args.watch) break;
     failures = ok ? 0 : failures + 1;
     if (failures >= MAX_CONSECUTIVE_FAILURES) {
-      console.error(`relayer: ${failures} failed passes in a row, exiting`);
+      log({ level: 'error', event: 'fatal', error: `${failures} failed passes in a row, exiting` });
       process.exit(1);
     }
     await new Promise<void>((r) => {

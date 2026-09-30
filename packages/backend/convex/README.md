@@ -88,3 +88,23 @@ function handleButtonPress() {
 Use the Convex CLI to push your functions to a deployment. See everything
 the Convex CLI can do by running `npx convex -h` in your project root
 directory. To learn more, launch the docs with `npx convex docs`.
+
+## Server environment
+
+Set with `npx convex env set NAME value`. Validated in `serverEnv.ts`; a bad or
+missing value fails closed (the action refuses) and logs the variable name only.
+
+| Name | Used by | Notes |
+| --- | --- | --- |
+| `PRIVY_APP_ID` | `auth.config.ts` | required |
+| `DASHSCOPE_API_KEY` | `compiler:compileStrategy` | required to compile |
+| `NANSEN_API_KEY`, `NANSEN_BASE_URL` | `nansen:smartMoneyFlow` | optional; unset means "not connected" |
+| `MONAD_RPC_URL`, `MONAD_CHAIN_ID` | `predictions:recordPosition`, `vaults:recordVault`, `vaults:recordBalance` | required; the RPC must report this chain id |
+| `THRESHOLD_MARKET_ADDRESS` | `predictions:recordPosition` | required; must equal the market's linked address |
+| `VAULT_FACTORY_ADDRESS` | `vaults:recordVault` | required |
+
+Chain-mirroring rows are never built from client numbers: stakes come from the
+`SideTaken` log of the receipt, vaults from `VaultFactory.isVault` and the
+vault's own getters, balances from `totalCollateral()`. They are accepted only
+for the wallet the user linked by signing `walletLinkMessage` (`users:linkWallet`).
+Rate limits live in `rateLimit.ts` (`RATE_LIMITS`).

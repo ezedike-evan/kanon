@@ -8,9 +8,14 @@
  *
  * `--dry-run` always wins over the env flag. Logs are one JSON object per line
  * on stdout; the final line of a one-shot run is the full pass report.
+ *
+ * HEALTH_PORT (optional) serves `GET /healthz`: 200 while a pass has succeeded
+ * within three intervals, 503 once it has not.
  */
 
+import { CliArgError, parseHealthPort, parseIntervalArg } from './cli-args';
 import { ConfigError, loadConfig } from './config';
+import { createHealth, startHealthServer } from './health';
 import { ChainMismatchError, createKeeper, passOk } from './keeper';
 import { createJsonLogger } from './log';
 import { createLogSource } from './source';
@@ -18,19 +23,20 @@ import { createViemPort } from './viem-port';
 
 function parseArgs(argv: string[]) {
   const flags = new Set(argv.filter((a) => a.startsWith('--')));
-  const at = argv.indexOf('--interval');
-  const interval = at === -1 ? 15 : Number(argv[at + 1]);
-  if (!Number.isInteger(interval) || interval < 1) throw new Error('--interval needs a positive integer of seconds');
+  const interval = parseIntervalArg(argv, 15);
   return { dryRun: flags.has('--dry-run'), watch: flags.has('--watch'), interval };
 }
 
 async function main() {
-  const args = parseArgs(process.argv.slice(2));
+  let args;
+  let healthPort;
   let cfg;
   try {
+    args = parseArgs(process.argv.slice(2));
+    healthPort = parseHealthPort(process.env.HEALTH_PORT);
     cfg = loadConfig(process.env, { dryRun: args.dryRun });
   } catch (e) {
-    if (e instanceof ConfigError) {
+    if (e instanceof ConfigError || e instanceof CliArgError) {
       console.error(e.message);
       process.exit(2);
     }
@@ -56,6 +62,12 @@ async function main() {
   });
   const keeper = createKeeper(cfg, { port, source, log });
 
+  const health = createHealth(args.interval);
+  if (healthPort !== undefined) {
+    startHealthServer(health, healthPort);
+    log({ level: 'info', event: 'health_listening', port: healthPort });
+  }
+
   let stop = false;
   for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => (stop = true));
 
@@ -74,6 +86,7 @@ async function main() {
       log({ level: 'error', event: 'pass_failed', error: e instanceof Error ? e.message : String(e) });
       ok = false;
     }
+    health.pass(ok);
     if (args.watch && !stop) await new Promise((r) => setTimeout(r, args.interval * 1000));
   } while (args.watch && !stop);
 

@@ -3,6 +3,8 @@ import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 import type { NansenFlow } from "@kanon/spec";
 import { requireSubject } from "./authz";
+import { checkRateLimit } from "./rateLimit";
+import { describeEnvProblem, parseNansenEnv } from "./serverEnv";
 import {
   fetchSmartMoneyFlow,
   isFresh,
@@ -57,7 +59,7 @@ export const writeCache = internalMutation({
     const rows = await ctx.db
       .query("nansenFlowCache")
       .withIndex("by_asset", (q) => q.eq("asset", args.asset))
-      .collect();
+      .take(20);
     for (const row of rows) await ctx.db.delete(row._id);
     await ctx.db.insert("nansenFlowCache", {
       asset: args.asset,
@@ -72,11 +74,16 @@ export const smartMoneyFlow = action({
   args: { asset: v.string() },
   handler: async (ctx, args): Promise<NansenFlow> => {
     // Each upstream read spends Nansen credits, so it is for signed-in users only.
-    await requireSubject(ctx);
+    const subject = await requireSubject(ctx);
     const asset = nansenAssetKey(args.asset);
     const now = Date.now();
 
-    const apiKey = process.env.NANSEN_API_KEY || undefined;
+    const env = parseNansenEnv(process.env);
+    if (!env.ok) {
+      console.error(describeEnvProblem("nansen:smartMoneyFlow", env.invalid));
+      return { status: "not_connected" };
+    }
+    const apiKey = env.value.apiKey;
     // No key: nothing is fetched and nothing cached is served. A cached figure
     // from a key that has since been removed is not something to keep showing.
     if (!apiKey) return { status: "not_connected" };
@@ -84,11 +91,15 @@ export const smartMoneyFlow = action({
     const cached = await ctx.runQuery(readCacheRef, { asset });
     if (cached && isFresh(cached.fetchedAt, now)) return cached.flow;
 
+    // Only a cache miss buys credits, so only a miss spends a slot.
+    const limited = await checkRateLimit(ctx, subject, "nansen");
+    if (limited) return { status: "error", kind: "rate_limited", message: limited.message };
+
     const flow = await fetchSmartMoneyFlow(asset, {
       apiKey,
       fetch: fetch as unknown as FetchLike,
       now,
-      baseUrl: process.env.NANSEN_BASE_URL || undefined,
+      baseUrl: env.value.baseUrl,
     });
     if (flow.status === "ok") {
       await ctx.runMutation(writeCacheRef, { asset, fetchedAt: now, flow });

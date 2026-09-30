@@ -1,4 +1,5 @@
 import { createPublicClient, createWalletClient, defineChain, http, type Abi } from 'viem';
+import { RPC_RETRIES, RPC_TIMEOUT_MS } from './cli-args';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { RelayerConfig } from './config';
 import type { ChainPort, ContractCall } from './port';
@@ -14,7 +15,7 @@ export function createViemPort(cfg: RelayerConfig): ChainPort {
     nativeCurrency: { name: 'Monad', symbol: 'MON', decimals: 18 },
     rpcUrls: { default: { http: [cfg.rpcUrl] } },
   });
-  const transport = http(cfg.rpcUrl);
+  const transport = http(cfg.rpcUrl, { timeout: RPC_TIMEOUT_MS, retryCount: RPC_RETRIES });
   const publicClient = createPublicClient({ chain, transport });
 
   const account = cfg.privateKey ? privateKeyToAccount(cfg.privateKey) : undefined;

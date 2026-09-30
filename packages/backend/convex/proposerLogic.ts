@@ -361,9 +361,18 @@ export function proposeTrade(
   const shortfall = subDecimal(failed.decidingValue, failed.referenceValue);
   const shortfallBps =
     failed.kind === 'fair_value_gap'
-      ? Number(shortfall.atoms)
+      ? safeIntegerFromAtoms(shortfall.atoms)
       : roundedBps(shortfall, failed.referenceValue);
   return { kind: 'refusal', setup, failed, shortfall, shortfallBps, results: outcomes, scan };
+}
+
+/** `Number(atoms)` only when it is exact; a figure past 2^53 must not become a rounded one. */
+export function safeIntegerFromAtoms(atoms: string): number {
+  const n = Number(atoms);
+  if (!/^-?\d+$/.test(atoms) || !Number.isSafeInteger(n)) {
+    throw new RangeError(`${atoms} does not fit a safe integer`);
+  }
+  return n;
 }
 
 // ---------------------------------------------------------------------------

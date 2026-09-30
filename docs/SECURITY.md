@@ -125,10 +125,16 @@ the same candles from the same samples, but it does not prevent it.
    skips `MarginAccount`, `InsuranceFund` and `VaultFactory` (gap 2). `CanonicalSeries`
    now rejects non-positive prices, positive exponents and confidence wider than 2%.
 9. **Executed trades are paper fills** and are labelled so (`executionMode`).
-10. **Open audit findings, not fixed:** `ThresholdMarket` settlement uses whole
-    buckets, so samples outside the window can flip an outcome; raw ERC20 calls with
-    no SafeERC20 or reentrancy guard; `StrategyRegistry` bond has no exit; client
-    tx hashes and equity are not verified server-side.
+10. **Audit findings fixed in contracts:** `ThresholdMarket` now settles on the exact
+    window (per-sample publish times from `CanonicalSeries`, inclusive at both ends;
+    `settle` waits `maxPriceAgeSeconds` past `windowEnd`; `takeSide` also refuses a
+    live Pyth price that already crosses). All ERC20 movement uses a local SafeERC20
+    with an exact-receipt check (fee-on-transfer tokens are rejected, not credited
+    short) and a local `nonReentrant` guard. `StrategyRegistry` has a two-step
+    bond exit (`requestRetire`, then `finalizeRetire` after the loosening cooldown;
+    no admin, no slashing); retired strategies fail closed in `RefusalGate`. Dust
+    positions are now deleverageable (slice rounds up).
+11. **Still open:** client tx hashes and equity are not verified server-side.
 
 ## Perpl safeguard
 

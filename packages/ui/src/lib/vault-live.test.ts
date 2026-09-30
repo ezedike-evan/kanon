@@ -159,12 +159,13 @@ describe('changeVault: tightening is immediate, loosening waits', () => {
 });
 
 describe('fund and withdraw', () => {
-  it('deposit sends to the chain then logs the balance before the movement', async () => {
+  it('deposit sends to the chain then asks the server to mirror the balance from the chain', async () => {
     const h = harness();
     const r = await h.acts.fundVault(VAULT, { atoms: '5000000', decimals: 6 });
     expect(r.ok).toBe(true);
     expect(h.chain[0]).toMatchObject({ name: 'deposit', args: { vault: VAULT, amount: 5_000_000n } });
-    expect(h.backend[0]!.args).toMatchObject({ equityAtoms: '1000000000', depositBalance: { atoms: '1005000000', decimals: 6 } });
+    expect(h.backend[0]).toMatchObject({ name: 'recordBalance' });
+    expect(Object.keys(h.backend[0]!.args as object).sort()).toEqual(['txHash', 'vaultId']);
   });
 
   it('withdraw refuses more than the vault holds before signing', async () => {

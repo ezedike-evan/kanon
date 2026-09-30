@@ -82,6 +82,8 @@ export interface MarketClient {
   ensureMarket(terms: OnChainTerms, linked?: ChainMarketRef | undefined): Promise<EnsuredMarket>;
   /** Stakes `stake` on YES (`yes`) or NO. Resolves only once the chain has accepted it. */
   takeSide(input: { chainMarketId: string; yes: boolean; stake: Decimal }): Promise<{ txHash: string }>;
+  /** Signs text with the connected wallet (`personal_sign`), to link it to the account. */
+  signMessage?(message: string): Promise<string>;
   /** The contract's own `hasCrossed`: whether the recorded series has already touched the threshold. */
   hasCrossed(chainMarketId: string): Promise<boolean>;
 }

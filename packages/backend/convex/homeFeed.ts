@@ -1,4 +1,5 @@
 import { query } from "./_generated/server";
+import { MAX_COUNT_ROWS } from "./limits";
 import { v } from "convex/values";
 import { isMarketAsset } from "@kanon/spec";
 import { normalizeAsset } from "./seriesLogic";
@@ -75,7 +76,7 @@ export const leadSummaries = query({
             .withIndex("by_strategy_and_status", (q) =>
               q.eq("strategyId", lead.strategyId).eq("status", status),
             )
-            .collect()
+            .take(MAX_COUNT_ROWS)
         ).length;
       const followers = (
         await ctx.db

@@ -16,3 +16,4 @@ export * from './copy';
 export * from './analytics';
 export * from './market';
 export * from './onchain';
+export * from './wallet-link';

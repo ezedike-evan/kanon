@@ -151,6 +151,8 @@ export interface ChainIO {
   }): Promise<ChainLog[]>;
   /** Unix seconds of the latest block. */
   now(): Promise<number>;
+  /** Signs text with the connected wallet (`personal_sign`), to link it to the account. */
+  signMessage?(message: string): Promise<string>;
 }
 
 export type FailureReason = 'not_deployed' | 'no_wallet' | 'rejected' | 'failed';
@@ -198,6 +200,8 @@ export interface RawRefusal {
 export interface VaultClient {
   readonly config: VaultConfig;
   account(): Promise<string | null>;
+  /** Signs text with the connected wallet, to link it to the account. Absent when the chain layer cannot. */
+  signMessage?(message: string): Promise<string>;
   walletBalance(owner: string): Promise<bigint>;
 
   /**
@@ -320,6 +324,7 @@ export function createVaultClient(config: VaultConfig, io: ChainIO): VaultClient
   return {
     config,
     account: async () => (await io.account()) ?? null,
+    ...(io.signMessage ? { signMessage: (m: string) => io.signMessage!(m) } : {}),
 
     async walletBalance(owner) {
       return (await io.read({
@@ -628,6 +633,11 @@ export function createViemChainIO(opts: ViemChainIOOptions): ChainIO {
     chainId: opts.chainId,
     async account() {
       return (await signer())?.account ?? null;
+    },
+    async signMessage(message: string) {
+      const s = await signer();
+      if (!s) throw new Error('No wallet is available to sign with.');
+      return await s.wallet.signMessage({ account: s.account, message });
     },
     read: (c) =>
       publicClient.readContract({

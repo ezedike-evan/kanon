@@ -27,6 +27,7 @@ import {
 import { DEMO_COPY, DEMO_VAULTS, demoOutcome } from './vault-demo';
 import type { PinAvailability } from './flow-types';
 import type { VaultClient, CopyVaultState, GuardedVaultState, RawRefusal, ClientResult } from './vault-client';
+import { recordWithWalletLink, replyFailed, type WalletLinkDeps } from './wallet-link';
 import { NOT_DEPLOYED, type VaultConfigResult } from './vault-config';
 import {
   copyFollowView,
@@ -78,6 +79,8 @@ export type VaultChangeWire =
   | { action: 'invalid'; problems: string[] };
 
 export interface VaultBackendActions {
+  /** `users.walletLinkChallenge`, for the first record from a wallet the server has not linked yet. */
+  walletLinkMessage?: WalletLinkDeps['walletLinkMessage'];
   recordVault(args: {
     strategyId: string;
     address: string;
@@ -88,14 +91,12 @@ export interface VaultBackendActions {
     txHash: string;
     whitelistedAssets: string[];
     maxDailyDrawdownBps: number;
+    /** Only its decimals are read: the server takes the balance from the chain. */
     depositBalance: Decimal;
+    walletSignature?: string;
   }): Promise<unknown>;
-  recordBalance(args: {
-    vaultId: string;
-    equityAtoms: string;
-    depositBalance: Decimal;
-    txHash?: string;
-  }): Promise<unknown>;
+  /** The server reads the vault's balance from the chain; only the hash is a label. */
+  recordBalance(args: { vaultId: string; txHash?: string }): Promise<unknown>;
   requestVaultChange(args: {
     vaultId: string;
     whitelistedAssets: string[];
@@ -399,18 +400,24 @@ export function createVaultActions(
     // The vault exists on-chain from here on. Recording it is bookkeeping and cannot undo it.
     let note = '';
     try {
-      await d.actions.recordVault({
-        strategyId: d.strategy.id,
-        address: created.vault,
-        chainId: c.config.chainId,
-        factoryAddress: c.config.factory,
-        executor: input.executor,
-        seriesAddress: created.series,
-        txHash: created.txHash,
-        whitelistedAssets: assets,
-        maxDailyDrawdownBps: input.maxDailyDrawdownBps,
-        depositBalance: { atoms: '0', decimals: c.config.collateralDecimals },
-      });
+      const reply = await recordWithWalletLink(
+        (extra) =>
+          d.actions.recordVault({
+            strategyId: d.strategy!.id,
+            address: created.vault,
+            chainId: c.config.chainId,
+            factoryAddress: c.config.factory,
+            executor: input.executor,
+            seriesAddress: created.series,
+            txHash: created.txHash,
+            whitelistedAssets: assets,
+            maxDailyDrawdownBps: input.maxDailyDrawdownBps,
+            depositBalance: { atoms: '0', decimals: c.config.collateralDecimals },
+            ...extra,
+          }),
+        { walletLinkMessage: d.actions.walletLinkMessage, signMessage: c.signMessage?.bind(c) },
+      );
+      if (replyFailed(reply)) throw new Error(reply.message ?? 'the server could not verify it');
     } catch (err) {
       note = ` It was created, but Kanon could not save it: ${errorText(err, '')}. It is still listed from the chain.`;
     }
@@ -496,15 +503,7 @@ export function createVaultActions(
     if (result.ok && g) {
       const row = (d.rows.vaults ?? []).find((r) => lower(r.address) === lower(vaultAddress));
       if (row && d.session.userId) {
-        const after = kind === 'deposit' ? balance + atoms : balance - atoms;
-        await d.actions
-          .recordBalance({
-            vaultId: row._id,
-            equityAtoms: balance.toString(),
-            depositBalance: { atoms: after.toString(), decimals: c.config.collateralDecimals },
-            txHash: result.txHash,
-          })
-          .catch(() => undefined);
+        await d.actions.recordBalance({ vaultId: row._id, txHash: result.txHash }).catch(() => undefined);
       }
     }
     ctx.refresh();

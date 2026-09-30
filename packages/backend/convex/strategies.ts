@@ -1,4 +1,5 @@
 import { mutation, query } from "./_generated/server";
+import { MAX_LIST_ROWS } from "./limits";
 import { v } from "convex/values";
 import {
   COOLING_OFF_SECONDS,
@@ -96,7 +97,7 @@ export const listStrategiesByOwner = query({
     return await ctx.db
       .query("strategies")
       .withIndex("by_owner", (q) => q.eq("ownerUserId", user._id))
-      .collect();
+      .take(MAX_LIST_ROWS);
   },
 });
 

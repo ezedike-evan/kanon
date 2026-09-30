@@ -127,7 +127,7 @@ describe('takeMarketSide', () => {
     const r = await run(h);
     expect(r).toEqual({ ok: true, txHash: TX, recorded: true });
     expect(order).toEqual(['ensure', 'link', 'take', 'record']);
-    expect(h.recordPosition).toHaveBeenCalledWith({ marketId: 'm1', side: 'above', stake: STAKE, txHash: TX });
+    expect(h.recordPosition).toHaveBeenCalledWith({ marketId: 'm1', txHash: TX });
   });
 
   it('does not link a market it did not open', async () => {
@@ -321,6 +321,11 @@ describe('takeMarketSide', () => {
         throw new Error('convex down');
       },
     });
+    expect(await run(h)).toEqual({ ok: true, txHash: TX, recorded: false });
+  });
+
+  it('reports a stake the server could not verify as not recorded', async () => {
+    const h = harness({ record: async () => ({ ok: false, reason: 'rejected', message: 'no' }) });
     expect(await run(h)).toEqual({ ok: true, txHash: TX, recorded: false });
   });
 });

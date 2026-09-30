@@ -43,7 +43,17 @@ export default defineSchema({
     name: v.string(),
     username: v.string(),
     experience: v.string(),
-  }).index("by_privyId", ["privyId"]),
+    /** Lower-cased `username`, for a case-insensitive uniqueness check. */
+    usernameLower: v.optional(v.string()),
+    /**
+     * The wallet this user proved control of by signing `walletLinkMessage`.
+     * Chain-mirroring rows are accepted only for this address. Lower-cased.
+     */
+    walletAddress: v.optional(v.string()),
+  })
+    .index("by_privyId", ["privyId"])
+    .index("by_usernameLower", ["usernameLower"])
+    .index("by_walletAddress", ["walletAddress"]),
 
   strategies: defineTable({
     ownerUserId: v.id("users"),
@@ -360,4 +370,15 @@ export default defineSchema({
     fetchedAt: v.number(),
     flow: v.any(),
   }).index("by_asset", ["asset"]),
+
+  /**
+   * Fixed-window counters for spend-bearing calls (model and Nansen credits).
+   * One row per user and key; see `rateLimit.ts`.
+   */
+  rateLimits: defineTable({
+    subject: v.string(),
+    key: v.string(),
+    windowStart: v.number(),
+    count: v.number(),
+  }).index("by_subject_and_key", ["subject", "key"]),
 });

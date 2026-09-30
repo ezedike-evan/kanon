@@ -1,4 +1,5 @@
 import { internalMutation, query } from "./_generated/server";
+import { MAX_LIST_ROWS } from "./limits";
 import { v } from "convex/values";
 import { assetClass, decimal } from "./schema";
 import { viewOwnedAccount, viewOwnedPosition } from "./authz";
@@ -37,6 +38,6 @@ export const listPositionsByOwner = query({
     return await ctx.db
       .query("positions")
       .withIndex("by_account", (q) => q.eq("accountId", args.accountId))
-      .collect();
+      .take(MAX_LIST_ROWS);
   },
 });

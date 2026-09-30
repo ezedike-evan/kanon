@@ -24,7 +24,7 @@ import {
   type ConvexHooks,
   type Signer,
 } from '@kanon/ui';
-import { AccountProvider, type KanonAccount } from '@kanon/ui';
+import { AccountProvider, assertPublicEnv, type KanonAccount } from '@kanon/ui';
 // The generated `api` object only knows about the `users` module until
 // `npx convex dev` has run once against a real deployment and regenerated
 // `_generated/api.d.ts` — see that file's header. At runtime `api` is a
@@ -38,6 +38,24 @@ const api = generatedApi as any;
  * The chain this build targets, written out literally so Expo inlines it. Only
  * `10143` selects Monad testnet (the beta deployment); anything else is mainnet.
  */
+assertPublicEnv(
+  {
+    convexUrl: process.env.EXPO_PUBLIC_CONVEX_URL,
+    privyAppId: process.env.EXPO_PUBLIC_PRIVY_APP_ID,
+    privyClientId: process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID,
+    chainId: process.env.EXPO_PUBLIC_CHAIN_ID,
+    registryAddress: process.env.EXPO_PUBLIC_REGISTRY_ADDRESS,
+    thresholdMarketAddress: process.env.EXPO_PUBLIC_THRESHOLD_MARKET_ADDRESS,
+    vaultChainId: process.env.EXPO_PUBLIC_VAULT_CHAIN_ID,
+    vaultRpcUrl: process.env.EXPO_PUBLIC_VAULT_RPC_URL,
+    vaultFactoryAddress: process.env.EXPO_PUBLIC_VAULT_FACTORY_ADDRESS,
+    vaultCollateralAddress: process.env.EXPO_PUBLIC_VAULT_COLLATERAL_ADDRESS,
+    vaultStartBlock: process.env.EXPO_PUBLIC_VAULT_START_BLOCK,
+    vaultCollateralDecimals: process.env.EXPO_PUBLIC_VAULT_COLLATERAL_DECIMALS,
+  },
+  { platform: 'mobile', requireCore: true },
+);
+
 export const CHAIN = resolveChain(process.env.EXPO_PUBLIC_CHAIN_ID);
 configureChain(CHAIN);
 

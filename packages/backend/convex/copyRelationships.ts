@@ -1,4 +1,5 @@
 import { mutation, query } from "./_generated/server";
+import { MAX_COUNT_ROWS, MAX_LIST_ROWS } from "./limits";
 import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
 import {
@@ -102,7 +103,7 @@ export const listLeads = query({
     const leads = await ctx.db
       .query("copyLeads")
       .withIndex("by_active", (q) => q.eq("active", true))
-      .collect();
+      .take(100);
     const out = [];
     for (const lead of leads) {
       const strategy = await ctx.db.get(lead.strategyId);
@@ -113,7 +114,7 @@ export const listLeads = query({
             .withIndex("by_strategy_and_status", (q) =>
               q.eq("strategyId", lead.strategyId).eq("status", status),
             )
-            .collect()
+            .take(MAX_COUNT_ROWS)
         ).length;
       out.push(leadView(lead, strategy, { taken: await count("executed"), blocked: await count("refused") }));
     }
@@ -192,7 +193,8 @@ export const listCopyRelationshipsByOwner = query({
     const rows = await ctx.db
       .query("copyRelationships")
       .withIndex("by_follower", (q) => q.eq("followerUserId", user._id))
-      .collect();
+      .order("desc")
+      .take(MAX_LIST_ROWS);
     return rows.filter((r) => r.address !== undefined).sort((a, b) => b.createdAt - a.createdAt);
   },
 });

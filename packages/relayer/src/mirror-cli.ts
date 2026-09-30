@@ -14,6 +14,7 @@
  *   MAINNET_RPC_URL                default https://rpc.monad.xyz
  *   MIRROR_INTERVAL_SECONDS        default 300
  *   MIRROR_MAX_SOURCE_AGE_SECONDS  default 7200
+ *   HEALTH_PORT                    optional; serves GET /healthz (503 when stale)
  *
  * Gas: every pass sends up to four transactions (two `setPrice`, two
  * `recordSample`). At Monad testnet's ~200 gwei that is roughly 0.1 MON, so the
@@ -24,6 +25,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createPublicClient, createWalletClient, defineChain, http, isAddress, parseAbi, type Address, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { CliArgError, RPC_RETRIES, RPC_TIMEOUT_MS, parseEnvInt, parseHealthPort } from './cli-args';
+import { createHealth, startHealthServer } from './health';
+import { createJsonLogger } from './log';
 import { FEEDS, MAINNET_PYTH, mockPythAbi, planMirror, sourcePythAbi, type FeedName } from './mirror';
 
 const seriesAbi = parseAbi([
@@ -54,9 +58,6 @@ function addressOf(deployment: Record<string, unknown>, key: string): Address {
   return v;
 }
 
-/** Per-request timeout and retries for every RPC call, so one hung endpoint cannot stall a pass. */
-const RPC_TIMEOUT_MS = 15_000;
-const RPC_RETRIES = 2;
 /** A long-running mirror that fails this many passes in a row exits non-zero so its supervisor alerts. */
 const MAX_CONSECUTIVE_FAILURES = 5;
 const rpcTransport = (rpc: string) => http(rpc, { timeout: RPC_TIMEOUT_MS, retryCount: RPC_RETRIES });
@@ -81,12 +82,25 @@ async function main() {
   const key = need('PRIVATE_KEY', process.env.PRIVATE_KEY);
   const testnetRpc = process.env.TESTNET_RPC_URL ?? 'https://testnet-rpc.monad.xyz';
   const mainnetRpc = process.env.MAINNET_RPC_URL ?? 'https://rpc.monad.xyz';
-  const intervalSeconds = Number(process.env.MIRROR_INTERVAL_SECONDS ?? 300);
-  const maxSourceAge = BigInt(process.env.MIRROR_MAX_SOURCE_AGE_SECONDS ?? 7200);
-  if (!Number.isInteger(intervalSeconds) || intervalSeconds < 1) {
-    console.error('mirror: MIRROR_INTERVAL_SECONDS must be a positive integer');
-    process.exit(2);
+  let intervalSeconds: number;
+  let maxSourceAge: bigint;
+  let healthPort: number | undefined;
+  try {
+    intervalSeconds = parseEnvInt('MIRROR_INTERVAL_SECONDS', process.env.MIRROR_INTERVAL_SECONDS, 300, { min: 1, max: 86_400 });
+    maxSourceAge = BigInt(
+      parseEnvInt('MIRROR_MAX_SOURCE_AGE_SECONDS', process.env.MIRROR_MAX_SOURCE_AGE_SECONDS, 7200, { min: 1, max: 604_800 }),
+    );
+    healthPort = parseHealthPort(process.env.HEALTH_PORT);
+  } catch (e) {
+    if (e instanceof CliArgError) {
+      console.error(`mirror: ${e.message}`);
+      process.exit(2);
+    }
+    throw e;
   }
+  const log = createJsonLogger();
+  const health = createHealth(intervalSeconds);
+  if (healthPort !== undefined) startHealthServer(health, healthPort);
 
   const file = resolve(process.env.DEPLOYMENT_FILE ?? '../contracts/deployments/10143.json');
   const deployment = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
@@ -149,7 +163,7 @@ async function main() {
         line.error = e instanceof Error ? e.message.split('\n')[0] : String(e);
         ok = false;
       }
-      console.log(JSON.stringify(line));
+      log({ level: line.error ? 'error' : 'info', event: 'mirror_feed', ...line });
     }
     return ok;
   }
@@ -167,6 +181,7 @@ async function main() {
   let failures = 0;
   while (!stopping) {
     const ok = await pass();
+    health.pass(ok);
     if (once) process.exit(ok ? 0 : 1);
     failures = ok ? 0 : failures + 1;
     if (failures >= MAX_CONSECUTIVE_FAILURES) {

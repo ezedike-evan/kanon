@@ -1,4 +1,5 @@
 import { query, type QueryCtx } from "./_generated/server";
+import { MAX_LIST_ROWS } from "./limits";
 import { v } from "convex/values";
 import { viewOwnedStrategy } from "./authz";
 import { parseSpec, type AnalyticsReport, type Decimal } from "@kanon/spec";
@@ -150,7 +151,7 @@ export const report = query({
       const open = await ctx.db
         .query("positions")
         .withIndex("by_account", (q) => q.eq("accountId", account._id))
-        .collect();
+        .take(MAX_LIST_ROWS);
       for (const p of open) {
         positions.push({ asset: p.asset, side: p.side, size: p.size, entryPrice: p.entryPrice });
         const key = normalizeAsset(p.asset);

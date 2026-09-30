@@ -168,3 +168,5 @@ export { createDomainReads, type DomainReadsDeps, type DomainSession } from './l
 export { createVaultReads, type VaultReadsDeps } from './lib/vault-reads';
 export { createStore, shallowEqual, shareStructure, useStoreSelector, type Store } from './lib/store';
 export { monad, monadTestnet, resolveChain, configureChain, activeChain } from './lib/monad-chain';
+export { assertPublicEnv, validatePublicEnv, describePublicEnvProblems } from './lib/public-env';
+export { recordWithWalletLink } from './lib/wallet-link';

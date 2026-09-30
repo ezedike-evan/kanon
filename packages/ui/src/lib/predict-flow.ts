@@ -18,6 +18,7 @@ import {
   type OnChainTerms,
 } from './market-client';
 import type { PredictMarket, TakeSideOutcome } from './predict-types';
+import { recordWithWalletLink, replyFailed, type WalletLinkDeps } from './wallet-link';
 
 export interface PredictActions {
   /** `markets.linkChainMarket`. First link wins; the result says whether this one did. */
@@ -28,13 +29,13 @@ export interface PredictActions {
     chainMarketId: string;
     txHash: string;
   }): Promise<{ linked: boolean; chain: ChainMarketRef | { chainId: number; address: string; marketId: string; txHash: string } }>;
-  /** `predictions.recordPosition`. */
-  recordPosition(args: {
-    marketId: string;
-    side: MarketSide;
-    stake: Decimal;
-    txHash: string;
-  }): Promise<unknown>;
+  /**
+   * `predictions.recordPosition`. The server reads the stake, side and staker
+   * from the transaction on the chain: only the hash goes up.
+   */
+  recordPosition(args: { marketId: string; txHash: string; walletSignature?: string }): Promise<unknown>;
+  /** `users.walletLinkChallenge`, for the first record from a wallet the server has not linked yet. */
+  walletLinkMessage?: WalletLinkDeps['walletLinkMessage'];
 }
 
 const FAILURE_MESSAGES = {
@@ -116,7 +117,11 @@ export async function takeMarketSide(input: {
 
     let recorded = true;
     try {
-      await actions.recordPosition({ marketId: market.id, side, stake, txHash });
+      const reply = await recordWithWalletLink(
+        (extra) => actions.recordPosition({ marketId: market.id, txHash, ...extra }),
+        { walletLinkMessage: actions.walletLinkMessage, signMessage: client.signMessage?.bind(client) },
+      );
+      if (replyFailed(reply)) recorded = false;
     } catch {
       recorded = false;
     }

@@ -273,7 +273,7 @@ describe("ownedStrategyBySubject (internal queries acting for an authenticated a
 });
 
 describe("users.createUser / users.me", () => {
-  const fields = { name: "A", username: "a", experience: "novice" };
+  const fields = { name: "A", username: "alpha", experience: "novice" };
   const run = (subject: string | null, args: Record<string, unknown>, tables = seed()) => {
     const { ctx, fake } = ctxFor(subject, tables);
     const handler = (createUser as unknown as { _handler: (c: unknown, a: unknown) => Promise<unknown> })._handler;

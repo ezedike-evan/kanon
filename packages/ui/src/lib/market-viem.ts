@@ -350,5 +350,13 @@ export function createViemMarketClient(opts: ViemMarketClientOptions): MarketCli
     ensureMarket,
     takeSide,
     hasCrossed,
+    async signMessage(message: string): Promise<string> {
+      const { wallet, account } = await walletFor();
+      try {
+        return await wallet.signMessage({ account, message });
+      } catch (err) {
+        throw toMarketError(err);
+      }
+    },
   };
 }

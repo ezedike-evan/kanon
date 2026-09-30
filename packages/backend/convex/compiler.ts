@@ -38,6 +38,8 @@ import { v } from 'convex/values';
 import OpenAI from 'openai';
 import { specHash, diffSpec, parseSpec, type StrategySpec, type SpecDiff } from '@kanon/spec';
 import { requireSubject } from './authz';
+import { checkRateLimit, type RateLimited } from './rateLimit';
+import { describeEnvProblem, parseDashscopeEnv } from './serverEnv';
 import { buildCompilerPrompt, parseCompilerResponse, type CompilerTurn } from './compilerLogic';
 
 /**
@@ -78,7 +80,8 @@ type CompileResult =
       diff: SpecDiff | null;
     }
   | { status: 'rejected'; reply: string; reason: string }
-  | { status: 'failed'; error: string };
+  | { status: 'failed'; error: string }
+  | RateLimited;
 
 /** Input caps. Every call spends model credits, so nothing unbounded reaches the prompt. */
 const MAX_PROMPT_CHARS = 4_000;
@@ -96,7 +99,7 @@ export const compileStrategy = action({
   },
   handler: async (ctx, args): Promise<CompileResult> => {
     // Every call spends model credits: signed-in users only.
-    await requireSubject(ctx);
+    const subject = await requireSubject(ctx);
 
     const history = args.conversationHistory ?? [];
     if (
@@ -118,11 +121,16 @@ export const compileStrategy = action({
       }
     }
 
-    const apiKey = process.env.DASHSCOPE_API_KEY;
-    if (!apiKey) {
-      console.error('compileStrategy: DASHSCOPE_API_KEY is not set');
+    const env = parseDashscopeEnv(process.env);
+    if (!env.ok) {
+      console.error(describeEnvProblem('compileStrategy', env.invalid));
       return { status: 'failed', error: 'The compiler is unavailable right now.' };
     }
+    const apiKey = env.value.apiKey;
+
+    // Spent after the cheap checks, before the paid call.
+    const limited = await checkRateLimit(ctx, subject, 'compile');
+    if (limited) return limited;
     const client = new OpenAI({
       apiKey,
       baseURL: DASHSCOPE_BASE_URL,

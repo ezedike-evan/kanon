@@ -45,10 +45,20 @@ export function toScaledNumber(value: Decimal, targetDecimals: number, mode: Rou
   if (scaled > BigInt(Number.MAX_SAFE_INTEGER) || scaled < 0n) {
     throw new RangeError(`scaled value ${scaled} does not fit a safe JSON integer`);
   }
-  return Number(scaled);
+  const n = Number(scaled);
+  if (!Number.isSafeInteger(n)) throw new RangeError(`scaled value ${scaled} does not fit a safe JSON integer`);
+  return n;
 }
 
+/**
+ * A venue wire integer as a `Decimal`. A `number` must already be a safe
+ * integer: a float, NaN, or an integer past 2^53 has lost digits before it got
+ * here, so it is refused rather than turned into a plausible-looking price.
+ */
 export function fromScaled(scaled: bigint | number | string, decimals: number): Decimal {
+  if (typeof scaled === 'number' && !Number.isSafeInteger(scaled)) {
+    throw new RangeError(`wire value ${scaled} is not a safe integer`);
+  }
   return { atoms: BigInt(scaled).toString(), decimals };
 }
 

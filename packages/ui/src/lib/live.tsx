@@ -68,7 +68,8 @@ import { buildPinTarget, type PinClient, type PinTargetResult } from './pin';
 export type CompileResult =
   | { status: 'compiled'; spec: StrategySpec; reply: string; specHash: string }
   | { status: 'rejected'; reply: string; reason: string }
-  | { status: 'failed'; error: string };
+  | { status: 'failed'; error: string }
+  | { status: 'rate_limited'; retryAfterMs: number; message: string };
 
 export type RunProposerResult =
   | { status: 'proposed'; tradeId: string }
@@ -350,6 +351,9 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
           // The request was not expressible as one of the three predicates. That is an answer, not a fault.
           setTranscript((prev) => [...prev, turn('KANON', result.reply, Date.now())]);
           setCompileStatus('idle');
+        } else if (result.status === 'rate_limited') {
+          setCompileStatus('failed');
+          setCompileError(result.message);
         } else {
           setCompileStatus('failed');
           setCompileError(result.error);

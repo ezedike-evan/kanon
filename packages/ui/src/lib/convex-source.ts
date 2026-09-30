@@ -162,7 +162,8 @@ export function useConvexKanonSource(input: {
     [input.marketClient],
   );
   const linkChainMarket = hooks.useMutation(api.markets.linkChainMarket);
-  const recordPosition = hooks.useMutation(api.predictions.recordPosition);
+  const recordPosition = hooks.useAction(api.predictions.recordPosition);
+  const walletLinkMessage = hooks.useAction(api.users.walletLinkChallenge);
   const predictReads = useMemo(
     () =>
       createPredictReads({
@@ -172,6 +173,7 @@ export function useConvexKanonSource(input: {
         actions: {
           linkChainMarket: (args) => linkChainMarket(args),
           recordPosition: (args) => recordPosition(args),
+          walletLinkMessage: () => walletLinkMessage({}) as Promise<{ message: string }>,
         },
         marketClient,
         session: { pending: session.pending, signedIn: session.signedIn, userId },
@@ -179,7 +181,7 @@ export function useConvexKanonSource(input: {
       }),
     // `hooks` and `api` are module-level in both apps; the session and the client are what change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [hooks.useQuery, linkChainMarket, recordPosition, marketClient, session.pending, session.signedIn, userId],
+    [hooks.useQuery, linkChainMarket, recordPosition, walletLinkMessage, marketClient, session.pending, session.signedIn, userId],
   );
 
   // Analytics: the owner's own report and Nansen flow once signed in; the demo report while signed out.

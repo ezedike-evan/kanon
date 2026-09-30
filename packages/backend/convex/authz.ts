@@ -259,3 +259,15 @@ export async function ownedStrategyBySubject(
   const strategy = await strategyOf(db, id)(user);
   return strategy ? { user, strategy } : null;
 }
+
+/** A vault, only if that DID owns it. The action-side twin of `requireOwnedVault`. */
+export async function ownedVaultBySubject(
+  db: DatabaseReader,
+  subject: string,
+  id: Id<"vaults">,
+): Promise<{ user: Doc<"users">; vault: Doc<"vaults"> } | null> {
+  const user = await userBySubject(db, subject);
+  if (!user) return null;
+  const vault = await vaultOf(db, id)(user);
+  return vault ? { user, vault } : null;
+}

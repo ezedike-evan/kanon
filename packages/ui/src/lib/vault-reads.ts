@@ -21,6 +21,7 @@ export interface VaultReadsDeps {
   hooks: {
     useQuery(ref: unknown, args: unknown): unknown;
     useMutation(ref: unknown): (args: any) => Promise<any>;
+    useAction(ref: unknown): (args: any) => Promise<any>;
   };
   // Loosely typed on purpose: the generated `api` types are stale until codegen runs.
   api: any;
@@ -50,8 +51,9 @@ export function createVaultReads(deps: VaultReadsDeps): { useVaults(): VaultSour
         userId ? {} : 'skip',
       ) as LiveFollowRow[] | undefined;
 
-      const recordVault = hooks.useMutation(api.vaults.recordVault);
-      const recordBalance = hooks.useMutation(api.vaults.recordBalance);
+      const recordVault = hooks.useAction(api.vaults.recordVault);
+      const recordBalance = hooks.useAction(api.vaults.recordBalance);
+      const walletLinkMessage = hooks.useAction(api.users.walletLinkChallenge);
       const requestVaultChange = hooks.useMutation(api.vaults.requestVaultChange);
       const withdrawVaultChange = hooks.useMutation(api.vaults.withdrawVaultChange);
       const recordFollow = hooks.useMutation(api.copyRelationships.recordFollow);
@@ -65,6 +67,7 @@ export function createVaultReads(deps: VaultReadsDeps): { useVaults(): VaultSour
         strategy,
         rows: { vaults, leads, follows },
         actions: {
+          walletLinkMessage: () => walletLinkMessage({}) as Promise<{ message: string }>,
           recordVault: (args) => recordVault(args),
           recordBalance: (args) => recordBalance(args),
           requestVaultChange: (args) => requestVaultChange(args),
