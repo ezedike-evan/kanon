@@ -10,7 +10,16 @@
  * because the unix epoch was one.
  */
 
-import { bucketTicks, roundedBps, subDecimal, type Decimal, type PriceTick, type Series } from '@kanon/spec';
+import {
+  bucketTicks,
+  compareDecimal,
+  roundedBps,
+  subDecimal,
+  type Candle,
+  type Decimal,
+  type PriceTick,
+  type Series,
+} from '@kanon/spec';
 
 /** Candle widths a client may ask for. Anything else is refused rather than computed. */
 export const ALLOWED_BUCKET_SECONDS = [60, 300, 900, 3600, 14_400, 86_400, 604_800] as const;
@@ -89,6 +98,134 @@ export function ticksToSeries(input: {
   const candles = truncated && series.candles.length > 1 ? series.candles.slice(1) : series.candles;
   return { asset, bucketSeconds, candles, truncated };
 }
+
+// ---------------------------------------------------------------------------
+// Pre-aggregated candles.
+// ---------------------------------------------------------------------------
+
+/** One stored candle: a bucket's OHLC plus the publish times of its first and last tick. */
+export interface CandleRow {
+  /** Bucket start, unix seconds. */
+  start: number;
+  open: Decimal;
+  high: Decimal;
+  low: Decimal;
+  close: Decimal;
+  openTime: number;
+  closeTime: number;
+}
+
+/**
+ * Folds one tick into the candle of its bucket. Idempotent (re-applying a tick
+ * changes nothing) and order-independent (the earliest tick sets `open`, the
+ * latest `close`, so a backfill may overlap live writes). Equal to what
+ * `bucketTicks` computes for the same ticks.
+ */
+export function foldTickIntoCandle(
+  row: CandleRow | null,
+  tick: StoredTick,
+  bucketSeconds: number,
+): CandleRow {
+  if (!row) {
+    return {
+      start: bucketStart(tick.publishTime, bucketSeconds),
+      open: tick.price,
+      high: tick.price,
+      low: tick.price,
+      close: tick.price,
+      openTime: tick.publishTime,
+      closeTime: tick.publishTime,
+    };
+  }
+  const next = { ...row };
+  if (tick.publishTime < row.openTime) {
+    next.open = tick.price;
+    next.openTime = tick.publishTime;
+  }
+  if (tick.publishTime >= row.closeTime) {
+    next.close = tick.price;
+    next.closeTime = tick.publishTime;
+  }
+  if (compareDecimal(tick.price, row.high) > 0) next.high = tick.price;
+  if (compareDecimal(tick.price, row.low) < 0) next.low = tick.price;
+  return next;
+}
+
+/** Merges two aggregates of the same bucket. Same result as folding both tick sets into one candle. */
+export function mergeCandles(a: CandleRow, b: CandleRow): CandleRow {
+  const first = b.openTime < a.openTime ? b : a;
+  const last = b.closeTime >= a.closeTime ? b : a;
+  return {
+    start: a.start,
+    open: first.open,
+    openTime: first.openTime,
+    close: last.close,
+    closeTime: last.closeTime,
+    high: compareDecimal(b.high, a.high) > 0 ? b.high : a.high,
+    low: compareDecimal(b.low, a.low) < 0 ? b.low : a.low,
+  };
+}
+
+export function sameCandle(a: CandleRow, b: CandleRow): boolean {
+  const eq = (x: Decimal, y: Decimal) => x.atoms === y.atoms && x.decimals === y.decimals;
+  return (
+    a.start === b.start &&
+    a.openTime === b.openTime &&
+    a.closeTime === b.closeTime &&
+    eq(a.open, b.open) &&
+    eq(a.high, b.high) &&
+    eq(a.low, b.low) &&
+    eq(a.close, b.close)
+  );
+}
+
+/**
+ * Candles from stored rows, ascending by `start`. Empty buckets between two
+ * stored ones are carried forward flat and flagged `synthetic`, exactly as
+ * `bucketTicks` with `fillGaps` does, so this returns what `ticksToSeries`
+ * returns for the same window of ticks.
+ */
+export function candlesToSeries(input: {
+  asset: string;
+  bucketSeconds: number;
+  rows: readonly CandleRow[];
+}): SeriesResult {
+  const { asset, bucketSeconds, rows } = input;
+  const candles: Candle[] = [];
+  let prior: CandleRow | null = null;
+  for (const row of rows) {
+    if (prior) {
+      for (let s = prior.start + bucketSeconds; s < row.start; s += bucketSeconds) {
+        candles.push({
+          bucketIndex: s / bucketSeconds,
+          timestamp: s,
+          open: prior.close,
+          high: prior.close,
+          low: prior.close,
+          close: prior.close,
+          synthetic: true,
+        });
+      }
+    }
+    candles.push({
+      bucketIndex: row.start / bucketSeconds,
+      timestamp: row.start,
+      open: row.open,
+      high: row.high,
+      low: row.low,
+      close: row.close,
+      synthetic: false,
+    });
+    prior = row;
+  }
+  return { asset, bucketSeconds, candles, truncated: false };
+}
+
+/** Ticks older than this are pruned daily. Covers the longest market window (1D) and its settlement lag many times over. */
+export const TICK_RETENTION_DAYS = 14;
+export const PRUNE_BATCH = 500;
+/** Ticks folded into candles per backfill mutation. */
+export const BACKFILL_BATCH = 200;
 
 /** The shape `packages/ui`'s `TradeMarker` has. Restated here because the backend does not depend on the UI. */
 export interface ChartMarker {

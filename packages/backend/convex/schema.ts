@@ -308,6 +308,34 @@ export default defineSchema({
   }).index("by_asset_and_time", ["asset", "publishTime"]),
 
   /**
+   * Pre-aggregated candles, one row per (asset, width, bucket start), maintained
+   * by `ticks:recordTicks` so a chart reads at most `limit` rows instead of
+   * thousands of ticks. Only buckets that saw a tick exist; gaps are filled at
+   * read time, as `bucketTicks` does. `openTime`/`closeTime` are the publish
+   * times of the first and last tick folded in, which makes folding idempotent
+   * and order-independent (a backfill can overlap live writes).
+   */
+  candles: defineTable({
+    asset: v.string(),
+    bucketSeconds: v.number(),
+    start: v.number(),
+    open: decimal,
+    high: decimal,
+    low: decimal,
+    close: decimal,
+    openTime: v.number(),
+    closeTime: v.number(),
+  }).index("by_asset_width_start", ["asset", "bucketSeconds", "start"]),
+
+  /** Per-asset candle backfill state. `getSeries` trusts `candles` only once `ready`. */
+  candleMeta: defineTable({
+    asset: v.string(),
+    state: v.union(v.literal("backfilling"), v.literal("ready")),
+    /** Backfill resumes from the first tick with `publishTime > cursor`. */
+    cursor: v.number(),
+  }).index("by_asset", ["asset"]),
+
+  /**
    * Predict-tab markets: does the recorded price touch `thresholdPrice` inside
    * a window. Opened and settled only by `markets:sweep` from the `ticks`
    * series; no client writes a market or its result. Every parameter that
@@ -347,6 +375,13 @@ export default defineSchema({
     /** sha-256 over the settlement's fields; see `evidencePreimage` in the spec package. */
     evidenceHash: v.optional(v.string()),
     settledAt: v.optional(v.number()),
+    /**
+     * Sweep bookkeeping: the newest tick time the market was last resolved
+     * against, and whether `now` was past `windowEnd` then. While neither has
+     * changed, resolution cannot change, so the sweep skips the market.
+     */
+    checkedTickAt: v.optional(v.number()),
+    checkedEnded: v.optional(v.boolean()),
     /** The on-chain `ThresholdMarket` this row was linked to. Absent until someone opens it there. */
     chain: v.optional(
       v.object({

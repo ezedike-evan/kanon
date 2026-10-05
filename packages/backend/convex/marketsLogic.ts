@@ -86,6 +86,42 @@ export function planNewMarkets(input: {
   return { toOpen, skipped };
 }
 
+/**
+ * The `streamKey`s with a running window, read off the open markets the sweep
+ * already holds. Equal to asking each stream for its newest market: a market
+ * can only be settled after its window ends, so any market with `windowEnd`
+ * in the future is open, and it is its stream's newest.
+ */
+export function liveStreamKeys(
+  open: readonly { asset: string; template: string; direction: MarketDirection; windowEnd: number }[],
+  nowSeconds: number,
+): Set<string> {
+  const live = new Set<string>();
+  for (const m of open) {
+    if (isStreamLive(m, nowSeconds)) live.add(streamKey(m.asset, m.template, m.direction));
+  }
+  return live;
+}
+
+/**
+ * Whether a due market must be resolved again. `resolveMarket` reads `now`
+ * only through `now <= windowEnd`, and its series changes only when a tick is
+ * recorded (publish times are monotonic per asset, so the newest tick's time
+ * moves). If neither the newest tick nor the side of `windowEnd` we are on has
+ * changed since the last resolution, that resolution still holds.
+ */
+export function needsCheck(
+  market: { windowEnd: number; checkedTickAt?: number | undefined; checkedEnded?: boolean | undefined },
+  latestPublishTime: number | null,
+  nowSeconds: number,
+): boolean {
+  if (latestPublishTime === null) return true;
+  if (market.checkedTickAt === undefined || market.checkedEnded === undefined) return true;
+  return (
+    market.checkedTickAt !== latestPublishTime || market.checkedEnded !== nowSeconds > market.windowEnd
+  );
+}
+
 export interface StoredTick {
   price: Decimal;
   publishTime: number;

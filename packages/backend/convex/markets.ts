@@ -35,6 +35,8 @@ import {
   SETTLE_POSITIONS_MAX_ROUNDS,
   SWEEP_MARKET_LIMIT,
   isStreamLive,
+  liveStreamKeys,
+  needsCheck,
   planNewMarkets,
   seriesForMarket,
   settlementFields,
@@ -173,14 +175,30 @@ export const linkChainMarket = mutation({
 // Internal reads and writes, called only by `sweep`.
 // ---------------------------------------------------------------------------
 
-export const unsettled = internalQuery({
+/**
+ * Everything the sweep decides on besides tick windows, in one call: the open
+ * markets (soonest to expire first) and each market asset's newest print.
+ */
+export const sweepSnapshot = internalQuery({
   args: {},
-  handler: async (ctx): Promise<Market[]> => {
-    return await ctx.db
+  handler: async (ctx): Promise<{ open: Market[]; latest: Record<string, Tick | null> }> => {
+    const open = await ctx.db
       .query("markets")
       .withIndex("by_status_and_windowEnd", (q) => q.eq("status", "open"))
       .order("asc")
       .take(SWEEP_MARKET_LIMIT);
+    const latest: Record<string, Tick | null> = {};
+    for (const asset of marketAssets()) {
+      const tick = await ctx.db
+        .query("ticks")
+        .withIndex("by_asset_and_time", (q) => q.eq("asset", asset))
+        .order("desc")
+        .first();
+      latest[asset] = tick
+        ? { price: tick.price, publishTime: tick.publishTime, feedId: tick.feedId }
+        : null;
+    }
+    return { open, latest };
   },
 });
 
@@ -204,24 +222,6 @@ export const liveStreams = internalQuery({
       }
     }
     return live;
-  },
-});
-
-export const latestTicks = internalQuery({
-  args: { assets: v.array(v.string()) },
-  handler: async (ctx, args): Promise<Record<string, Tick | null>> => {
-    const out: Record<string, Tick | null> = {};
-    for (const asset of args.assets) {
-      const tick = await ctx.db
-        .query("ticks")
-        .withIndex("by_asset_and_time", (q) => q.eq("asset", asset))
-        .order("desc")
-        .first();
-      out[asset] = tick
-        ? { price: tick.price, publishTime: tick.publishTime, feedId: tick.feedId }
-        : null;
-    }
-    return out;
   },
 });
 
@@ -336,6 +336,25 @@ export const markCrossed = internalMutation({
 });
 
 /**
+ * Records, per market, the newest tick time and side of `windowEnd` its latest
+ * resolution was made against, so the next sweep can skip it while neither has
+ * changed. Only open markets are touched.
+ */
+export const markChecked = internalMutation({
+  args: {
+    items: v.array(v.object({ marketId: v.id("markets"), tickAt: v.number(), ended: v.boolean() })),
+  },
+  handler: async (ctx, args) => {
+    for (const item of args.items) {
+      const market = await ctx.db.get(item.marketId);
+      if (!market || market.status !== "open") continue;
+      if (market.checkedTickAt === item.tickAt && market.checkedEnded === item.ended) continue;
+      await ctx.db.patch(item.marketId, { checkedTickAt: item.tickAt, checkedEnded: item.ended });
+    }
+  },
+});
+
+/**
  * Writes a market's result. Idempotent: a market that already has one is left
  * alone, and a result is refused before the window has ended by the server's
  * own clock, whatever the caller believes.
@@ -433,11 +452,12 @@ export const settleRecentPositions = internalMutation({
 // The sweep.
 // ---------------------------------------------------------------------------
 
-const unsettledRef = makeFunctionReference<"query", Record<string, never>, Market[]>("markets:unsettled");
+const sweepSnapshotRef = makeFunctionReference<
+  "query",
+  Record<string, never>,
+  { open: Market[]; latest: Record<string, Tick | null> }
+>("markets:sweepSnapshot");
 const liveStreamsRef = makeFunctionReference<"query", { nowSeconds: number }, string[]>("markets:liveStreams");
-const latestTicksRef = makeFunctionReference<"query", { assets: string[] }, Record<string, Tick | null>>(
-  "markets:latestTicks",
-);
 const windowTicksRef = makeFunctionReference<
   "query",
   { asset: string; from: number; to: number },
@@ -458,6 +478,11 @@ const openMarketsRef = makeFunctionReference<
   { markets: Array<NewMarket & { termsHash: string }>; nowSeconds: number },
   { inserted: number }
 >("markets:openMarkets");
+const markCheckedRef = makeFunctionReference<
+  "mutation",
+  { items: Array<{ marketId: Id<"markets">; tickAt: number; ended: boolean }> },
+  null
+>("markets:markChecked");
 const markCrossedRef = makeFunctionReference<
   "mutation",
   { marketId: Id<"markets">; price: { atoms: string; decimals: number }; at: number },
@@ -495,7 +520,7 @@ export interface SweepReport {
 }
 
 /**
- * Once a minute: settle what has ended, note what has already been touched,
+ * Every few minutes (`crons.ts`): settle what has ended, note what has already been touched,
  * open what is missing. Every market's fate is decided by one call to
  * `resolveMarket` over ticks read from the canonical series.
  */
@@ -514,12 +539,23 @@ export const sweep = internalAction({
       skipped: 0,
     };
 
-    const open = await ctx.runQuery(unsettledRef, {});
+    const { open, latest: latestByAsset } = await ctx.runQuery(sweepSnapshotRef, {});
     // A window that has not begun has nothing to read, and one already
-    // marked crossed has nothing new to learn until it ends.
+    // marked crossed has nothing new to learn until it ends. A market whose
+    // newest tick and side of `windowEnd` are unchanged since its last
+    // resolution would resolve identically (`needsCheck`), so it is skipped
+    // without a single tick read.
     const due = open.filter(
-      (m) => m.windowStart <= nowSeconds && !(m.crossed && nowSeconds <= m.windowEnd),
+      (m) =>
+        m.windowStart <= nowSeconds &&
+        !(m.crossed && nowSeconds <= m.windowEnd) &&
+        needsCheck(m, latestByAsset[m.asset]?.publishTime ?? null, nowSeconds),
     );
+    const checked: Array<{ marketId: Id<"markets">; tickAt: number; ended: boolean }> = [];
+    const remember = (m: Market) => {
+      const tickAt = latestByAsset[m.asset]?.publishTime;
+      if (tickAt !== undefined) checked.push({ marketId: m._id, tickAt, ended: nowSeconds > m.windowEnd });
+    };
 
     // One read per asset covering every due window, cut per market below. A
     // market falls back to its own read when the union was too big for one.
@@ -571,8 +607,12 @@ export const sweep = internalAction({
             at: resolution.decidingAt,
           });
           report.crossed += 1;
+          remember(market);
         } else if (resolution.kind === "awaiting") {
           report.awaiting += 1;
+          remember(market);
+        } else if (resolution.kind === "open") {
+          remember(market);
         } else if (resolution.kind === "settled" || resolution.kind === "unresolvable") {
           const fields = settlementFields(resolution);
           if (!fields) continue;
@@ -598,6 +638,8 @@ export const sweep = internalAction({
       }
     }
 
+    if (checked.length > 0) await ctx.runMutation(markCheckedRef, { items: checked });
+
     // Stakes left open on a market an earlier, interrupted sweep had already resolved.
     // Nothing to do on a fully settled market, so this is one cheap call.
     for (let round = 0; round < SETTLE_POSITIONS_MAX_ROUNDS; round += 1) {
@@ -605,8 +647,13 @@ export const sweep = internalAction({
       if (!remaining) break;
     }
 
-    const live = new Set(await ctx.runQuery(liveStreamsRef, { nowSeconds }));
-    const latestByAsset = await ctx.runQuery(latestTicksRef, { assets: marketAssets() });
+    // The open markets already say which streams are live. Past the read cap
+    // they might not be the whole set, so ask each stream (`openMarkets` also
+    // re-checks under the write lock).
+    const live =
+      open.length < SWEEP_MARKET_LIMIT
+        ? liveStreamKeys(open, nowSeconds)
+        : new Set(await ctx.runQuery(liveStreamsRef, { nowSeconds }));
     const latest: Record<string, ReferenceTick | null> = {};
     for (const [asset, tick] of Object.entries(latestByAsset)) {
       latest[asset] = tick

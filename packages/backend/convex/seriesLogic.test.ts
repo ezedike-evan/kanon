@@ -5,6 +5,10 @@ import {
   DEFAULT_LIMIT,
   MAX_LIMIT,
   bucketStart,
+  candlesToSeries,
+  foldTickIntoCandle,
+  mergeCandles,
+  type CandleRow,
   clampLimit,
   isAllowedBucketSeconds,
   normalizeAsset,
@@ -285,5 +289,42 @@ describe('tickerFrom', () => {
       expect(t.open).toBeNull();
       expect(t.openTime).toBeNull();
     }
+  });
+});
+
+describe('pre-aggregated candles', () => {
+  const fold = (ticks: StoredTick[], width: number) => {
+    const rows = new Map<number, CandleRow>();
+    for (const t of ticks) {
+      const s = bucketStart(t.publishTime, width);
+      rows.set(s, foldTickIntoCandle(rows.get(s) ?? null, t, width));
+    }
+    return [...rows.values()].sort((a, b) => a.start - b.start);
+  };
+  const ticks: StoredTick[] = [
+    tick(0, 100), tick(30, 120), tick(59, 90), tick(60, 95), tick(2 * HOUR + 5, 110), tick(2 * HOUR + 6, 80),
+    tick(5 * HOUR - 1, 105), tick(5 * HOUR, 107),
+  ];
+
+  it('equals ticksToSeries (gap fill included) at every width', () => {
+    for (const w of ALLOWED_BUCKET_SECONDS) {
+      const expected = ticksToSeries({ asset: 'BTC/USD', bucketSeconds: w, ticks, truncated: false });
+      const got = candlesToSeries({ asset: 'BTC/USD', bucketSeconds: w, rows: fold(ticks, w) });
+      expect(got).toEqual(expected);
+    }
+  });
+
+  it('is order-independent and idempotent', () => {
+    const shuffled = [...ticks].reverse().concat(ticks);
+    for (const w of [60, HOUR]) expect(fold(shuffled, w)).toEqual(fold(ticks, w));
+  });
+
+  it('merging two partial aggregates equals folding all ticks', () => {
+    const w = HOUR;
+    const a = fold(ticks.slice(0, 5), w);
+    const b = fold(ticks.slice(3), w);
+    const merged = new Map(a.map((r) => [r.start, r]));
+    for (const r of b) merged.set(r.start, merged.has(r.start) ? mergeCandles(merged.get(r.start)!, r) : r);
+    expect([...merged.values()].sort((x, y) => x.start - y.start)).toEqual(fold(ticks, w));
   });
 });

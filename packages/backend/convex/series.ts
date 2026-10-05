@@ -5,6 +5,7 @@ import { marketAssets } from "@kanon/spec";
 import type { QueryCtx } from "./_generated/server";
 import {
   MAX_TICKS_READ,
+  candlesToSeries,
   TICKER_WINDOW_SECONDS,
   clampLimit,
   isAllowedBucketSeconds,
@@ -19,9 +20,10 @@ import {
 } from "./seriesLogic";
 
 /**
- * Candles for one asset, bucketed from the canonical tick series.
+ * Candles for one asset, from the `candles` table (or, before its backfill
+ * finishes, bucketed from the canonical tick series).
  *
- * Reads the newest ticks first, so the window always ends at the latest print
+ * The tick path reads the newest ticks first, so the window always ends at the latest print
  * and reaches back `limit` buckets. Never invents a price: empty buckets come
  * back flat and flagged `synthetic`, and an asset with no ticks returns no
  * candles. See `seriesLogic.ts` for the bucket rules and the read ceiling.
@@ -38,6 +40,33 @@ export const getSeries = query({
     }
     const asset = normalizeAsset(args.asset);
     const limit = clampLimit(args.limit);
+
+    // Pre-aggregated candles once the asset's backfill is done: at most `limit`
+    // rows, and only a change to a candle re-runs a subscriber. Until then (a
+    // fresh deploy) fall back to bucketing ticks.
+    const meta = await ctx.db
+      .query("candleMeta")
+      .withIndex("by_asset", (q) => q.eq("asset", asset))
+      .first();
+    if (meta?.state === "ready") {
+      const newest = await ctx.db
+        .query("candles")
+        .withIndex("by_asset_width_start", (q) => q.eq("asset", asset).eq("bucketSeconds", args.bucketSeconds))
+        .order("desc")
+        .first();
+      if (!newest) return { asset, bucketSeconds: args.bucketSeconds, candles: [], truncated: false };
+      const rows = await ctx.db
+        .query("candles")
+        .withIndex("by_asset_width_start", (q) =>
+          q
+            .eq("asset", asset)
+            .eq("bucketSeconds", args.bucketSeconds)
+            .gte("start", newest.start - (limit - 1) * args.bucketSeconds),
+        )
+        .order("asc")
+        .take(limit);
+      return candlesToSeries({ asset, bucketSeconds: args.bucketSeconds, rows });
+    }
 
     const latest = await ctx.db
       .query("ticks")

@@ -11,6 +11,8 @@ import {
   DIRECTIONS,
   isStreamLive,
   isValidStake,
+  liveStreamKeys,
+  needsCheck,
   planNewMarkets,
   seriesForMarket,
   settlementFields,
@@ -312,5 +314,128 @@ describe('reading several windows at once', () => {
     const out = sliceWindowRead({ ...unionRead([range]), range, maxTicks: 4 });
     expect(out.truncated).toBe(true);
     expect(out.ticks).toHaveLength(4);
+  });
+});
+
+describe('needsCheck: the gated sweep resolves exactly as the full sweep', () => {
+  const W0 = 1_800_000_100 - (1_800_000_100 % 900) + 900; // a bucket boundary
+  const template = templateById('1H')!;
+
+  // Deterministic pseudo-random price walk with sparse ticks (~one per 5-40 min),
+  // some landing exactly on bucket and window boundaries.
+  function makeTicks(seed: number, from: number, to: number, extra: number[]) {
+    let x = seed;
+    const rnd = () => ((x = (x * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const out: { publishTime: number; price: ReturnType<typeof parseDecimal> }[] = [];
+    let price = 100_000; // 1000.00 at 2 decimals
+    for (let t = from; t < to; t += 300 + Math.floor(rnd() * 2100)) {
+      price += Math.floor((rnd() - 0.5) * 1200);
+      out.push({ publishTime: t, price: { atoms: String(price), decimals: 2 } });
+    }
+    for (const t of extra) {
+      out.push({ publishTime: t, price: { atoms: String(price + 777), decimals: 2 } });
+    }
+    const seen = new Set<number>();
+    return out
+      .sort((a, b) => a.publishTime - b.publishTime)
+      .filter((t) => (seen.has(t.publishTime) ? false : (seen.add(t.publishTime), true)));
+  }
+
+  function run(direction: 'above' | 'below', threshold: number, seed: number, ingestDelay: number) {
+    const market = {
+      asset: 'BTC/USD',
+      direction,
+      thresholdPrice: { atoms: String(threshold), decimals: 2 },
+      windowStart: W0,
+      windowEnd: W0 + template.windowSeconds,
+      bucketSeconds: template.bucketSeconds,
+      checkedTickAt: undefined as number | undefined,
+      checkedEnded: undefined as boolean | undefined,
+    };
+    const end = market.windowEnd;
+    const all = makeTicks(seed, W0 - 3600, end + 4000, [
+      W0,
+      W0 - 1,
+      end,
+      end - 1,
+      end + 899,
+      end + 900,
+    ]);
+    let full = 0;
+    let gated = 0;
+    let cached: ReturnType<typeof resolveMarket> | null = null;
+    for (let now = W0 - 600; now <= end + 5000; now += 60) {
+      // Ticks recorded by `now` (a publish time is recorded `ingestDelay` seconds late).
+      const recorded = all.filter((t) => t.publishTime + ingestDelay <= now);
+      const latest = recorded.length ? recorded[recorded.length - 1]!.publishTime : null;
+      if (now < market.windowStart) continue;
+      const resolve = () => {
+        const { from, to } = windowReadRange(market);
+        const ticks = recorded.filter((t) => t.publishTime >= from && t.publishTime < to);
+        const closing = recorded.find((t) => t.publishTime >= to) ?? null;
+        return resolveMarket(
+          seriesForMarket({ asset: market.asset, window: market, windowTicks: ticks, closingTick: closing }),
+          market,
+          now,
+        );
+      };
+      const truth = resolve();
+      full += 1;
+      if (needsCheck(market, latest, now) || cached === null) {
+        cached = truth;
+        gated += 1;
+        if (latest !== null) {
+          market.checkedTickAt = latest;
+          market.checkedEnded = now > market.windowEnd;
+        }
+      }
+      expect(cached, `now=${now - W0}`).toEqual(truth);
+    }
+    return { full, gated };
+  }
+
+  it('matches the full-window resolution at every minute, for hit and miss series', () => {
+    let totalFull = 0;
+    let totalGated = 0;
+    for (const direction of ['above', 'below'] as const) {
+      for (const threshold of [99_000, 100_000, 100_400, 101_500, 130_000, 70_000]) {
+        for (const seed of [1, 7, 42]) {
+          for (const delay of [0, 45]) {
+            const r = run(direction, threshold, seed, delay);
+            totalFull += r.full;
+            totalGated += r.gated;
+          }
+        }
+      }
+    }
+    // The point of the gate: far fewer window reads for the same answers.
+    expect(totalGated).toBeLessThan(totalFull / 3);
+  });
+
+  it('always rechecks when the market has never been checked, or the asset has no tick', () => {
+    expect(needsCheck({ windowEnd: 100 }, 50, 60)).toBe(true);
+    expect(needsCheck({ windowEnd: 100, checkedTickAt: 50, checkedEnded: false }, null, 60)).toBe(true);
+  });
+
+  it('skips only while the newest tick and the side of windowEnd are both unchanged', () => {
+    const m = { windowEnd: 100, checkedTickAt: 50, checkedEnded: false };
+    expect(needsCheck(m, 50, 100)).toBe(false); // windowEnd second itself is still "running"
+    expect(needsCheck(m, 50, 101)).toBe(true); // crossed into ended
+    expect(needsCheck(m, 51, 60)).toBe(true); // a new tick
+    expect(needsCheck({ ...m, checkedEnded: true }, 50, 150)).toBe(false);
+  });
+});
+
+describe('liveStreamKeys', () => {
+  it('lists streams whose open market has not ended', () => {
+    const live = liveStreamKeys(
+      [
+        { asset: 'BTC/USD', template: '1H', direction: 'above', windowEnd: NOW + 10 },
+        { asset: 'BTC/USD', template: '1H', direction: 'below', windowEnd: NOW },
+        { asset: 'ETH/USD', template: '1D', direction: 'above', windowEnd: NOW - 5 },
+      ],
+      NOW,
+    );
+    expect([...live]).toEqual([streamKey('BTC/USD', '1H', 'above')]);
   });
 });
