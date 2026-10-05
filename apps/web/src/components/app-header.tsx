@@ -9,13 +9,14 @@ import { SpecularButton } from '@kanon/ui';
 
 export function AppHeader() {
   const router = useRouter();
-  const { authenticated, user, logout } = usePrivy();
+  const { authenticated, logout } = usePrivy();
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const dbUser = useQuery(api.users.me, convexAuthed ? {} : "skip");
 
   return (
     <header className="fixed top-0 left-0 w-full flex justify-between items-center px-6 py-4 border-b border-hairline bg-panel/80 z-50 backdrop-blur-md">
       <div className="flex items-center gap-3">
+        {/* eslint-disable-next-line @next/next/no-img-element -- static SVG logo; next/image adds nothing for an SVG */}
         <img src="/icons/icon.svg" className="h-6 w-auto" alt="Kanon Logo" />
         <div className="text-bone font-bold text-xl tracking-widest uppercase cursor-pointer" onClick={() => router.push('/')}>
           Kanon

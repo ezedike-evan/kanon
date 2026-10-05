@@ -46,14 +46,14 @@ export type VaultRecordResult<T = string> =
   | { ok: true; id: T }
   | { ok: false; reason: RecordFailureReason; message: string };
 
-const walletMessages: Record<string, string> = {
+export const walletMessages: Record<string, string> = {
   no_user: "Finish signing up to continue.",
   wallet_not_linked: "Link your wallet first: sign the link message with it.",
   bad_signature: "That wallet signature is not valid.",
   already_linked: "Your account is already linked to a different wallet.",
   wallet_in_use: "That wallet is linked to another account.",
 };
-const UNAVAILABLE = "Recording vaults is unavailable right now.";
+export const UNAVAILABLE = "Recording vaults is unavailable right now.";
 
 /** The strategy, only if the DID owns it, and what the action needs from it. */
 export const strategyForRecord = internalQuery({

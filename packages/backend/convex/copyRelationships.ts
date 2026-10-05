@@ -1,4 +1,11 @@
-import { mutation, query } from "./_generated/server";
+import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { makeFunctionReference } from "convex/server";
+import type { Id } from "./_generated/dataModel";
+import { resolveWallet } from "./users";
+import { describeEnvProblem, parseChainEnv } from "./serverEnv";
+import { getReceipt, readCopyVault, rpcFor, rpcIsOnChain } from "./chainReads";
+import { receiptConfirms, verifyCopyVaultMirror } from "./chainLogic";
+import { UNAVAILABLE, walletMessages, type VaultRecordResult } from "./vaults";
 import { MAX_COUNT_ROWS, MAX_LIST_ROWS } from "./limits";
 import type { Doc } from "./_generated/dataModel";
 import { v } from "convex/values";
@@ -12,7 +19,7 @@ import {
 import {
   requireOwnedCopyRelationship,
   requireOwnedStrategy,
-  requireUser,
+  requireSubject,
   viewOwnedCopyRelationship,
   viewerUser,
 } from "./authz";
@@ -122,48 +129,51 @@ export const listLeads = query({
   },
 });
 
-/**
- * Records a follow the follower has just signed. Validated against the lead's
- * listing, so a fee the follower was not shown cannot be recorded, and
- * idempotent on the vault address.
- */
-export const recordFollow = mutation({
+/** The listing a follow is checked against, for the signed-in user only. Internal. */
+export const leadForFollow = internalQuery({
+  args: { leaderStrategyId: v.id("strategies") },
+  handler: async (ctx, args) => {
+    const lead = await ctx.db
+      .query("copyLeads")
+      .withIndex("by_strategy", (q) => q.eq("strategyId", args.leaderStrategyId))
+      .first();
+    if (!lead) return null;
+    const strategy = await ctx.db.get(lead.strategyId);
+    return {
+      profitShareBps: lead.profitShareBps,
+      leaderExecutor: lead.leaderExecutor,
+      feeRecipient: lead.feeRecipient,
+      active: lead.active,
+      chainStrategyId: strategy?.chainStrategyId ?? null,
+    };
+  },
+});
+
+/** Stores a follow the action verified on-chain. Internal. Idempotent on the address. */
+export const insertVerifiedFollow = internalMutation({
   args: {
+    userId: v.id("users"),
     leaderStrategyId: v.id("strategies"),
     allocationBps: v.number(),
     feeShareBps: v.number(),
     address: v.string(),
     chainId: v.number(),
     txHash: v.string(),
+    leaderExecutor: v.string(),
+    feeRecipient: v.string(),
   },
   handler: async (ctx, args) => {
-    const user = await requireUser(ctx);
-    const lead = await ctx.db
-      .query("copyLeads")
-      .withIndex("by_strategy", (q) => q.eq("strategyId", args.leaderStrategyId))
-      .first();
-    if (!lead) throw new Error("this strategy is not listed for copying");
-
-    const problems = validateFollow({
-      terms: { allocationBps: args.allocationBps, feeShareBps: args.feeShareBps },
-      lead,
-    });
-    if (!isAddress(args.address)) problems.push("Vault address is not an address.");
-    if (!isTxHash(args.txHash)) problems.push("A follow needs the transaction that created it.");
-    if (problems.length > 0) throw new Error(problems.join(" "));
-
     const address = normalizeAddress(args.address);
     const existing = await ctx.db
       .query("copyRelationships")
       .withIndex("by_address", (q) => q.eq("address", address))
       .first();
     if (existing) {
-      if (existing.followerUserId !== user._id) throw new Error("that vault address is already recorded");
+      if (existing.followerUserId !== args.userId) throw new Error("that vault address is already recorded");
       return existing._id;
     }
-
     return await ctx.db.insert("copyRelationships", {
-      followerUserId: user._id,
+      followerUserId: args.userId,
       leaderStrategyId: args.leaderStrategyId,
       allocationBps: args.allocationBps,
       feeShareBps: args.feeShareBps,
@@ -172,9 +182,117 @@ export const recordFollow = mutation({
       address,
       chainId: args.chainId,
       createTxHash: args.txHash,
+      leaderExecutor: normalizeAddress(args.leaderExecutor),
+      feeRecipient: normalizeAddress(args.feeRecipient),
+    });
+  },
+});
+
+type LeadForFollow = {
+  profitShareBps: number;
+  leaderExecutor: string;
+  feeRecipient: string;
+  active: boolean;
+  chainStrategyId: string | null;
+} | null;
+const leadForFollowRef = makeFunctionReference<
+  "query",
+  { leaderStrategyId: Id<"strategies"> },
+  LeadForFollow
+>("copyRelationships:leadForFollow");
+const insertVerifiedFollowRef = makeFunctionReference<
+  "mutation",
+  {
+    userId: Id<"users">;
+    leaderStrategyId: Id<"strategies">;
+    allocationBps: number;
+    feeShareBps: number;
+    address: string;
+    chainId: number;
+    txHash: string;
+    leaderExecutor: string;
+    feeRecipient: string;
+  },
+  Id<"copyRelationships">
+>("copyRelationships:insertVerifiedFollow");
+
+/**
+ * Records a follow the follower has just signed. The chain is asked: the
+ * address must be a `CopyVault` the factory made, whose follower is the user's
+ * linked wallet and which copies this lead's executor, fee address and
+ * registry strategy. Allocation and fee are read off the vault, then checked
+ * against the lead's listing. Fails closed if the RPC or factory is not
+ * configured. Idempotent on the vault address.
+ */
+export const recordFollow = action({
+  args: {
+    leaderStrategyId: v.id("strategies"),
+    address: v.string(),
+    chainId: v.number(),
+    txHash: v.string(),
+    walletSignature: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<VaultRecordResult<Id<"copyRelationships">>> => {
+    const subject = await requireSubject(ctx);
+    if (!isAddress(args.address)) return { ok: false, reason: "invalid", message: "Vault address is not an address." };
+    if (!isTxHash(args.txHash)) {
+      return { ok: false, reason: "invalid", message: "A follow needs the transaction that created it." };
+    }
+
+    const env = parseChainEnv(process.env, ["factory"]);
+    if (!env.ok) {
+      console.error(describeEnvProblem("copyRelationships:recordFollow", env.invalid));
+      return { ok: false, reason: "not_configured", message: UNAVAILABLE };
+    }
+    if (args.chainId !== env.value.chainId) {
+      return { ok: false, reason: "rejected", message: "That vault is not on the deployed factory." };
+    }
+
+    const lead = await ctx.runQuery(leadForFollowRef, { leaderStrategyId: args.leaderStrategyId });
+    if (!lead) return { ok: false, reason: "invalid", message: "This strategy is not listed for copying." };
+
+    const wallet = await resolveWallet(ctx, subject, args.walletSignature);
+    if (!wallet.ok) return { ok: false, reason: wallet.reason, message: walletMessages[wallet.reason] ?? "Wallet check failed." };
+
+    let verdict;
+    try {
+      const rpc = rpcFor(env.value);
+      if (!(await rpcIsOnChain(rpc, env.value.chainId))) {
+        console.error("copyRelationships:recordFollow: RPC is on a different chain than MONAD_CHAIN_ID");
+        return { ok: false, reason: "not_configured", message: UNAVAILABLE };
+      }
+      const reads = await readCopyVault(rpc, env.value.factoryAddress!, normalizeAddress(args.address));
+      verdict = verifyCopyVaultMirror({ reads, wallet: wallet.wallet, lead });
+      if (verdict.ok) {
+        const receipt = await getReceipt(rpc, args.txHash);
+        if (!receiptConfirms(receipt, env.value.factoryAddress!)) {
+          return { ok: false, reason: "rejected", message: "The creating transaction did not succeed against the factory." };
+        }
+      }
+    } catch (err) {
+      console.error("copyRelationships:recordFollow: RPC read failed", err instanceof Error ? err.message : "");
+      return { ok: false, reason: "rpc_unavailable", message: "The chain could not be reached. Try again shortly." };
+    }
+    if (!verdict.ok) return { ok: false, reason: "rejected", message: verdict.reason };
+
+    const problems = validateFollow({
+      terms: { allocationBps: verdict.allocationBps, feeShareBps: verdict.feeShareBps },
+      lead,
+    });
+    if (problems.length > 0) return { ok: false, reason: "rejected", message: problems.join(" ") };
+
+    const id = await ctx.runMutation(insertVerifiedFollowRef, {
+      userId: wallet.userId as Id<"users">,
+      leaderStrategyId: args.leaderStrategyId,
+      allocationBps: verdict.allocationBps,
+      feeShareBps: verdict.feeShareBps,
+      address: args.address,
+      chainId: args.chainId,
+      txHash: args.txHash.toLowerCase(),
       leaderExecutor: lead.leaderExecutor,
       feeRecipient: lead.feeRecipient,
     });
+    return { ok: true, id };
   },
 });
 

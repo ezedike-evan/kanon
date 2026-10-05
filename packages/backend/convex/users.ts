@@ -27,7 +27,7 @@ export const createUser = mutation({
     const clean = cleanUserInput(args);
     const problems = validateUserInput(clean);
     if (problems.length > 0) {
-      throw new ConvexError({ code: "invalid_user", message: problems.map((p) => p.message).join(" "), problems });
+      throw new ConvexError({ code: "invalid_user", message: problems.map((p) => p.message).join(" "), problems: problems.map((p) => ({ field: p.field, message: p.message })) });
     }
 
     const key = usernameKey(clean.username);

@@ -7,6 +7,7 @@ import {
   decodeUint,
   encodeAddressCall,
   encodeUintCall,
+  type CopyVaultReads,
   type RpcReceipt,
   type VaultReads,
 } from "./chainLogic";
@@ -70,5 +71,37 @@ export async function readVault(cfg: RpcConfig, factory: string, vault: string):
     executor: decodeAddress(executor),
     maxDailyDrawdownBps: decodeUint(drawdown),
     assetIds,
+  };
+}
+
+export async function readCopyVault(cfg: RpcConfig, factory: string, vault: string): Promise<CopyVaultReads> {
+  const isCopyVault = decodeBool(await tryCall(cfg, factory, encodeAddressCall(SELECTORS.isCopyVault, vault)));
+  const none = {
+    follower: null,
+    leaderExecutor: null,
+    feeRecipient: null,
+    allocationBps: null,
+    feeShareBps: null,
+    leaderStrategyId: null,
+  };
+  if (isCopyVault !== true) return { isCopyVault, ...none };
+  const [follower, executor, recipient, allocation, fee, strategy] = await Promise.all(
+    [
+      SELECTORS.follower,
+      SELECTORS.leaderExecutor,
+      SELECTORS.feeRecipient,
+      SELECTORS.allocationBps,
+      SELECTORS.feeShareBps,
+      SELECTORS.leaderStrategyId,
+    ].map((sel) => tryCall(cfg, vault, sel)),
+  );
+  return {
+    isCopyVault,
+    follower: decodeAddress(follower),
+    leaderExecutor: decodeAddress(executor),
+    feeRecipient: decodeAddress(recipient),
+    allocationBps: decodeUint(allocation),
+    feeShareBps: decodeUint(fee),
+    leaderStrategyId: decodeUint(strategy),
   };
 }

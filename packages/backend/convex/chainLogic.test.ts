@@ -13,6 +13,8 @@ import {
   receiptConfirms,
   verifyPositionReceipt,
   verifyVaultMirror,
+  verifyCopyVaultMirror,
+  type CopyVaultReads,
   type RpcReceipt,
   type VaultReads,
 } from "./chainLogic";
@@ -29,6 +31,13 @@ it("selectors and topics match the contracts' signatures", () => {
   expect(SELECTORS.maxDailyDrawdownBps).toBe(toFunctionSelector("maxDailyDrawdownBps()"));
   expect(SELECTORS.totalCollateral).toBe(toFunctionSelector("totalCollateral()"));
   expect(SELECTORS.whitelistedAssetIds).toBe(toFunctionSelector("whitelistedAssetIds(uint256)"));
+  expect(SELECTORS.isCopyVault).toBe(toFunctionSelector("isCopyVault(address)"));
+  expect(SELECTORS.follower).toBe(toFunctionSelector("follower()"));
+  expect(SELECTORS.leaderExecutor).toBe(toFunctionSelector("leaderExecutor()"));
+  expect(SELECTORS.allocationBps).toBe(toFunctionSelector("allocationBps()"));
+  expect(SELECTORS.feeShareBps).toBe(toFunctionSelector("feeShareBps()"));
+  expect(SELECTORS.feeRecipient).toBe(toFunctionSelector("feeRecipient()"));
+  expect(SELECTORS.leaderStrategyId).toBe(toFunctionSelector("leaderStrategyId()"));
 });
 
 const sideTaken = (o: { market?: string; id?: bigint; staker?: string; yes?: boolean; amount?: bigint }) => ({
@@ -132,5 +141,38 @@ describe("receiptConfirms", () => {
     expect(receiptConfirms(receipt(), OTHER)).toBe(false);
     expect(receiptConfirms(receipt({ status: "0x0" }), MARKET)).toBe(false);
     expect(receiptConfirms(null, MARKET)).toBe(false);
+  });
+});
+
+describe("verifyCopyVaultMirror", () => {
+  const FEE = "0x" + "3".repeat(40);
+  const reads: CopyVaultReads = {
+    isCopyVault: true,
+    follower: WALLET,
+    leaderExecutor: OTHER,
+    feeRecipient: FEE,
+    allocationBps: 2500n,
+    feeShareBps: 1000n,
+    leaderStrategyId: 9n,
+  };
+  const lead = { leaderExecutor: OTHER, feeRecipient: FEE, chainStrategyId: "9" as string | null };
+  const v = (r: Partial<CopyVaultReads> = {}, l: Partial<typeof lead> = {}, wallet = WALLET) =>
+    verifyCopyVaultMirror({ reads: { ...reads, ...r }, wallet, lead: { ...lead, ...l } });
+
+  it("accepts a vault that matches the chain and returns the chain's terms", () => {
+    expect(v()).toEqual({ ok: true, allocationBps: 2500, feeShareBps: 1000 });
+  });
+  it("refuses a non-copy-vault", () => expect(v({ isCopyVault: false }).ok).toBe(false));
+  it("refuses another wallet's vault", () => expect(v({}, {}, OTHER).ok).toBe(false));
+  it("refuses a different executor, fee address or strategy", () => {
+    expect(v({ leaderExecutor: FEE }).ok).toBe(false);
+    expect(v({ feeRecipient: OTHER }).ok).toBe(false);
+    expect(v({ leaderStrategyId: 10n }).ok).toBe(false);
+  });
+  it("refuses a lead with no registry entry", () => expect(v({}, { chainStrategyId: null }).ok).toBe(false));
+  it("refuses unreadable or out-of-range terms", () => {
+    expect(v({ allocationBps: null }).ok).toBe(false);
+    expect(v({ allocationBps: 0n }).ok).toBe(false);
+    expect(v({ feeShareBps: 10_001n }).ok).toBe(false);
   });
 });

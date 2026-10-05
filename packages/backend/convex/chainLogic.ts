@@ -6,13 +6,20 @@
  * `chainLogic.test.ts`, which also recomputes the selectors with viem.
  */
 
-import type { Decimal, type MarketDirection, type MarketSide } from "@kanon/spec";
+import type { Decimal, MarketDirection, MarketSide } from "@kanon/spec";
 
 /** `keccak256("SideTaken(uint256,address,bool,uint256)")`: ThresholdMarket's stake event. */
 export const SIDE_TAKEN_TOPIC = "0xfc621c28da8932d8fb3e5c6c4c25268d2014483c7eeb2b32b12435309f107186";
 
 export const SELECTORS = {
   isVault: "0x652b9b41",
+  isCopyVault: "0x9e2286a4",
+  follower: "0xd9efc0ca",
+  leaderExecutor: "0xd62bb9e5",
+  allocationBps: "0xa4ce9d10",
+  feeShareBps: "0x1b49fc18",
+  feeRecipient: "0x46904840",
+  leaderStrategyId: "0xab04c7b6",
   owner: "0x8da5cb5b",
   strategyExecutor: "0x5731d3b7",
   maxDailyDrawdownBps: "0xaec376cd",
@@ -162,4 +169,59 @@ export function verifyVaultMirror(input: {
 /** Whether a receipt proves a transaction to `address` succeeded. Used only to keep a tx hash as a label. */
 export function receiptConfirms(receipt: RpcReceipt | null, to: string): boolean {
   return !!receipt && lower(receipt.status) === "0x1" && lower(receipt.to) === lower(to);
+}
+
+/* ------------------------------------------------------------------ */
+/* Copy vaults                                                         */
+/* ------------------------------------------------------------------ */
+
+export interface CopyVaultReads {
+  isCopyVault: boolean | null;
+  follower: string | null;
+  leaderExecutor: string | null;
+  feeRecipient: string | null;
+  allocationBps: bigint | null;
+  feeShareBps: bigint | null;
+  leaderStrategyId: bigint | null;
+}
+
+export type CopyVaultVerdict =
+  | { ok: true; allocationBps: number; feeShareBps: number }
+  | { ok: false; reason: string };
+
+/**
+ * A follow is real only if the chain's `CopyVault` belongs to the linked wallet
+ * and copies the listed lead: same executor, fee address and registry strategy.
+ * Allocation and fee are read off the vault, never taken from the client.
+ */
+export function verifyCopyVaultMirror(input: {
+  reads: CopyVaultReads;
+  wallet: string;
+  lead: { leaderExecutor: string; feeRecipient: string; chainStrategyId: string | null | undefined };
+}): CopyVaultVerdict {
+  const { reads, wallet, lead } = input;
+  if (reads.isCopyVault !== true) return { ok: false, reason: "That address is not a Kanon copy vault." };
+  if (!reads.follower || reads.follower !== lower(wallet)) {
+    return { ok: false, reason: "That vault does not belong to your linked wallet." };
+  }
+  if (!reads.leaderExecutor || reads.leaderExecutor !== lower(lead.leaderExecutor)) {
+    return { ok: false, reason: "The vault does not follow this lead's executor." };
+  }
+  if (!reads.feeRecipient || reads.feeRecipient !== lower(lead.feeRecipient)) {
+    return { ok: false, reason: "The vault's fee address does not match the listing." };
+  }
+  if (!lead.chainStrategyId || !/^\d+$/.test(lead.chainStrategyId)) {
+    return { ok: false, reason: "This strategy has no registry entry to follow." };
+  }
+  if (reads.leaderStrategyId === null || reads.leaderStrategyId !== BigInt(lead.chainStrategyId)) {
+    return { ok: false, reason: "The vault follows a different strategy." };
+  }
+  const { allocationBps, feeShareBps } = reads;
+  if (allocationBps === null || allocationBps <= 0n || allocationBps > 10_000n) {
+    return { ok: false, reason: "The vault's allocation could not be read." };
+  }
+  if (feeShareBps === null || feeShareBps > 10_000n) {
+    return { ok: false, reason: "The vault's profit share could not be read." };
+  }
+  return { ok: true, allocationBps: Number(allocationBps), feeShareBps: Number(feeShareBps) };
 }

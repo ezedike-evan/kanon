@@ -105,11 +105,10 @@ export interface VaultBackendActions {
   withdrawVaultChange(args: { vaultId: string }): Promise<unknown>;
   recordFollow(args: {
     leaderStrategyId: string;
-    allocationBps: number;
-    feeShareBps: number;
     address: string;
     chainId: number;
     txHash: string;
+    walletSignature?: string;
   }): Promise<unknown>;
   setCopyRelationshipActive(args: {
     copyRelationshipId: string;
@@ -535,14 +534,18 @@ export function createVaultActions(
 
     let note = '';
     try {
-      await d.actions.recordFollow({
-        leaderStrategyId: lead.strategyId,
-        allocationBps: terms.allocationBps,
-        feeShareBps: terms.feeShareBps,
-        address: made.vault,
-        chainId: c.config.chainId,
-        txHash: made.txHash,
-      });
+      const reply = await recordWithWalletLink(
+        (extra) =>
+          d.actions.recordFollow({
+            leaderStrategyId: lead.strategyId,
+            address: made.vault,
+            chainId: c.config.chainId,
+            txHash: made.txHash,
+            ...extra,
+          }),
+        { walletLinkMessage: d.actions.walletLinkMessage, signMessage: c.signMessage?.bind(c) },
+      );
+      if (replyFailed(reply)) throw new Error(reply.message ?? 'the server could not verify it');
     } catch (err) {
       note = ` It exists on-chain, but Kanon could not save it: ${errorText(err, '')}.`;
     }

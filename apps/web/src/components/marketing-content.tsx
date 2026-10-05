@@ -136,6 +136,7 @@ export function MarketingContent() {
       {/* Navbar */}
       <header className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-6 py-4 bg-void/80 backdrop-blur-md border-b border-hairline">
         <div className="flex items-center gap-3">
+          {/* eslint-disable-next-line @next/next/no-img-element -- static SVG logo; next/image adds nothing for an SVG */}
           <img src="/icons/icon.svg" className="h-6 w-auto" alt="Kanon Logo" />
           <div className="text-bone font-bold text-xl tracking-widest uppercase">
             Kanon
