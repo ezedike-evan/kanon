@@ -78,6 +78,11 @@ configureChain(CHAIN);
 
 const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL || 'https://placeholder.convex.cloud');
 
+// Privy throws on any id that is not 25 characters, including an empty one, which
+// broke prerendering in a build with no env. The browser never sees this value:
+// `assertPublicEnv` above stops the app there when the real id is missing.
+const PRIVY_APP_ID = process.env.NEXT_PUBLIC_PRIVY_APP_ID || 'placeholder-privy-app-id0';
+
 /** The three Convex hooks, handed to `@kanon/ui` so it never imports Convex itself. */
 const hooks: ConvexHooks = {
   useQuery: useQuery as ConvexHooks['useQuery'],
@@ -305,7 +310,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
 export function Providers({ children }: { children: ReactNode }) {
   return (
     <PrivyProvider
-      appId={process.env.NEXT_PUBLIC_PRIVY_APP_ID || ''}
+      appId={PRIVY_APP_ID}
       config={{
         loginMethods: ['email', 'wallet', 'google', 'twitter'],
         // The configured chain (Monad mainnet 143, or testnet 10143 for the beta).
