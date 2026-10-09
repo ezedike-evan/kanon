@@ -14,7 +14,9 @@ const csp = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https://fonts.gstatic.com",
   "img-src 'self' data: blob: https:",
-  "connect-src 'self' https: wss:",
+  // A gateway run locally (packages/gateway) is plain http and ws on another port, which
+  // neither 'self' nor the https and wss schemes cover. Development only.
+  `connect-src 'self' https: wss:${isDev ? ' http://localhost:* ws://localhost:*' : ''}`,
   'frame-src https://auth.privy.io https://*.privy.io https://verify.walletconnect.com https://verify.walletconnect.org https://challenges.cloudflare.com',
   "worker-src 'self' blob:",
   "object-src 'none'",
