@@ -22,7 +22,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm lint
-      - run: pnpm test
+      # forge is only installed in the contracts job, which runs those tests.
+      - run: pnpm -r --filter '!@kanon/contracts' test
       - run: pnpm build
 
   contracts:
