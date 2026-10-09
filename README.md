@@ -27,6 +27,7 @@ live.
 | Pinning from the app | Wired to the registry. Not yet exercised against the current deployment. |
 | Refusal in the app | Decided off-chain by the backend today. Calling the on-chain gate from the app is in progress. |
 | Order execution (Perpl perps, Kuru spot) | Clients written and unit-tested. Not yet connected to the app; fills are paper and labelled so. |
+| Market data gateway (`packages/gateway`) | Built and run against Perpl testnet: live candles, trades, order book and tickers over one venue connection, history from a cache. 87 tests pass. Not yet hosted, and the app's charts do not read from it yet. |
 | Price series keeper | Not running continuously. The testnet series is stale between runs. |
 | Indexer (Envio HyperIndex) | Written, not deployed. Does not index the strategy retire events yet. |
 
@@ -96,6 +97,7 @@ packages/
   contracts/    Foundry. Series, registry, gate, market, vaults, margin.
   backend/      Convex. Compiler, proposer, price ingestion, markets, auth.
   execution/    Perpl and Kuru clients, paper client, venue router.
+  gateway/      Market data: holds the Perpl connection, serves every client from it.
   relayer/      Pushes price updates and records series samples.
   keeper/       Liquidation and de-leveraging bot for MarginAccount.
   indexer/      Envio HyperIndex handlers and schema.
