@@ -1,11 +1,85 @@
 # Kanon
 
-Your trading strategy, compiled into a contract that refuses trades breaking
-your own rules - including the ones you would have broken yourself.
+A trading app on Monad where your strategy is a rule a contract can check, and
+the contract refuses any trade that breaks it.
 
-See `docs/PRODUCT.md` for the thesis, `docs/ARCHITECTURE.md` for the security
-model, `docs/DESIGN.md` for the visual language and `docs/SCOPE.md` for what is
-and is not being built.
+You describe a strategy in plain language. An AI compiles it into an exact,
+machine-checkable spec. You review it, pin it on-chain with a bond, and from then
+on trades are checked against it by arithmetic over a recorded price series. No
+model sits inside the contracts.
+
+Built for the Monad Metropolis hackathon, track 01 (Onchain Finance & Trading).
+`kanon` (κανών) is Greek for the rule and for the measuring rod you check things
+against.
+
+## Status
+
+Stated plainly, as of 9 October 2026. This section is updated as each piece goes
+live.
+
+| Piece | State |
+|---|---|
+| Contracts: price series, strategy registry, refusal gate, predicate engine | Deployed on Monad testnet. 277 Foundry tests pass. |
+| Contracts: threshold market (Predict), guarded vault, copy vault, margin account, insurance fund | Deployed on Monad testnet. Covered by the same test suite. |
+| Strategy spec, evaluators, hashing, on-chain encoding (`packages/spec`) | Built, 285 tests pass. |
+| Compiler (plain language to spec, Qwen 3.8 Max) | Built in the Convex backend. Rejects anything it cannot express as arithmetic. |
+| Web and mobile clients | Built from one shared UI package. Not yet hosted publicly. |
+| Pinning from the app | Wired to the registry. Not yet exercised against the current deployment. |
+| Refusal in the app | Decided off-chain by the backend today. Calling the on-chain gate from the app is in progress. |
+| Order execution (Perpl perps, Kuru spot) | Clients written and unit-tested. Not yet connected to the app; fills are paper and labelled so. |
+| Price series keeper | Not running continuously. The testnet series is stale between runs. |
+| Indexer (Envio HyperIndex) | Written, not deployed. Does not index the strategy retire events yet. |
+
+Nothing here has been audited.
+
+## Deployed contracts
+
+Monad testnet, chain id 10143. Deployed 5 October 2026.
+
+| Contract | Address |
+|---|---|
+| StrategyRegistry | [`0xDB91f547B59A3326f3DB8E8F510E8dbbf4e50852`](https://testnet.monadscan.com/address/0xDB91f547B59A3326f3DB8E8F510E8dbbf4e50852) |
+| RefusalGate | [`0x388f55962954c5083D885543aF22b1b6EE640ec0`](https://testnet.monadscan.com/address/0x388f55962954c5083D885543aF22b1b6EE640ec0) |
+| CanonicalSeries BTC/USD | [`0x74c4b8710Fb83Dcc18c1A5ae2E35A63dc005257a`](https://testnet.monadscan.com/address/0x74c4b8710Fb83Dcc18c1A5ae2E35A63dc005257a) |
+| CanonicalSeries ETH/USD | [`0x8D2D1b9DAfA8f68ECcfEC9FDEbbe04268b4ffbf3`](https://testnet.monadscan.com/address/0x8D2D1b9DAfA8f68ECcfEC9FDEbbe04268b4ffbf3) |
+| ThresholdMarket | [`0x6105E943C40fd1C18d7288a5C443914af3672815`](https://testnet.monadscan.com/address/0x6105E943C40fd1C18d7288a5C443914af3672815) |
+| VaultFactory | [`0x3AE5478B8bBedC7273e0dF70B361E7FacA7Ecf8D`](https://testnet.monadscan.com/address/0x3AE5478B8bBedC7273e0dF70B361E7FacA7Ecf8D) |
+| MarginAccount | [`0x94fC3E4d37D348FA81556D748A34f31905dAD333`](https://testnet.monadscan.com/address/0x94fC3E4d37D348FA81556D748A34f31905dAD333) |
+| InsuranceFund | [`0xbA0ddA7891BAb53AF7a6cCd2f4D12484a00b247f`](https://testnet.monadscan.com/address/0xbA0ddA7891BAb53AF7a6cCd2f4D12484a00b247f) |
+| Collateral token (mock USDC) | [`0x89b928df3A0F929578a3c93E1d6E3Be3433e539C`](https://testnet.monadscan.com/address/0x89b928df3A0F929578a3c93E1d6E3Be3433e539C) |
+| Pyth (mock) | [`0x7B0564b87Edd57d7BB70550b1FBA3384964862ce`](https://testnet.monadscan.com/address/0x7B0564b87Edd57d7BB70550b1FBA3384964862ce) |
+
+The testnet deployment uses a mock Pyth contract and a mock collateral token,
+both with unrestricted setters. Anyone can move the testnet oracle. It is a
+beta for trying the flow, not a market. On Monad mainnet the same series
+contract reads Pyth's real price feed directly; that deployment has not been
+made.
+
+## Why Monad
+
+The contract keeps its own price record: it samples the feed on a fixed cadence
+and buckets the samples into candles, so "the swing high" means the maximum over
+samples anyone can read back, not a number someone asserts. That costs a
+transaction per sample and storage per candle. Monad's fees and block times are
+what make a per-minute on-chain tape affordable, and a check that adds a block
+or two of latency is acceptable for the swing trading this is built for.
+
+## How the rule is enforced
+
+- `StrategyRegistry` pins three things together: a hash of the spec, a
+  commitment to the exact predicate list, and the price series the predicates
+  run against.
+- `RefusalGate.evaluateOnChain` requires the supplied predicates to match the
+  pinned commitment, derives the scan window on-chain, requires a fresh sample,
+  and evaluates break of structure, fair value gap and liquidity sweep as
+  integer arithmetic. A refusal names the predicate and the number that failed.
+- Tightening a rule applies immediately. Loosening waits out a cooling-off
+  period. There is no admin key and no override.
+- The contracts never call a model. The model only translates language into a
+  spec, which the user reviews before anything is pinned.
+
+`docs/SECURITY.md` states what is trusted, what is mitigated and what is still
+open. `docs/ARCHITECTURE.md` explains the design.
 
 ## Layout
 
@@ -13,72 +87,55 @@ pnpm workspace monorepo.
 
 ```
 apps/
-  web/          Next.js App Router. Every screen in the design canvas.
+  web/          Next.js App Router. Mounts screens from packages/ui.
+  mobile/       Expo with expo-router. Mounts the same screens.
 packages/
-  spec/         The strategy spec: Zod schema, diffing, hashing, fixtures.
-  tokens/       Design tokens. Generates the Tailwind theme.
-docs/           Product, architecture, design and scope.
+  ui/           Every screen and component, in React Native primitives.
+  spec/         Strategy spec: Zod schema, evaluators, hashing, on-chain encoding.
+  tokens/       Design tokens, built into a Tailwind preset.
+  contracts/    Foundry. Series, registry, gate, market, vaults, margin.
+  backend/      Convex. Compiler, proposer, price ingestion, markets, auth.
+  execution/    Perpl and Kuru clients, paper client, venue router.
+  relayer/      Pushes price updates and records series samples.
+  keeper/       Liquidation and de-leveraging bot for MarginAccount.
+  indexer/      Envio HyperIndex handlers and schema.
+docs/           Product, architecture, design, scope, security.
 ```
 
-`packages/spec` is the single source of truth `docs/ARCHITECTURE.md` calls for —
-the compiler, the UI and the contract encoder all read the same schema. It is
-pure TypeScript with no platform dependency, so the Expo client named in
-`CLAUDE.md` consumes it unchanged when it lands alongside `apps/web`.
-
-`packages/tokens` is likewise platform-neutral: `src/index.ts` is the source, and
-`pnpm --filter @kanon/tokens build` generates `tokens.css` (the Tailwind v4
-`@theme` block the web app imports) from it. The same file exports
-`tailwindColors`, ready to drop into `theme.extend.colors` of a NativeWind
-config. Editing the CSS by hand is a mistake — it is generated, and gitignored.
-
-## Commands
+## Running it
 
 ```
 pnpm install
-pnpm dev                # builds tokens, then runs the web app
-pnpm build
-pnpm start
-pnpm test               # vitest, across the workspace
+pnpm web                # web client on localhost:3000
+pnpm start              # Expo dev server
+pnpm test               # all TypeScript suites and forge test
 pnpm typecheck
 pnpm lint
 ```
 
-## Screens
+The web client reads its configuration from `apps/web/.env`; see
+`apps/web/.env.example` for the variables. All of them are public values. The
+backend needs a Convex deployment (`npx convex dev` in `packages/backend`).
 
-`/screens` renders every artboard at 393×852 in one canvas, each frame the real
-route rather than a copy. It is the consistency check `docs/DESIGN.md` asks for:
-number treatment drifts between screens in ways that are only visible side by
-side.
+To check the contracts on their own:
 
-| Route | Screen |
-|---|---|
-| `/refused` | 00 · Refusal |
-| `/` | 01 · Rule card (home) |
-| `/compile` | 02 · Chat-to-spec compiler |
-| `/compile/review` | 03 · Spec review |
-| `/compile/pin` | 04 · Pinning ceremony |
-| `/trades/proposal` | 05 · Trade proposal · undo window |
-| `/trades/[id]` | 06 · Trade detail · evidence |
-| `/blocked` | 07 · Blocked trades log |
-| `/rules/[id]/loosen` | 08 · Cooling-off |
-| `/share/[id]` | 09 · Shareable strategy card |
-| `/onboarding`, `/onboarding/fund`, `/onboarding/strategy` | 10A–C · Onboarding |
+```
+cd packages/contracts
+forge test
+./script/e2e-local.sh   # full deploy and scenario on a local anvil
+```
 
-The design is drawn against a phone. On a narrow viewport the screen is the
-viewport; on a wide one the device sits on the `canvas` ground with its artboard
-label above it.
+## AI tools
 
-## What is real and what is demo state
+Required disclosure for the hackathon, and true regardless.
 
-The screens are wired to `apps/web/lib/demo.ts`, which carries the figures from
-the design canvas. Two things are not mocked:
+- Most of this codebase was written with Claude Code (Anthropic) as a coding
+  assistant, directed and reviewed by the author.
+- The in-product compiler calls Qwen 3.8 Max through Alibaba Cloud DashScope to
+  translate a plain-language strategy into a spec. Its output is schema-validated
+  and always reviewed by the user before pinning.
+- No model is called by, or trusted by, any contract.
 
-- **Tighten versus loosen.** The cooling-off screen's diff comes from
-  `diffSpec()` in `@kanon/spec`, the same function that decides what a contract
-  would accept immediately and what has to wait out the 24-hour hold. Anything
-  that cannot be *proven* to be a tightening is treated as a loosening.
-- **Figures.** Prices and sizes are fixed-point integers with explicit decimals,
-  and percentages are basis points. No float ever reaches a screen.
+## Licence
 
-There is no oracle, no contract and no execution yet; those are weeks 1–5 of
-`docs/SCOPE.md`.
+MIT. See `LICENSE`.
