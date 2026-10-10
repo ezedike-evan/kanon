@@ -4,11 +4,16 @@ import { v } from "convex/values";
 
 /**
  * Fixed-window rate limits per signed-in user and key, for calls that spend
- * money (model tokens, Nansen credits). Configured here, in one place.
+ * money (model tokens, Nansen credits) or reach a venue with the server's own
+ * key. Configured here, in one place.
  */
 export const RATE_LIMITS = {
   compile: { limit: 10, windowMs: 60 * 60 * 1000 },
   nansen: { limit: 30, windowMs: 60 * 60 * 1000 },
+  /** Orders sent to the venue: opens and closes together. */
+  venueOrder: { limit: 30, windowMs: 60 * 60 * 1000 },
+  /** Reads of the trading account. Each is three requests to the venue. */
+  venueAccount: { limit: 600, windowMs: 60 * 60 * 1000 },
 } as const;
 
 export type RateLimitKey = keyof typeof RATE_LIMITS;

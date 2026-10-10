@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeEnvProblem, parseChainEnv, parseDashscopeEnv, parseNansenEnv } from "./serverEnv";
+import { describeEnvProblem, parseChainEnv, parseDashscopeEnv, parseNansenEnv, parseVenueRecorderEnv } from "./serverEnv";
 
 const good = {
   MONAD_RPC_URL: "https://rpc.example/secret-key",
@@ -45,5 +45,23 @@ describe("other keys", () => {
   });
   it("describes a problem by name only", () => {
     expect(describeEnvProblem("x", ["A", "B"])).toContain("A, B");
+  });
+});
+
+describe("parseVenueRecorderEnv", () => {
+  const key = "r".repeat(48);
+
+  it("fails closed with nothing set, or with a key too short to be one", () => {
+    expect(parseVenueRecorderEnv({})).toEqual({ ok: false, invalid: ["VENUE_RECORDER_KEY"] });
+    expect(parseVenueRecorderEnv({ VENUE_RECORDER_KEY: "   " })).toEqual({ ok: false, invalid: ["VENUE_RECORDER_KEY"] });
+    expect(parseVenueRecorderEnv({ VENUE_RECORDER_KEY: "short" })).toEqual({ ok: false, invalid: ["VENUE_RECORDER_KEY"] });
+  });
+
+  it("takes the key, trimmed", () => {
+    expect(parseVenueRecorderEnv({ VENUE_RECORDER_KEY: ` ${key}\n` })).toEqual({ ok: true, value: { key } });
+  });
+
+  it("never puts a value in the report", () => {
+    expect(JSON.stringify(parseVenueRecorderEnv({ VENUE_RECORDER_KEY: "short-secret" }))).not.toContain("short-secret");
   });
 });

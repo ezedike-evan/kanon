@@ -94,6 +94,17 @@ export function parseNansenEnv(env: Env): EnvResult<{ apiKey: string | undefined
   return r.ok ? { ok: true, value: { apiKey: r.value.NANSEN_API_KEY, baseUrl: r.value.NANSEN_BASE_URL } } : r;
 }
 
+/**
+ * The key the gateway presents when it records an order (`http.ts`). It is the
+ * same value as `VENUE_RECORDER_KEY` in the gateway's environment, and proves a
+ * record comes from the process that sent the order, not from a client. Unset
+ * or short, nothing is recorded and so nothing is sent.
+ */
+export function parseVenueRecorderEnv(env: Env): EnvResult<{ key: string }> {
+  const r = report(z.object({ VENUE_RECORDER_KEY: z.string().min(32) }), pick(env, ["VENUE_RECORDER_KEY"]));
+  return r.ok ? { ok: true, value: { key: r.value.VENUE_RECORDER_KEY } } : r;
+}
+
 /** The readable line logged server-side. Names only. */
 export function describeEnvProblem(scope: string, invalid: string[]): string {
   return `${scope}: set or fix ${invalid.join(", ")} on this Convex deployment (npx convex env set <NAME> <value>).`;

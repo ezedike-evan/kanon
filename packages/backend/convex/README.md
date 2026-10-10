@@ -102,9 +102,46 @@ missing value fails closed (the action refuses) and logs the variable name only.
 | `MONAD_RPC_URL`, `MONAD_CHAIN_ID` | `predictions:recordPosition`, `vaults:recordVault`, `vaults:recordBalance` | required; the RPC must report this chain id |
 | `THRESHOLD_MARKET_ADDRESS` | `predictions:recordPosition` | required; must equal the market's linked address |
 | `VAULT_FACTORY_ADDRESS` | `vaults:recordVault` | required |
+| `VENUE_RECORDER_KEY` | `http.ts` (`/venue/*`) | optional; unset means no order can be recorded, so none is sent. The same value is set on the gateway |
 
 Chain-mirroring rows are never built from client numbers: stakes come from the
 `SideTaken` log of the receipt, vaults from `VaultFactory.isVault` and the
 vault's own getters, balances from `totalCollateral()`. They are accepted only
 for the wallet the user linked by signing `walletLinkMessage` (`users:linkWallet`).
 Rate limits live in `rateLimit.ts` (`RATE_LIMITS`).
+
+## Venue orders
+
+This backend does not send orders. Perpl answers its trading API with HTTP 451
+("unavailable for legal reasons") from the region Convex runs in; that was the
+answer to every call when the order code ran here as an action on 2026-10-10.
+Orders are sent by the gateway (`packages/gateway`, `/trade`), which runs where
+its operator is. What stays here is what a process that clients talk to must
+not decide for itself:
+
+- **Who is asking.** The gateway passes the caller's own Privy token on. Convex
+  verifies it, as for every other function. No route takes a user id.
+- **The rate limit**, per user (`rateLimit.ts`: `venueOrder`, `venueAccount`).
+- **The lock.** `venueData:begin` writes the order's row before it is sent; a row
+  still `submitting` keeps the next order out, since the venue numbers an
+  account's requests in sequence. A row older than 45 seconds is closed out as
+  `failed` and stops holding the lock.
+- **The record.** Every order is a `venueOrders` row with who asked, what the
+  venue answered and the settling transaction. `venueData:listMyOrders` is the
+  caller's own list.
+
+The gateway reaches these through three routes in `http.ts`, at the
+deployment's `.convex.site` address: `POST /venue/admit`, `/venue/begin` and
+`/venue/settle`. Each needs `VENUE_RECORDER_KEY` in `X-Kanon-Recorder`, so a
+signed-in user cannot write fills into their own list or hold the lock by
+calling them directly. `admit` and `begin` also need the caller's token;
+`settle` names the row by the id `begin` returned.
+
+The order logic and its limits are in `@kanon/execution` (`venue-service.ts`,
+`venue-policy.ts`): one shared exchange account, testnet only, $10 to $100 of
+notional, up to 5x, market orders only. The pinned rule is not consulted.
+
+Checked on 2026-10-10 against the development deployment: a call with no key or
+a wrong key is answered 403, a call with the key and no valid token 401, and a
+body that is not an outcome 400. The same day a signed-in user's orders were
+recorded through these routes from the app.

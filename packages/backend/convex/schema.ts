@@ -416,4 +416,48 @@ export default defineSchema({
     windowStart: v.number(),
     count: v.number(),
   }).index("by_subject_and_key", ["subject", "key"]),
+
+  /**
+   * Orders sent to a venue with the deployment's own API key (`venue.ts`). One
+   * row per order, written before it is sent and settled with what the venue
+   * reported. All of them trade one shared exchange account; the row records
+   * who asked. A row still `submitting` is also the lock that sends one order
+   * at a time (`venueLogic.ts`, `ORDER_LOCK_MS`).
+   */
+  venueOrders: defineTable({
+    userId: v.id("users"),
+    venue: v.literal("perpl"),
+    network: v.union(v.literal("testnet"), v.literal("mainnet")),
+    asset: v.string(),
+    action: v.union(v.literal("open"), v.literal("close")),
+    /** The position's side. Known when a close has read the position it closes. */
+    side: v.optional(v.union(v.literal("long"), v.literal("short"))),
+    status: v.union(
+      v.literal("submitting"),
+      v.literal("filled"),
+      /** The venue took the order and nothing filled. */
+      v.literal("unfilled"),
+      /** The server's limits or the venue said no. */
+      v.literal("refused"),
+      /** The venue could not be reached or read; see `reason`. */
+      v.literal("failed"),
+    ),
+    createdAt: v.number(),
+    settledAt: v.optional(v.number()),
+    /** What an open asked for: whole dollars of notional and a whole multiple. */
+    notionalUsd: v.optional(v.number()),
+    leverage: v.optional(v.number()),
+    /** The venue's request id, once one was assigned. */
+    requestId: v.optional(v.number()),
+    size: v.optional(decimal),
+    fillPrice: v.optional(decimal),
+    /** In the venue's collateral. Negative is a rebate. */
+    fee: v.optional(decimal),
+    block: v.optional(v.number()),
+    /** The settling transaction: the evidence for a fill. */
+    txHash: v.optional(v.string()),
+    reason: v.optional(v.string()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_status", ["status"]),
 });
