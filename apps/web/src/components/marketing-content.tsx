@@ -12,6 +12,15 @@ import { useRouter } from 'next/navigation';
 import { useConvexAuth, useQuery, useMutation } from 'convex/react';
 import { api } from '@kanon/backend';
 
+/**
+ * The longest the page stays empty while it works out who the visitor is.
+ * Privy's script can be blocked and Convex can be unreachable, and neither
+ * says so: without a limit a signed-out visitor would wait on an empty page
+ * for an answer that never comes. Past it the landing is shown, as it always
+ * was before the page learned to wait.
+ */
+const UNDECIDED_LIMIT_MS = 6_000;
+
 const CheckIcon = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <polyline points="20 6 9 17 4 12" />
@@ -27,31 +36,61 @@ const ShieldIcon = ({ className }: { className?: string }) => (
 export function MarketingContent() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const router = useRouter();
-  const { authenticated, user } = usePrivy();
-  
+  const { ready, authenticated, user } = usePrivy();
+
   // Convex Hooks
   // Skipped until Convex has accepted the Privy token: an unauthenticated
   // `users.me` also answers null, which must not read as "new user".
-  const { isAuthenticated: convexAuthed } = useConvexAuth();
+  const { isLoading: convexLoading, isAuthenticated: convexAuthed } = useConvexAuth();
   const dbUser = useQuery(api.users.me, convexAuthed ? {} : "skip");
   const createUser = useMutation(api.users.createUser);
 
-  // Auto-redirect if they exist in DB, else force step 2
+  // Who this visitor is, once Privy and Convex have both answered:
+  //   - nobody signed in       -> the landing
+  //   - a session with no row  -> the landing, with the sheet forced to step 2
+  //   - a session with a row   -> not this page: their dashboard
+  // The last is the same test the header uses.
   const isNewUser = authenticated && user && dbUser === null;
-  const isExistingUser = authenticated && user && dbUser !== null && dbUser !== undefined;
+  const isExistingUser = authenticated && !!dbUser;
   const forceStep = isNewUser ? 2 : undefined;
 
-  // A signed-in visitor can still view the landing page, so there is no
-  // redirect on load. But a login completed through the sheet is a different
-  // moment: once an existing user is signed in and Convex has found their
-  // row, close the sheet and take them to their dashboard. (A new user stays
-  // on the profile step; `handleCompleteProfile` closes it and routes.)
+  // The landing is for visitors who are not signed in. Anyone who already has
+  // a `users` row is sent to /home, whether they arrived signed in or have just
+  // signed in through the sheet. `replace`, so Back does not return to a page
+  // that would only send them on again. (A new user stays for the profile
+  // step; `handleCompleteProfile` creates the row, closes the sheet and routes.)
   useEffect(() => {
-    if (isAuthModalOpen && isExistingUser) {
-      setIsAuthModalOpen(false);
-      router.push('/home');
-    }
-  }, [isAuthModalOpen, isExistingUser, router]);
+    if (!isExistingUser) return;
+    setIsAuthModalOpen(false);
+    router.replace('/home');
+  }, [isExistingUser, router]);
+
+  // Until it is known which of the three this visitor is, none of the landing
+  // is painted: Privy has not answered yet, or there is a session and its
+  // `users` row is still on its way. If Convex turns the session down there is
+  // no row to wait for, and the landing is shown.
+  const rowPending = authenticated && (convexLoading || (convexAuthed && dbUser === undefined));
+  const undecided = !ready || rowPending;
+
+  // That wait has a limit, so nobody is left on an empty page by a script that
+  // was blocked or a server that cannot be reached: after it the landing is
+  // shown. The redirect above still stands, so a row that turns up late sends
+  // an existing user on to /home. The clock starts over each time the visitor
+  // becomes undecided again.
+  const [waitedOut, setWaitedOut] = useState(false);
+  useEffect(() => {
+    if (!undecided) return;
+    const timer = setTimeout(() => setWaitedOut(true), UNDECIDED_LIMIT_MS);
+    return () => {
+      clearTimeout(timer);
+      setWaitedOut(false);
+    };
+  }, [undecided]);
+
+  // An existing user holds with no limit: the answer is known and /home is on
+  // its way. The open sheet is the exception throughout: a sign-in in progress
+  // keeps the page it started on.
+  const holding = !isAuthModalOpen && ((undecided && !waitedOut) || isExistingUser);
 
   // Whitelabel Hooks
   const { initOAuth } = useLoginWithOAuth();
@@ -112,10 +151,15 @@ export function MarketingContent() {
     await createUser(createUserPayload);
 
     setIsAuthModalOpen(false);
-    router.push('/home');
+    router.replace('/home');
   };
 
   const emailError = 'error' in emailState ? emailState.error?.message : undefined;
+
+  // The page's own ground and nothing on it: no marketing content to flash, no spinner.
+  if (holding) {
+    return <div className="min-h-screen bg-void" aria-busy="true" />;
+  }
 
   return (
     <>
