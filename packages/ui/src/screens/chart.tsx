@@ -15,6 +15,7 @@ import {
   type FeedStatus,
   type Readout,
 } from '../components/chart/chart-chrome';
+import { TicketSheet } from '../components/chart/chart-ticket';
 import { ChartView, type ChartViewHandle } from '../components/chart/chart-view';
 import { useChartPalette } from '../components/chart/palette';
 import { Meta } from '../components/ui';
@@ -29,6 +30,8 @@ import { preferredTimeframe, usePreference } from '../lib/preferences';
 import { useKanonData, type SeriesState } from '../lib/data';
 import { SPEC } from '../lib/demo';
 import { routes } from '../lib/routes';
+import { useVenueTicket } from '../lib/use-venue-ticket';
+import type { VenueSide } from '../lib/venue-types';
 import { useNavigator, useRouteParam } from '../nav';
 import { web } from '../lib/desktop';
 import { cx } from '../lib/cx';
@@ -70,7 +73,8 @@ function feedStatus(state: SeriesState): FeedStatus {
  * This screen is chrome and state. The chart itself is `ChartView`, one shared
  * runtime that runs directly on the web and inside a WebView on a device.
  * docs/DESIGN.md asks for a rule-first product; the chart tab is the one place
- * the market leads, and P&L still never appears here.
+ * the market leads, and P&L still never appears here. That holds for the order
+ * ticket too: it shows a fill and an open position, and no result of either.
  */
 export function ChartScreen() {
   const data = useKanonData();
@@ -149,22 +153,30 @@ export function ChartScreen() {
     [asset, timeframe.label],
   );
 
-  // Quick entry: put the market to the rule; a proposal or a refusal is the answer.
-  const [busy, setBusy] = useState(false);
+  // The order ticket: one state for the desktop panel and for the phone's bar and sheet.
+  // The side pressed is the side of the order. The phone's sheet holds it only while it is
+  // open, so no order ever starts from a side left over from the last one.
+  const ticket = useVenueTicket(asset);
+  const [order, setOrder] = useState<{ side: VenueSide | null } | null>(null);
+
+  // The ticket's secondary action: put the market to the rule; a proposal or a refusal is the answer.
+  const [checking, setChecking] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const quickTrade = useCallback(async () => {
-    if (busy) return;
-    setBusy(true);
+  const checkRule = useCallback(async () => {
+    if (checking) return;
+    setChecking(true);
     setNote(null);
     try {
       const out = await requestProposal();
-      if (out.status === 'proposed') nav.push(routes.proposal);
-      else if (out.status === 'refused') nav.push(routes.refused);
-      else setNote(out.message);
+      if (out.status === 'proposed' || out.status === 'refused') {
+        // The answer is its own screen; the sheet it was asked from is not left open under it.
+        setOrder(null);
+        nav.push(out.status === 'proposed' ? routes.proposal : routes.refused);
+      } else setNote(out.message);
     } finally {
-      setBusy(false);
+      setChecking(false);
     }
-  }, [busy, requestProposal, nav]);
+  }, [checking, requestProposal, nav]);
 
   const change = useMemo(() => (series && series.candles.length > 0 ? changeOver24h(series, decimals) : null), [series, decimals]);
 
@@ -309,7 +321,7 @@ export function ChartScreen() {
             </View>
           </View>
 
-          {/* The phone's timeframes, history and quick trade. Desktop has these in the toolbar and the panel. */}
+          {/* The phone's timeframes, history and way into the order ticket. Desktop has these in the toolbar and the panel. */}
           {fullscreen ? null : <TimeframeStrip value={timeframe} onChange={setTimeframe} className={web('lg:hidden')} />}
           <ChartBottomBar
             symbol={asset}
@@ -325,7 +337,14 @@ export function ChartScreen() {
             onFullscreen={() => setFullscreen((v) => !v)}
             className={web('lg:hidden')}
           />
-          {fullscreen ? null : <QuickTradeBar onTrade={quickTrade} busy={busy} note={note} className={web('lg:hidden')} />}
+          {fullscreen ? null : (
+            <QuickTradeBar
+              ticket={ticket}
+              onSide={(side) => setOrder({ side })}
+              onOpen={() => setOrder({ side: null })}
+              className={web('lg:hidden')}
+            />
+          )}
         </View>
 
         {isWeb && !fullscreen ? (
@@ -337,8 +356,9 @@ export function ChartScreen() {
             status={status}
             rule={{ name: rule.name, predicates: rule.predicates }}
             structure={{ available: spec !== null, on: structureOn, onToggle: () => setStructureOn((v) => !v) }}
-            onTrade={quickTrade}
-            busy={busy}
+            ticket={ticket}
+            onCheckRule={checkRule}
+            checking={checking}
             note={note}
           />
         ) : null}
@@ -359,6 +379,17 @@ export function ChartScreen() {
           setTimeframe(next);
           setSheet(false);
         }}
+      />
+
+      <TicketSheet
+        open={order !== null}
+        onClose={() => setOrder(null)}
+        ticket={ticket}
+        side={order?.side ?? null}
+        onSide={(side) => setOrder({ side })}
+        onCheckRule={checkRule}
+        checking={checking}
+        note={note}
       />
     </Screen>
   );

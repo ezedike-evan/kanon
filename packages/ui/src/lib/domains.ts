@@ -14,6 +14,7 @@ import { useKanonSelector } from './data';
 import { shallowEqual } from './store';
 import type { CopyLeadsState, SparklineState } from './home-types';
 import type { VaultSource } from './vault-types';
+import type { VenueAccountRead, VenueOrdersState } from './venue-types';
 
 /**
  * The per-domain hooks: how a screen reads data.
@@ -91,6 +92,16 @@ export function useVaults(): VaultSource {
 /** Refusals and what they would have cost. Works the modelled outcomes out only while mounted. */
 export function useBlockedLog(): BlockedLogData {
   return useKanonSelector((s) => s.useBlockedLog)();
+}
+
+/** The shared trading account orders go to. Read (a server action) only while a ticket is mounted. */
+export function useVenueAccount(): VenueAccountRead {
+  return useKanonSelector((s) => s.useVenueAccount)();
+}
+
+/** The signed-in user's own orders on the venue, newest first. */
+export function useVenueOrders(): VenueOrdersState {
+  return useKanonSelector((s) => s.useVenueOrders)();
 }
 
 /**

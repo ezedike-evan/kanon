@@ -30,7 +30,7 @@ import {
   type PlatformCapabilities,
   type Signer,
 } from '@kanon/ui';
-import { AccountProvider, assertPublicEnv, type KanonAccount } from '@kanon/ui';
+import { AccountProvider, assertPublicEnv, resolveVenueTrade, type KanonAccount } from '@kanon/ui';
 // The generated `api` object only knows about the `users` module until
 // `npx convex dev` has run once against a real deployment and regenerated
 // `_generated/api.d.ts` — see that file's header. At runtime `api` is a
@@ -190,7 +190,23 @@ function usePrivyConvexAuth() {
  * the user connected themselves is used only when there is no embedded one.
  */
 function KanonDataBridge({ children }: { children: ReactNode }) {
-  const { ready, authenticated, logout, exportWallet, user } = usePrivy();
+  const { ready, authenticated, logout, exportWallet, user, getAccessToken } = usePrivy();
+
+  // The order ticket's calls go to the gateway with the caller's own Privy token, the same
+  // one Convex is given. Built once: the ref keeps the getter current without rebuilding it.
+  const getTokenRef = useRef(getAccessToken);
+  getTokenRef.current = getAccessToken;
+  const venueTrade = useMemo(
+    () =>
+      resolveVenueTrade(process.env.NEXT_PUBLIC_GATEWAY_URL, async () => {
+        try {
+          return (await getTokenRef.current()) ?? null;
+        } catch {
+          return null;
+        }
+      }),
+    [],
+  );
   const { isLoading: convexLoading, isAuthenticated } = useConvexAuth();
   const { wallets, ready: walletsReady } = useWallets();
   const { createWallet } = useCreateWallet();
@@ -291,6 +307,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
     vaultConfig: VAULT_CONFIG,
     hasWallet: Boolean(address),
     marketFeed: MARKET_FEED,
+    venueTrade,
   });
 
   // Who signed in and how, and the one way out. Convex's session follows Privy's, so `logout`

@@ -19,6 +19,7 @@ export function BottomSheet({
   onClose,
   title,
   meta,
+  footer,
   children,
 }: {
   open: boolean;
@@ -26,6 +27,8 @@ export function BottomSheet({
   title: string;
   /** Right-aligned, ash. The count or the state, not a second title. */
   meta?: string | undefined;
+  /** Held at the foot, under the scrolling body: a primary action that must not scroll out of reach. */
+  footer?: ReactNode | undefined;
   children: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
@@ -76,6 +79,7 @@ export function BottomSheet({
             </View>
           </View>
           <ScrollView showsVerticalScrollIndicator={false}>{children}</ScrollView>
+          {footer ? <View className="-mx-5 shrink-0 border-t border-hairline px-5 pt-3">{footer}</View> : null}
         </View>
       </Animated.View>
     </View>

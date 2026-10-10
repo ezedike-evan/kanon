@@ -172,3 +172,9 @@ export { assertPublicEnv, validatePublicEnv, describePublicEnvProblems } from '.
 // Market data: the gateway's client. An app with a gateway address hands it to `useConvexKanonSource`.
 export { createMarketFeed, resolveMarketFeed, type MarketFeed, type MarketFeedOptions } from './lib/market-feed';
 export { recordWithWalletLink } from './lib/wallet-link';
+// The order ticket: the shared trading account on the venue, an order on it, and the caller's own orders.
+// The account and the orders go through the gateway's `/trade` routes; an app with a gateway address
+// hands `resolveVenueTrade(...)` to `useConvexKanonSource`.
+export { createVenueTradeReads, type VenueTradeReadsDeps, type VenueTradeSession, type VenueTradeActions } from './lib/venue-trade-reads';
+export { createVenueTradeActions, resolveVenueTrade, type VenueTradeClientOptions } from './lib/venue-trade-client';
+export type * from './lib/venue-types';

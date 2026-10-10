@@ -21,6 +21,7 @@ import {
   resolveMarketFeed,
   resolveRegistryAddress,
   resolveSeriesMap,
+  resolveVenueTrade,
   useConvexKanonSource,
   type ConvexHooks,
   type Signer,
@@ -167,7 +168,23 @@ function usePrivyConvexAuth() {
  * this creates one after login if the user has none. Pinning signs with it.
  */
 function KanonDataBridge({ children }: { children: ReactNode }) {
-  const { isReady, user, logout } = usePrivy();
+  const { isReady, user, logout, getAccessToken } = usePrivy();
+
+  // The order ticket's calls go to the gateway with the caller's own Privy token, the same
+  // one Convex is given. Built once: the ref keeps the getter current without rebuilding it.
+  const getTokenRef = useRef(getAccessToken);
+  getTokenRef.current = getAccessToken;
+  const venueTrade = useMemo(
+    () =>
+      resolveVenueTrade(process.env.EXPO_PUBLIC_GATEWAY_URL, async () => {
+        try {
+          return (await getTokenRef.current()) ?? null;
+        } catch {
+          return null;
+        }
+      }),
+    [],
+  );
   const { isLoading: convexLoading, isAuthenticated } = useConvexAuth();
   const { wallets, create } = useEmbeddedEthereumWallet();
   // Only for creating the embedded wallet below. Who the user is to Convex comes from the token.
@@ -271,6 +288,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
     vaultConfig: VAULT_CONFIG,
     hasWallet: Boolean(address),
     marketFeed: MARKET_FEED,
+    venueTrade,
   });
 
   // Who signed in and how, and the one way out. Convex's session follows Privy's, so `logout`

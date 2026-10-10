@@ -22,6 +22,8 @@ import type { KanonSession, ProfileSettings } from './domain-types';
 import type { MarketFeed } from './market-feed';
 import { createVenueChartReads } from './venue-chart-reads';
 import { createVenueTickerReads } from './venue-ticker-reads';
+import { disconnectedVenueTrade } from './venue-trade-client';
+import { createVenueTradeReads, type VenueTradeActions } from './venue-trade-reads';
 
 /**
  * Convex, wired to the live data source, once for both clients.
@@ -36,9 +38,10 @@ import { createVenueTickerReads } from './venue-ticker-reads';
  * that is small and rarely changes: the caller's `users` row, their strategies
  * and the active strategy's trades. Everything else is a screen-scoped hook on
  * the source (`useSeries`, `usePredict`, `useAnalytics`, `useMarkets`,
- * `useActivity`, `useVaults`, `useBlockedLog`, ...): it subscribes, and reads the
- * chain, only while the component that shows it is mounted. The returned source
- * is memoised, so it changes only when something it exposes changed.
+ * `useActivity`, `useVaults`, `useBlockedLog`, `useVenueAccount`, ...): it
+ * subscribes, and reads the chain or the venue, only while the component that
+ * shows it is mounted. The returned source is memoised, so it changes only
+ * when something it exposes changed.
  *
  * `api` is passed loosely typed on purpose: `convex/_generated/api.d.ts` is
  * stale until `npx convex dev` regenerates it, and at runtime `api` resolves
@@ -84,12 +87,19 @@ export function useConvexKanonSource(input: {
    * Absent, nothing changes. Only the value at first render is used.
    */
   marketFeed?: MarketFeed | undefined;
+  /**
+   * The order ticket's calls to the gateway's `/trade` routes. Orders go out
+   * from the gateway, not from Convex; Convex keeps the list of them. Absent,
+   * the ticket says trading is not connected. Only the value at first render is used.
+   */
+  venueTrade?: VenueTradeActions | undefined;
 }): KanonDataSource {
   const { hooks, api, session, pinClient } = input;
   // Fixed for the life of the source. `useSeries`, `useMarkets` and `useTicker` are hooks that
   // mounted components call on every render, and the venue's call different hooks inside than
   // Convex's do, so the two must never be swapped under a component.
   const [marketFeed] = useState(() => input.marketFeed);
+  const [venueTrade] = useState(() => input.venueTrade ?? disconnectedVenueTrade);
 
   // The caller's own `users` row, found from the token. `userId` is only a
   // gate ("signed in, and signup has created a row"); it is never an argument.
@@ -265,6 +275,22 @@ export function useConvexKanonSource(input: {
     [hooks.useQuery, session.pending, session.signedIn],
   );
 
+  // The order ticket: the shared trading account, an order on it, and the caller's own orders.
+  // The account and the orders go through the gateway (`venueTrade`); the list of them is a
+  // Convex query. Nothing here runs at the root: the account is read only while a ticket is mounted.
+  const venueTradeReads = useMemo(
+    () =>
+      createVenueTradeReads({
+        useQuery: hooks.useQuery,
+        listMyOrders: api.venueData.listMyOrders,
+        actions: venueTrade,
+        session: { pending: session.pending, signedIn: session.signedIn },
+      }),
+    // `hooks` and `api` are module-level in both apps; the session is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hooks.useQuery, venueTrade, session.pending, session.signedIn],
+  );
+
   // Guarded vaults and copy trading: the chain for what is true on-chain, Convex for finding it again.
   // Read only while a vault or copy screen is mounted (`useVaults`), never at the root.
   const vaultStrategy = useMemo(() => {
@@ -331,10 +357,11 @@ export function useConvexKanonSource(input: {
       ...domainReads,
       ...homeReads,
       ...vaultReads,
+      ...venueTradeReads,
       session: kanonSession,
       settings: userId ? settings : live.settings,
       ruleHistory: userId ? history : live.ruleHistory,
     }),
-    [live, analyticsReads, domainReads, homeReads, vaultReads, kanonSession, settings, history, userId],
+    [live, analyticsReads, domainReads, homeReads, vaultReads, venueTradeReads, kanonSession, settings, history, userId],
   );
 }

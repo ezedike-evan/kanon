@@ -8,17 +8,19 @@ import { cx } from '../../lib/cx';
 import type { PairTicker } from '../../lib/domain-types';
 import { useMarkets, useTicker } from '../../lib/domains';
 import { routes } from '../../lib/routes';
+import type { VenueTicket } from '../../lib/use-venue-ticket';
 import { Link } from '../../nav';
 import { useHaptics } from '../../platform';
 import { Avatar } from '../avatar';
 import { Icon } from '../icons';
 import { SectionHeader } from '../section-header';
 import { SkeletonRow } from '../skeleton';
-import { Delta, Label } from '../stat';
+import { Delta } from '../stat';
 import { DIRECTION_TONE, directionOf, TONE_TEXT } from '../tone';
 import { Dot, Meta, Num } from '../ui';
 import { useLayout } from '../shell/use-layout';
 import { STATUS_DOT, STATUS_LABEL, TOOLS, ToolButton, type ChangeText, type FeedStatus, type Readout } from './chart-chrome';
+import { OrderTicket, RecentOrders } from './chart-ticket';
 import { ToolIcon } from './tool-icons';
 
 /*
@@ -522,66 +524,9 @@ function RuleBlock({
 }
 
 /**
- * The compact ticket at the foot of the panel. It does not place an order: it puts
- * the current market to the pinned rule, which proposes the trade or refuses it.
- * A refusal is the product working, so it is never worded as a failure.
- */
-function OrderTicket({
-  symbol,
-  onTrade,
-  busy,
-  note,
-}: {
-  symbol: string;
-  onTrade: (side: 'long' | 'short') => void;
-  busy: boolean;
-  note: string | null;
-}) {
-  return (
-    <View className="shrink-0 gap-2.5 border-t border-hairline bg-void p-4">
-      <View className="flex-row items-center justify-between">
-        <Label>Put {baseOf(symbol)} to the rule</Label>
-        <Icon name="lock" size={12} color="ash" />
-      </View>
-      <View className="flex-row gap-2">
-        <Pressable
-          role="button"
-          aria-label="Long: put the market to the rule"
-          disabled={busy}
-          onPress={() => onTrade('long')}
-          className={cx(
-            'h-10 flex-1 flex-row items-center justify-center gap-2 rounded-[2px] border border-long hover:bg-long/10 active:bg-long/15',
-            busy && 'opacity-40',
-          )}
-        >
-          <Icon name="arrow-up" size={14} color="long" />
-          <Text className="font-mono-bold text-12 tracking-w14 text-long">LONG</Text>
-        </Pressable>
-        <Pressable
-          role="button"
-          aria-label="Short: put the market to the rule"
-          disabled={busy}
-          onPress={() => onTrade('short')}
-          className={cx(
-            'h-10 flex-1 flex-row items-center justify-center gap-2 rounded-[2px] border border-short hover:bg-short/10 active:bg-short/15',
-            busy && 'opacity-40',
-          )}
-        >
-          <Icon name="arrow-down" size={14} color="short" />
-          <Text className="font-mono-bold text-12 tracking-w14 text-short">SHORT</Text>
-        </Pressable>
-      </View>
-      <Text className="font-sans text-11 leading-4 text-ash">
-        {note ?? 'The rule proposes the trade or refuses it. Nothing is placed by this tap.'}
-      </Text>
-    </View>
-  );
-}
-
-/**
  * The panel: the symbol at a glance, the markets to switch between, the pinned rule
- * and its structure toggle, and the ticket. Its width is 264 from `lg` and 300 from
- * `xl`, so the canvas keeps room at a laptop's width.
+ * and its structure toggle, the caller's recent orders, and the ticket. Its width is
+ * 264 from `lg` and 300 from `xl`, so the canvas keeps room at a laptop's width.
  */
 export function DeskPanel({
   asset,
@@ -591,8 +536,9 @@ export function DeskPanel({
   status,
   rule,
   structure,
-  onTrade,
-  busy,
+  ticket,
+  onCheckRule,
+  checking,
   note,
 }: {
   asset: string;
@@ -602,11 +548,15 @@ export function DeskPanel({
   status: FeedStatus;
   rule: { name: string; predicates: readonly string[] };
   structure: { available: boolean; on: boolean; onToggle: () => void };
-  onTrade: (side: 'long' | 'short') => void;
-  busy: boolean;
+  /** The order ticket's state, held by the screen so the phone's bar and sheet share it. */
+  ticket: VenueTicket;
+  /** The ticket's secondary action: put the market to the pinned rule. Places nothing. */
+  onCheckRule: () => void;
+  checking: boolean;
   note: string | null;
 }) {
-  // The watchlist subscribes to every pair, so it mounts only where there is a panel to show it in.
+  // The watchlist subscribes to every pair and the order list to the caller's orders, so both
+  // mount only where there is a panel to show them in.
   const desktop = useLayout() === 'desktop';
   return (
     <View
@@ -615,11 +565,13 @@ export function DeskPanel({
       className="hidden min-h-0 w-[264px] shrink-0 border-l border-hairline bg-panel lg:flex xl:w-[300px]"
     >
       <SymbolBlock symbol={asset} price={price} change={change} status={status} />
-      <ScrollView className="min-h-0 flex-1" showsVerticalScrollIndicator={false}>
+      {/* Never squeezed to nothing: a tall ticket scrolls its own middle before this list gives up its last rows. */}
+      <ScrollView className="min-h-28 flex-1" showsVerticalScrollIndicator={false}>
         {desktop ? <Watchlist asset={asset} onAsset={onAsset} /> : null}
         <RuleBlock name={rule.name} predicates={rule.predicates} structure={structure} />
+        {desktop ? <RecentOrders inset className="border-t border-hairline pt-4" /> : null}
       </ScrollView>
-      <OrderTicket symbol={asset} onTrade={onTrade} busy={busy} note={note} />
+      <OrderTicket ticket={ticket} onCheckRule={onCheckRule} checking={checking} note={note} />
     </View>
   );
 }

@@ -59,6 +59,14 @@ import type { VaultSource } from './vault-types';
 import { DEMO_COPY, DEMO_VAULTS, demoOutcome } from './vault-demo';
 export type * from './vault-types';
 export type * from './domain-types';
+import { SIGN_IN_TO_TRADE } from './venue-trade';
+import type {
+  VenueAccountRead,
+  VenueOrderRequest,
+  VenueOrderResult,
+  VenueOrdersState,
+} from './venue-types';
+export type * from './venue-types';
 
 /**
  * The data a screen needs, factored by domain rather than by screen — several
@@ -424,6 +432,25 @@ export interface KanonDataSource {
    * Nansen key, in demo, or on any failure it says so instead.
    */
   useNansenFlow(asset: string): NansenState;
+  /**
+   * The account orders go to: one Perpl account, shared by everyone signed in,
+   * on testnet. A hook: the account is read (a server action) only while a
+   * ticket is mounted, then again after an order, on `refresh()` and on a slow
+   * interval. Signed out it is `unavailable`. There is no demo account.
+   */
+  useVenueAccount(): VenueAccountRead;
+  /**
+   * Opens a position at market on that account and reads the account again.
+   * Resolves with the answer, a refusal included; it never rejects.
+   */
+  placeVenueOrder(request: VenueOrderRequest): Promise<VenueOrderResult>;
+  /** Closes the whole of the account's position on `asset`, at market. Never rejects. */
+  closeVenuePosition(asset: string): Promise<VenueOrderResult>;
+  /**
+   * The signed-in user's own orders, newest first. Hook, for the same reason as
+   * `useSeries`. Signed out it is `empty`: no fill is ever a fixture.
+   */
+  useVenueOrders(): VenueOrdersState;
 }
 
 const dec = (n: string, decimals = 2): Decimal => parseDecimal(n, decimals);
@@ -493,6 +520,15 @@ const DEMO_VAULT_SOURCE: VaultSource = {
   followLead: demoRefuse,
   unfollow: demoRefuse,
 };
+
+/** The demo places nothing and reads no account: a ticket says to sign in, and shows no made-up fill. */
+const DEMO_VENUE_ACCOUNT: VenueAccountRead = {
+  state: { status: 'unavailable', message: SIGN_IN_TO_TRADE },
+  refreshing: false,
+  refresh() {},
+};
+const DEMO_VENUE_ORDERS: VenueOrdersState = { status: 'empty' };
+const demoVenueOrder = async (): Promise<VenueOrderResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 
 /**
  * The default source. Every figure comes straight from `lib/demo.ts`, so a
@@ -673,6 +709,10 @@ export const demoDataSource: KanonDataSource = {
     // Demo has no Nansen key, and this card never shows a figure it did not read.
     return NANSEN_NOT_CONNECTED;
   },
+  useVenueAccount: () => DEMO_VENUE_ACCOUNT,
+  placeVenueOrder: demoVenueOrder,
+  closeVenuePosition: demoVenueOrder,
+  useVenueOrders: () => DEMO_VENUE_ORDERS,
 };
 
 /** Re-exported so a real provider can fall back to the demo trade id. */

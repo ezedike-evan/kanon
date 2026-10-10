@@ -7,11 +7,15 @@ import { CHART_TIMEFRAMES, type Timeframe } from '../../lib/chart-timeframes';
 import { assetTitle, baseOf, predicateCode } from '../../lib/chart-assets';
 import { cx } from '../../lib/cx';
 import { routes } from '../../lib/routes';
+import type { VenueTicket } from '../../lib/use-venue-ticket';
+import { barLine, barSummary } from '../../lib/venue-trade';
+import type { VenueSide } from '../../lib/venue-types';
 import { Link } from '../../nav';
 import { useHaptics } from '../../platform';
 import { BottomSheet } from '../bottom-sheet';
 import { Icon } from '../icons';
 import { Dot, Meta, Num } from '../ui';
+import { DirectionButton } from './chart-ticket';
 import { ToolIcon, type ToolGlyph } from './tool-icons';
 
 /* -------------------------------------------------------------------------- */
@@ -436,54 +440,64 @@ export function ChartBottomBar({
 /* -------------------------------------------------------------------------- */
 
 /**
- * The one-tap entry, bottom-anchored and compact. It does not place an order:
- * it puts the current market to the pinned rule, which either proposes the trade
- * or refuses it. A refusal is the product working, so it is never worded as a
- * failure.
+ * The phone's way into the order ticket, bottom-anchored and compact. It sends
+ * nothing itself: LONG and SHORT open the ticket sheet on that side, where the
+ * size, the leverage and every limit are in view before anything goes out. The
+ * line above them says what is happening (an order on its way, a position to
+ * close first, the last answer) and opens the same sheet.
  */
 export function QuickTradeBar({
-  onTrade,
-  busy,
-  note,
+  ticket,
+  onSide,
+  onOpen,
   className,
 }: {
-  onTrade: (side: 'long' | 'short') => void;
-  busy: boolean;
-  note: string | null;
+  ticket: VenueTicket;
+  /** LONG or SHORT was pressed: the sheet opens on that side. */
+  onSide: (side: VenueSide) => void;
+  /** The line was pressed: the sheet opens with no side picked. */
+  onOpen: () => void;
   className?: string | undefined;
 }) {
+  const { view, sending, locked, outcome } = ticket;
+  const line = barLine(view, sending, outcome);
+  const off = locked || view.hold !== null;
   return (
-    <View className={cx('shrink-0 border-t border-hairline bg-void px-3 pb-2 pt-2', className)}>
-      {note ? <Text className="mb-1.5 font-mono text-10 text-ash">{note}</Text> : null}
-      <View className="flex-row gap-2">
-        <Pressable
-          role="button"
-          aria-label="Long: put the market to the rule"
-          disabled={busy}
-          onPress={() => onTrade('long')}
-          className={cx(
-            'h-10 flex-1 flex-row items-center justify-center gap-2 rounded-[2px] border border-long active:bg-long/15',
-            busy && 'opacity-40',
-          )}
+    <View className={cx('shrink-0 border-t border-hairline bg-void px-3 pb-2 pt-0.5', className)} aria-busy={sending !== null}>
+      <Pressable
+        role="button"
+        aria-label={`Open the order ticket. ${line}`}
+        onPress={onOpen}
+        className="h-8 flex-row items-center justify-between gap-3 active:opacity-70"
+      >
+        <Text
+          numberOfLines={1}
+          accessibilityLiveRegion="polite"
+          className={cx('min-w-0 flex-1 font-mono text-10', sending || view.hold !== null ? 'text-bone' : 'text-ash')}
+          style={{ fontVariant: ['tabular-nums'] }}
         >
-          <Icon name="arrow-up" size={14} color="long" />
-          <Text className="font-mono-bold text-12 tracking-w14 text-long">LONG</Text>
-        </Pressable>
+          {line}
+        </Text>
+        <View className="shrink-0 flex-row items-center gap-1">
+          <Num className="text-10">{barSummary(view)}</Num>
+          <Icon name="chevron-up" size={12} color="ash" />
+        </View>
+      </Pressable>
+      <View className="flex-row gap-2">
+        <DirectionButton
+          side="long"
+          label="Long: open the order ticket"
+          disabled={off}
+          onPress={() => onSide('long')}
+        />
         {/* The tab bar's raised centre action rises into this row; keep clear of it. */}
         <View className="w-14" />
-        <Pressable
-          role="button"
-          aria-label="Short: put the market to the rule"
-          disabled={busy}
-          onPress={() => onTrade('short')}
-          className={cx(
-            'h-10 flex-1 flex-row items-center justify-center gap-2 rounded-[2px] border border-short active:bg-short/15',
-            busy && 'opacity-40',
-          )}
-        >
-          <Icon name="arrow-down" size={14} color="short" />
-          <Text className="font-mono-bold text-12 tracking-w14 text-short">SHORT</Text>
-        </Pressable>
+        <DirectionButton
+          side="short"
+          label="Short: open the order ticket"
+          disabled={off}
+          onPress={() => onSide('short')}
+        />
       </View>
     </View>
   );
