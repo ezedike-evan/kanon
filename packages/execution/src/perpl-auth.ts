@@ -106,6 +106,50 @@ export function createEd25519Signer(secretKeyHex: string): PerplSigner {
   return async (canonical) => toBase64Url(await ed.signAsync(new TextEncoder().encode(canonical), secret));
 }
 
+/** The DER bytes in front of the seed in an unencrypted PKCS#8 Ed25519 key, which is what a PEM file wraps. */
+const PKCS8_ED25519_PREFIX = '302e020100300506032b657004220420';
+
+/**
+ * An Ed25519 secret in any form a venue hands one out, as the 32-byte seed in
+ * hex that `createEd25519Signer` takes. Perpl's UI shows the same key as hex,
+ * base64url and PEM; all three are read here, with or without the PEM's
+ * BEGIN and END lines. A 64-byte value is taken as the seed followed by its
+ * public key, and refused if the two do not belong together.
+ *
+ * An error names the problem and never carries any part of the input.
+ */
+export async function normalizeEd25519Secret(text: string): Promise<string> {
+  const compact = text
+    .replace(/-----[A-Z ]+-----/g, '')
+    .replace(/\\n/g, '')
+    .replace(/[\s"']/g, '');
+  const bare = compact.replace(/^0x/i, '');
+  let bytes: Uint8Array;
+  if (/^([0-9a-fA-F]{2})+$/.test(bare) && [32, 48, 64].includes(bare.length / 2)) {
+    bytes = fromHex(bare);
+  } else if (/^[A-Za-z0-9+/_-]+=*$/.test(compact)) {
+    const b64 = compact.replace(/=+$/, '').replace(/-/g, '+').replace(/_/g, '/');
+    try {
+      bytes = Uint8Array.from(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)), (c) => c.charCodeAt(0));
+    } catch {
+      throw new Error('Ed25519 secret is not valid base64');
+    }
+  } else {
+    throw new Error('Ed25519 secret is not hex, base64url or PEM');
+  }
+
+  if (bytes.length === 32) return toHex(bytes);
+  if (bytes.length === 48 && toHex(bytes.subarray(0, 16)) === PKCS8_ED25519_PREFIX) return toHex(bytes.subarray(16));
+  if (bytes.length === 64) {
+    const seed = bytes.subarray(0, 32);
+    if (toHex(await ed.getPublicKeyAsync(seed)) !== toHex(bytes.subarray(32))) {
+      throw new Error('Ed25519 secret is 64 bytes but is not a seed followed by its public key');
+    }
+    return toHex(seed);
+  }
+  throw new Error(`Ed25519 secret has an unexpected length (${bytes.length} bytes)`);
+}
+
 export interface Ed25519KeyPair {
   secretKeyHex: string;
   /** Raw 32-byte public key, 0x-hex, the form `/api-key/payload` expects. */

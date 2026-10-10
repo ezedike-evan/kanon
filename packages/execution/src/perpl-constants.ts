@@ -37,9 +37,13 @@ export const PERPL_EXCHANGE_ADDRESS = {
   testnet: '0x1964c32f0be608e7d29302aff5e61268e72080cc',
 } as const;
 
+/** AUSD on both networks. The testnet address is the one `GET /v1/pub/context`
+ * reported on 2026-10-10; the README table in the api-docs still lists an
+ * older token (0xdf5b...). Read the live value from the context before
+ * sending anything to it. */
 export const PERPL_COLLATERAL_TOKEN = {
-  mainnet: '0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a', // AUSD
-  testnet: '0xdf5b718d8fcc173335185a2a1513ee8151e3c027', // USD
+  mainnet: '0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a',
+  testnet: '0xa9012a055bd4e0edff8ce09f960291c09d5322dc',
 } as const;
 
 /** Full market_id table. Ids differ between networks. Price and size
@@ -47,8 +51,8 @@ export const PERPL_COLLATERAL_TOKEN = {
  * `GET /v1/pub/context` (`markets[].config.price_decimals` / `size_decimals`)
  * by `PerplMarketRegistry`, never assumed. */
 export const PERPL_MARKET_IDS = {
-  mainnet: { BTC: 1, MON: 10, ETH: 20, SOL: 31, HYPE: 40, ZEC: 50 },
-  testnet: { BTC: 16, ETH: 32, SOL: 48, MON: 64, ZEC: 256 },
+  mainnet: { BTC: 1, MON: 10, ETH: 20, SOL: 31, HYPE: 40, ZEC: 50, LIT: 60, VVV: 70, PUMP: 90, NEAR: 100, UNI: 110 },
+  testnet: { BTC: 16, ETH: 32, SOL: 48, MON: 64, ZEC: 256, LIT: 272, PUMP: 320, NEAR: 336 },
 } as const satisfies Record<PerplNetwork, Record<string, number>>;
 
 /** WebSocket message types used by this client (websocket.md). */

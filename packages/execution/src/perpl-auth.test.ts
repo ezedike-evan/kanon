@@ -3,8 +3,12 @@ import {
   buildRestCanonical,
   buildWsSignInCanonical,
   createEd25519Signer,
+  fromHex,
   generateEd25519KeyPair,
+  normalizeEd25519Secret,
   sha256Hex,
+  toBase64Url,
+  toHex,
   verifyEd25519Base64Url,
 } from './perpl-auth';
 
@@ -61,5 +65,48 @@ describe('Perpl request signing', () => {
 
   it('rejects a secret that is not 32 bytes', () => {
     expect(() => createEd25519Signer('abcd')).toThrow(/32 bytes/);
+  });
+
+  it('reads a secret as hex, base64url or PEM, and as a seed with its public key', async () => {
+    const kp = await generateEd25519KeyPair();
+    const seed = fromHex(kp.secretKeyHex);
+    const pub = fromHex(kp.publicKeyHex);
+    const pair = new Uint8Array([...seed, ...pub]);
+    const pkcs8 = new Uint8Array([...fromHex('302e020100300506032b657004220420'), ...seed]);
+    const base64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
+    const pem = `-----BEGIN PRIVATE KEY-----\n${base64(pkcs8)}\n-----END PRIVATE KEY-----\n`;
+
+    for (const form of [
+      kp.secretKeyHex,
+      `0x${kp.secretKeyHex.toUpperCase()}`,
+      ` "${kp.secretKeyHex}" `,
+      toBase64Url(seed),
+      base64(seed),
+      toHex(pair),
+      toBase64Url(pair),
+      toHex(pkcs8),
+      base64(pkcs8),
+      pem,
+      pem.replace(/\n/g, '\\n'),
+    ]) {
+      expect(await normalizeEd25519Secret(form)).toBe(kp.secretKeyHex);
+    }
+  });
+
+  it('refuses a secret it cannot read, without repeating it', async () => {
+    const kp = await generateEd25519KeyPair();
+    const other = await generateEd25519KeyPair();
+    const mismatched = `${kp.secretKeyHex}${other.publicKeyHex.slice(2)}`;
+    await expect(normalizeEd25519Secret(mismatched)).rejects.toThrow(/not a seed followed by its public key/);
+    await expect(normalizeEd25519Secret(kp.secretKeyHex.slice(2))).rejects.toThrow(/unexpected length/);
+    await expect(normalizeEd25519Secret('not a key!')).rejects.toThrow(/not hex, base64url or PEM/);
+    await expect(normalizeEd25519Secret('')).rejects.toThrow(/not hex, base64url or PEM/);
+    for (const bad of [mismatched, kp.secretKeyHex.slice(2)]) {
+      const message = await normalizeEd25519Secret(bad).then(
+        () => '',
+        (e: Error) => e.message,
+      );
+      expect(message).not.toContain(bad.slice(0, 12));
+    }
   });
 });

@@ -79,7 +79,7 @@ Exchange addresses (Perpl README, 2026-09-20): mainnet
 `0x1964c32f0be608e7d29302aff5e61268e72080cc`. Read the live address from the
 API rather than trusting this copy.
 
-## What is verified by test (`pnpm --filter @kanon/execution test`, 148 tests)
+## What is verified by test (`pnpm --filter @kanon/execution test`, 167 tests)
 
 Every network boundary is mocked; the logic on this side of it is real.
 
@@ -126,6 +126,44 @@ Every network boundary is mocked; the logic on this side of it is real.
   native-trigger flow, protection sized to the actual fill, rejected entry,
   flatten-on-missing-stop, cancel of orphaned legs, refusals, JSON-safe report.
 
+## One real order, by script
+
+`src/perpl-order-cli.ts` opens a small long on Perpl testnet at market, waits for
+the fill, closes it, and prints the transaction of each fill. It uses the signed
+REST endpoints (`src/perpl-rest.ts`), not the trading socket.
+
+```
+pnpm --filter @kanon/execution perpl:order            # look only: account, price, the order it would send
+pnpm --filter @kanon/execution perpl:order --send     # place it, then close it
+pnpm --filter @kanon/execution perpl:order --close    # close a position an earlier run left open
+```
+
+It needs an API key and nothing else: no wallet key is read. The key is created
+in Perpl's own UI by the wallet that owns the account, and saved in
+`packages/execution/.env.local` (gitignored) as `PERPL_API_KEY` and
+`PERPL_API_KEY_SECRET`. Perpl shows the secret as hex, base64url and PEM; the
+script reads the hex or the base64url form. The account must exist (a deposit
+of at least 100 AUSD on testnet) and have One-Click Trading turned on.
+
+Enrolling a key from our own code is a separate matter: Perpl only accepts
+enrollment from an `Origin` it has whitelisted, and Kanon's is not yet.
+
+Checked against the live testnet on 2026-10-10: a signed request from a server
+with no `Origin` header reaches authentication (a made-up key is answered 401).
+
+Run with a real key on testnet the same day. A market order sent as `p: 0`,
+`fl: 4` (IOC) and `ms: 100` was accepted and filled in the next block: 0.00030
+BTC at 82847.1, fee 0.008575 AUSD, transaction
+`0xc533b0b04fcf0aa8bbaaea78b810184f8ee609b71248c3082243523d4f3b6cc5`. That run
+also showed that a position read over REST carries an empty `at`, with its open
+time in `ots`; the schema follows the venue, not the docs.
+
+The close ran next, with `--close`: type 3 (close long), `p: 0`, `fl: 4`,
+`ms: 100`, the full size, and `lv` set to the position's own leverage. Accepted
+and filled at 82813.4, transaction
+`0x52c1785c88cce4559645bf648eab329432caf099c44cca9d7aca7d9b67bcf278`. Both
+encodings this script uses are therefore confirmed on testnet.
+
 ## What still needs a live account
 
 Do not treat any of this as proven until it has run against a funded testnet
@@ -135,9 +173,8 @@ account.
 - End-to-end enrollment against the real `/api-key/payload` and `/enroll`
   (needs a whitelisted `Origin` and a wallet). The typed data is taken from the
   server, so its exact shape is validated only structurally.
-- Market order encoding: this client sends `p: 0` with `fl: 4` (IOC). The docs
-  describe a market order as an IOC limit at the slippage bound, but their own
-  example sends `p: 0, fl: 0`. Confirm which the server prefers.
+- Market order encoding over the trading socket. Over REST, `p: 0` with
+  `fl: 4` (IOC) and `ms` is confirmed (see "One real order, by script").
 - Stop-market trigger encoding: `t: 3/4`, `p: 0`, `fl: 4`, `tp`, `tpc` (mark
   conditions 3 / 4), `tr` linked to the entry, `lb: 0`. The docs define every
   field but show no complete stop-loss request. The `lp` (linked position)
