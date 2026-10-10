@@ -180,7 +180,13 @@ what only a phone draws), so there is one tree and one chart or reel instance.
 Chart: a fixed 40px tool rail left of the canvas, a 44px toolbar (symbol, timeframe
 strip, history, magnet, full screen), and a 264 to 300px panel with the symbol, the
 Markets watchlist (feed-backed assets only), the pinned rule with its structure
-toggle, and the ticket. Predict: the reel stays a 440px centred column, paged by
+toggle, the caller's recent orders, and the order ticket pinned to the foot. The
+ticket sends a market order: size and leverage are chips, every limit it is held to
+is in view, the answer (a fill with its transaction, or a refusal in the server's
+words) is shown in place, and no result of a position is shown. On a phone the
+bottom bar opens the same ticket as a bottom sheet, and the order leaves from the
+sheet's bottom-anchored action. Checking the market against the rule is the
+ticket's secondary action. Predict: the reel stays a 440px centred column, paged by
 wheel, arrow and page keys, between a left panel (asset filter with live prices,
 window, the markets in view) and, from 1280, a right panel (how it settles, this market's
 terms, open and settled predictions). AI: `SplitPane` with the conversation held to

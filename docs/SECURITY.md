@@ -125,6 +125,19 @@ the same candles from the same samples, but it does not prevent it.
    skips `MarginAccount`, `InsuranceFund` and `VaultFactory` (gap 2). `CanonicalSeries`
    now rejects non-positive prices, positive exponents and confidence wider than 2%.
 9. **Executed trades are paper fills** and are labelled so (`executionMode`).
+   Separately, the chart's order ticket can place a real market order on Perpl
+   testnet through the gateway's `/trade` routes. That path uses one API key
+   held by the gateway process, so every user trades the same exchange account;
+   it does not consult the pinned rule, and it is bounded by the limits in
+   `packages/execution/src/venue-policy.ts`. It is a demonstration of
+   execution, not per-user trading and not custody. Two things follow from
+   where it runs. The gateway is also the public market data server, so a
+   fault in it is a fault in a process that holds a trading key (an API key
+   can trade; it cannot withdraw). And Perpl refuses its trading API to some
+   regions (HTTP 451): the gateway has to run where Perpl serves, and a user
+   in a region Perpl does not serve could still reach the shared account
+   through it. That is acceptable for a testnet demonstration and is not for
+   real funds.
 10. **Audit findings fixed in contracts:** `ThresholdMarket` now settles on the exact
     window (per-sample publish times from `CanonicalSeries`, inclusive at both ends;
     `settle` waits `maxPriceAgeSeconds` past `windowEnd`; `takeSide` also refuses a
