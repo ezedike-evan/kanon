@@ -26,8 +26,8 @@ live.
 | Web and mobile clients | Built from one shared UI package. Not yet hosted publicly. |
 | Pinning from the app | Wired to the registry. Not yet exercised against the current deployment. |
 | Refusal in the app | Decided off-chain by the backend today. Calling the on-chain gate from the app is in progress. |
-| Order execution (Perpl perps, Kuru spot) | Clients written and unit-tested. Not yet connected to the app; fills are paper and labelled so. |
-| Market data gateway (`packages/gateway`) | Built and run against Perpl testnet: live candles, trades, order book and tickers over one venue connection, history from a cache. 87 tests pass. Not yet hosted, and the app's charts do not read from it yet. |
+| Order execution (Perpl perps, Kuru spot) | Clients written and unit-tested. A script (`perpl:order`) has opened and closed a real market order on Perpl testnet through the signed API; the two transactions are in `packages/execution/README.md`. Not yet connected to the app, where fills are still paper and labelled so. |
+| Market data gateway (`packages/gateway`) | Built and run against Perpl testnet: live candles, trades, order book and tickers over one venue connection, history from a cache. 87 tests pass. The app's charts and pair prices read from it when a gateway address is set (off by default); checked against a local gateway from Node, not yet in a browser. Not yet hosted. |
 | Price series keeper | Not running continuously. The testnet series is stale between runs. |
 | Indexer (Envio HyperIndex) | Written, not deployed. Does not index the strategy retire events yet. |
 
