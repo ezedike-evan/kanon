@@ -5,9 +5,13 @@
  *   pnpm --filter @kanon/execution perpl:order            look only: account, price, the order it would send
  *   pnpm --filter @kanon/execution perpl:order --send     place it, then close it
  *   pnpm --filter @kanon/execution perpl:order --close    close a position an earlier run left open
- *   ... perpl:order --market ETH --usd 25 --leverage 2
+ *   ... perpl:order --market ETH --usd 25 --leverage 2 --side short
  *
  * Testnet only: it refuses any other network.
+ *
+ * The order itself is placed by `perpl-trade.ts`, the same code the backend
+ * runs for an order from the app, so a run of this script is a live check of
+ * that path.
  *
  * It needs an API key, and nothing else. The key is created in Perpl's own UI
  * (testnet.perpl.xyz/apikeys) by the wallet that owns the exchange account, and
@@ -24,25 +28,23 @@ import { existsSync } from 'node:fs';
 import { setDefaultResultOrder } from 'node:dns';
 import { setDefaultAutoSelectFamily } from 'node:net';
 import { createEd25519Signer, normalizeEd25519Secret } from './perpl-auth';
-import { PERPL_FLAG, PERPL_ORDER_TYPE, PERPL_REST_BASE_URL } from './perpl-constants';
+import { PERPL_REST_BASE_URL } from './perpl-constants';
 import {
   PerplRestError,
   createPerplRest,
   isOpenPosition,
   sizeForNotional,
   type PerplAccount,
-  type PerplFill,
-  type PerplOrderSpec,
   type PerplPosition,
   type PerplRest,
 } from './perpl-rest';
+import { closeAtMarket, openAtMarket, readPerplAccount, type MarketOrderOutcome, type VenueFill } from './perpl-trade';
 
 const NETWORK = 'testnet' as const;
 const EXPLORER_TX = 'https://testnet.monadscan.com/tx/';
 const COLLATERAL_DECIMALS = 6;
 const MAX_SLIPPAGE_BPS = 100;
 const SETTLE_TIMEOUT_MS = 60_000;
-const POLL_MS = 2_000;
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const has = (name: string) => args.includes(`--${name}`);
@@ -51,10 +53,9 @@ const option = (name: string, fallback: string): string => {
   return i !== -1 && args[i + 1] !== undefined ? args[i + 1]! : fallback;
 };
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const human = (scaled: number, decimals: number) => (scaled / 10 ** decimals).toFixed(decimals);
 const usd = (atoms: string) => (Number(atoms) / 10 ** COLLATERAL_DECIMALS).toFixed(2);
-const txLink = (txid: string | undefined) => (txid ? `${EXPLORER_TX}${txid.startsWith('0x') ? txid : `0x${txid}`}` : '(no transaction id reported)');
+const txLink = (txHash: string | null) => (txHash ? `${EXPLORER_TX}${txHash}` : '(no transaction id reported)');
 
 function stop(message: string): never {
   console.error(`\n${message}`);
@@ -68,6 +69,7 @@ interface Market {
   sizeDecimals: number;
   /** Highest leverage the market opens at, in hundredths. */
   maxLeverage: number;
+  open: boolean;
 }
 
 async function loadMarket(base: string, symbol: string): Promise<Market> {
@@ -92,6 +94,7 @@ async function loadMarket(base: string, symbol: string): Promise<Market> {
     priceDecimals: market.config.price_decimals,
     sizeDecimals: market.config.size_decimals,
     maxLeverage: market.config.initial_margin,
+    open: market.config.is_open,
   };
 }
 
@@ -132,6 +135,8 @@ async function main() {
   const symbol = option('market', 'BTC');
   const notional = Number(option('usd', '25'));
   const leverage = Number(option('leverage', '2'));
+  const side = option('side', 'long');
+  if (side !== 'long' && side !== 'short') stop('--side is long or short.');
   if (!Number.isInteger(notional) || notional < 1) stop('--usd must be a whole number of dollars, at least 1.');
   if (!Number.isInteger(leverage) || leverage < 1) stop('--leverage must be a whole number, at least 1.');
 
@@ -177,8 +182,7 @@ async function main() {
       return;
     }
     if (!account.fw) stop(ONE_CLICK_OFF);
-    const seen = new Set((await rest.fills(20)).map(fillKey));
-    await closePosition(rest, market, held, (account.lfr ?? 0) + 1, seen);
+    await close(rest, market, account, held);
     await reportBalance(rest, account);
     console.log(`\nDone: the ${market.symbol} position is closed.`);
     return;
@@ -193,21 +197,8 @@ async function main() {
   });
   if (size < 1) stop(`$${notional} is below the smallest ${market.symbol} size at this price. Raise --usd.`);
   console.log(`Mark      ${human(price, market.priceDecimals)}`);
-
-  const open: PerplOrderSpec = {
-    rq: (account.lfr ?? 0) + 1,
-    mkt: market.id,
-    acc: account.id,
-    t: PERPL_ORDER_TYPE.openLong,
-    p: 0,
-    s: size,
-    ms: MAX_SLIPPAGE_BPS,
-    fl: PERPL_FLAG.ioc,
-    lv: leverage * 100,
-    lb: 0,
-  };
   console.log(
-    `Order     open long ${human(size, market.sizeDecimals)} ${market.symbol} at market ` +
+    `Order     open ${side} ${human(size, market.sizeDecimals)} ${market.symbol} at market ` +
       `(about $${notional}), ${leverage}x, max slippage ${MAX_SLIPPAGE_BPS / 100}%`,
   );
 
@@ -219,18 +210,20 @@ async function main() {
   if (!account.fw) stop(ONE_CLICK_OFF);
   if (held) stop(ALREADY_OPEN);
 
-  const seenBefore = new Set((await rest.fills(20)).map(fillKey));
-
   console.log('\nOpening');
-  await submitOne(rest, open);
-  const position = await waitFor('the position to open', async () =>
-    (await rest.positions()).find((p) => p.mkt === market.id && p.acc === account.id && isOpenPosition(p)),
+  const opened = await openAtMarket(
+    { rest, settleTimeoutMs: SETTLE_TIMEOUT_MS },
+    { market, account, side, size, leverage: leverage * 100, slippageBps: MAX_SLIPPAGE_BPS },
   );
-  const openFill = await newFill(rest, seenBefore, market.id);
-  report('opened', position, openFill, market);
-  if (openFill) seenBefore.add(fillKey(openFill));
+  report(settled(opened), market);
 
-  await closePosition(rest, market, position, open.rq + 1, seenBefore);
+  // Read back, not assumed: the close is sized from what the venue says is held, and numbered after its last request.
+  const now = await readPerplAccount(rest);
+  const position = now?.positions.find((p) => p.mkt === market.id);
+  if (!now || !position) stop('The order filled, but the venue reports no open position. Check the account at https://testnet.perpl.xyz.');
+  console.log(`  position ${position.pid}: ${human(position.s, market.sizeDecimals)} ${market.symbol} at ${human(position.ep, market.priceDecimals)}`);
+
+  await close(rest, market, now.account, position);
   await reportBalance(rest, account);
   console.log('\nDone: one order opened and closed on Perpl testnet.');
 }
@@ -238,76 +231,38 @@ async function main() {
 const ONE_CLICK_OFF =
   'One-Click Trading is off, so Perpl would refuse the order. Turn it on in settings at https://testnet.perpl.xyz.';
 
-/** Closes the whole of `position` at market and waits until the venue no longer reports it open. */
-async function closePosition(rest: PerplRest, market: Market, position: PerplPosition, rq: number, seen: Set<string>) {
+/** Closes the whole of `position` at market and prints the fill. */
+async function close(rest: PerplRest, market: Market, account: PerplAccount, position: PerplPosition) {
   console.log('\nClosing');
-  const close: PerplOrderSpec = {
-    rq,
-    mkt: market.id,
-    acc: position.acc,
-    t: position.sd === 2 ? PERPL_ORDER_TYPE.closeShort : PERPL_ORDER_TYPE.closeLong,
-    p: 0,
-    s: position.s,
-    ms: MAX_SLIPPAGE_BPS,
-    fl: PERPL_FLAG.ioc,
-    lv: position.lv,
-    lb: 0,
-  };
-  await submitOne(rest, close);
-  await waitFor('the position to close', async () =>
-    (await rest.positions()).some((p) => p.pid === position.pid && isOpenPosition(p)) ? undefined : true,
+  const closed = await closeAtMarket(
+    { rest, settleTimeoutMs: SETTLE_TIMEOUT_MS },
+    { account, position, slippageBps: MAX_SLIPPAGE_BPS },
   );
-  report('closed', null, await newFill(rest, seen, market.id), market);
+  report(settled(closed), market);
+}
+
+/** The fill of an order that settled. Anything else ends the run with what the venue said. */
+function settled(outcome: MarketOrderOutcome): VenueFill {
+  if (outcome.status === 'refused') stop(`Perpl refused the order: ${outcome.reason} (code ${outcome.code}).`);
+  if (outcome.status === 'unfilled') {
+    stop(
+      `Request ${outcome.requestId} was accepted, but nothing filled within ${SETTLE_TIMEOUT_MS / 1000}s. ` +
+        'Check the account at https://testnet.perpl.xyz before running this again.',
+    );
+  }
+  console.log(`  accepted for forwarding (request ${outcome.requestId})`);
+  return outcome.fill;
+}
+
+function report(fill: VenueFill, market: Market) {
+  const at = fill.price === null ? '' : ` at ${human(fill.price, market.priceDecimals)}`;
+  console.log(`  fill ${human(fill.size, market.sizeDecimals)} ${market.symbol}${at}, fee ${usd(fill.fee)} AUSD, block ${fill.block}`);
+  console.log(`  ${txLink(fill.txHash)}`);
 }
 
 async function reportBalance(rest: PerplRest, before: PerplAccount) {
   const after = (await rest.wallet()).as.find((a) => a.id === before.id);
   if (after) console.log(`\nBalance   ${usd(after.b)} AUSD (was ${usd(before.b)})`);
-}
-
-const fillKey = (f: PerplFill) => `${f.at.b}:${f.oid}:${f.s}:${f.t}`;
-
-async function submitOne(rest: PerplRest, order: PerplOrderSpec) {
-  const [status] = await rest.submit([order]);
-  if (!status || status.code !== 0) stop(`Perpl refused the order: ${status?.error ?? 'no status returned'} (code ${status?.code ?? '?'}).`);
-  console.log(`  accepted for forwarding (request ${order.rq})`);
-}
-
-/** Polls until `probe` returns something. The venue settles an accepted order a block or two later. */
-async function waitFor<T>(what: string, probe: () => Promise<T | undefined>): Promise<T> {
-  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    const found = await probe();
-    if (found !== undefined) return found;
-    await sleep(POLL_MS);
-  }
-  return stop(
-    `Timed out after ${SETTLE_TIMEOUT_MS / 1000}s waiting for ${what}. The order was accepted but did not settle as expected. ` +
-      'Check the account at https://testnet.perpl.xyz before running this again.',
-  );
-}
-
-/** The fill this run produced: the newest one on the market that was not there before. */
-async function newFill(rest: PerplRest, seen: Set<string>, marketId: number): Promise<PerplFill | undefined> {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const fresh = (await rest.fills(20)).filter((f) => f.mkt === marketId && !seen.has(fillKey(f)));
-    if (fresh.length > 0) return fresh.sort((a, b) => b.at.b - a.at.b)[0];
-    await sleep(POLL_MS);
-  }
-  return undefined;
-}
-
-function report(verb: string, position: PerplPosition | null, fill: PerplFill | undefined, market: Market) {
-  if (position) {
-    console.log(`  ${verb} ${human(position.s, market.sizeDecimals)} ${market.symbol} at ${human(position.ep, market.priceDecimals)}, position ${position.pid}`);
-  }
-  if (!fill) {
-    console.log(`  ${verb}, but the fill has not appeared in the history yet`);
-    return;
-  }
-  const at = fill.p === undefined ? '' : ` at ${human(fill.p, market.priceDecimals)}`;
-  console.log(`  fill ${human(fill.s, market.sizeDecimals)} ${market.symbol}${at}, fee ${usd(fill.f)} AUSD, block ${fill.at.b}`);
-  console.log(`  ${txLink(fill.at.txid)}`);
 }
 
 main().catch((e: unknown) => {

@@ -5,9 +5,10 @@ client for everything else, and an `ExecutionService` that turns an approved
 trade into an entry plus protective stop / take-profit and a JSON report a
 Convex action can store as trade evidence.
 
-Nothing in this package has ever run against a live venue: there are no
-credentials in the build environment. What is and is not verified is stated
-exactly below. Prices and sizes are `Decimal` (integer atoms plus explicit
+One path has run against a live venue: the signed REST client placed and closed
+a market order on Perpl testnet (see "One real order, by script"). Everything
+else is verified by test only. What is and is not verified is stated exactly
+below. Prices and sizes are `Decimal` (integer atoms plus explicit
 decimals) end to end; a `number` appears only where a venue's own wire format is
 a JSON integer.
 
@@ -79,7 +80,7 @@ Exchange addresses (Perpl README, 2026-09-20): mainnet
 `0x1964c32f0be608e7d29302aff5e61268e72080cc`. Read the live address from the
 API rather than trusting this copy.
 
-## What is verified by test (`pnpm --filter @kanon/execution test`, 167 tests)
+## What is verified by test (`pnpm --filter @kanon/execution test`, 210 tests)
 
 Every network boundary is mocked; the logic on this side of it is real.
 
@@ -128,14 +129,30 @@ Every network boundary is mocked; the logic on this side of it is real.
 
 ## One real order, by script
 
-`src/perpl-order-cli.ts` opens a small long on Perpl testnet at market, waits for
-the fill, closes it, and prints the transaction of each fill. It uses the signed
-REST endpoints (`src/perpl-rest.ts`), not the trading socket.
+`src/perpl-order-cli.ts` opens a small position on Perpl testnet at market,
+waits for the fill, closes it, and prints the transaction of each fill. It uses
+the signed REST endpoints (`src/perpl-rest.ts`), not the trading socket.
+
+The order itself is placed by `src/perpl-trade.ts` (`openAtMarket`,
+`closeAtMarket`). An order from the app goes through the same two functions:
+`src/venue-service.ts` wraps them with the checks a shared account needs
+(`src/venue-policy.ts`: the limits, the margin check, the shapes it answers
+with) and the gateway serves it at `/trade` (`packages/gateway/src/trade.ts`).
+Both entries pull in the REST client and nothing else, so no chain SDK comes
+with them. A run of the script is therefore a live check of the venue half of
+the app's order path.
+
+The service is framework-free because of where it has to run: Perpl answers
+its trading API with HTTP 451 from regions it does not serve, and that is what
+it answered when this code ran inside the Convex backend (2026-10-10). The
+process that runs it supplies the signed client and a `VenueRecorder`, which
+knows who is asking, keeps one order out at a time and writes each one down.
 
 ```
 pnpm --filter @kanon/execution perpl:order            # look only: account, price, the order it would send
 pnpm --filter @kanon/execution perpl:order --send     # place it, then close it
 pnpm --filter @kanon/execution perpl:order --close    # close a position an earlier run left open
+pnpm --filter @kanon/execution perpl:order --send --side short --usd 10 --leverage 3
 ```
 
 It needs an API key and nothing else: no wallet key is read. The key is created
