@@ -65,3 +65,21 @@ export const SettleBody = z.strictObject({
   reason: z.string().max(500).optional(),
 });
 export type SettleBody = z.infer<typeof SettleBody>;
+
+/**
+ * A fill's own figures, sent once the venue's history lists them. The position
+ * moves seconds before the history does, so an order can be recorded as filled
+ * before its price, fee and transaction are known.
+ */
+export const AmendBody = z.strictObject({
+  orderId: z.string().min(1).max(64),
+  size: decimal.optional(),
+  fillPrice: decimal.optional(),
+  fee: decimal.optional(),
+  block: z.number().int().nonnegative().optional(),
+  txHash: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{64}$/)
+    .optional(),
+});
+export type AmendBody = z.infer<typeof AmendBody>;

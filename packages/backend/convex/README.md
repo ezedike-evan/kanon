@@ -130,16 +130,20 @@ not decide for itself:
   venue answered and the settling transaction. `venueData:listMyOrders` is the
   caller's own list.
 
-The gateway reaches these through three routes in `http.ts`, at the
-deployment's `.convex.site` address: `POST /venue/admit`, `/venue/begin` and
-`/venue/settle`. Each needs `VENUE_RECORDER_KEY` in `X-Kanon-Recorder`, so a
-signed-in user cannot write fills into their own list or hold the lock by
-calling them directly. `admit` and `begin` also need the caller's token;
-`settle` names the row by the id `begin` returned.
+The gateway reaches these through four routes in `http.ts`, at the
+deployment's `.convex.site` address: `POST /venue/admit`, `/venue/begin`,
+`/venue/settle` and `/venue/amend`. Each needs `VENUE_RECORDER_KEY` in
+`X-Kanon-Recorder`, so a signed-in user cannot write fills into their own list
+or hold the lock by calling them directly. `admit` and `begin` also need the
+caller's token; `settle` and `amend` name the row by the id `begin` returned.
+`amend` only adds a fill's price, fee, block and transaction to a row already
+recorded as filled: the venue lists those seconds after the position moves, and
+the order is answered before they are known.
 
 The order logic and its limits are in `@kanon/execution` (`venue-service.ts`,
 `venue-policy.ts`): one shared exchange account, testnet only, $10 to $100 of
-notional, up to 5x, market orders only. The pinned rule is not consulted.
+notional per order, up to 5x, a position of at most $300 at entry, market
+orders only. The pinned rule is not consulted.
 
 Checked on 2026-10-10 against the development deployment: a call with no key or
 a wrong key is answered 403, a call with the key and no valid token 401, and a

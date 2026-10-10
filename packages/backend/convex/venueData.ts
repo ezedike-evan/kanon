@@ -89,6 +89,30 @@ export const settle = internalMutation({
   },
 });
 
+/**
+ * Adds a fill's own figures to an order already recorded as filled. The venue's
+ * history lists a fill seconds after the position moves, so the answer goes
+ * back first and the price, fee and transaction follow. Only a `filled` row is
+ * touched, and what became of the order is never changed here.
+ */
+export const amend = internalMutation({
+  args: {
+    orderId: v.id("venueOrders"),
+    size: v.optional(decimal),
+    fillPrice: v.optional(decimal),
+    fee: v.optional(decimal),
+    block: v.optional(v.number()),
+    txHash: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const { orderId, ...details } = args;
+    const row = await ctx.db.get(orderId);
+    if (!row || row.status !== "filled") return null;
+    await ctx.db.patch(orderId, details);
+    return null;
+  },
+});
+
 /** The signed-in user's own orders, newest first. Empty for anyone else. */
 export const listMyOrders = query({
   args: {},

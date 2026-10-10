@@ -10,15 +10,16 @@
  *   POST /venue/begin   may this caller send an order now? If so the row is
  *                       written and the one-order-at-a-time lock is taken.
  *   POST /venue/settle  what became of that order. Releases the lock.
+ *   POST /venue/amend   a fill's price, fee and transaction, once the venue lists them.
  *
  * Anyone on the internet can reach these addresses, so each is held by two
  * things. `X-Kanon-Recorder` must carry `VENUE_RECORDER_KEY`, which only the
  * gateway has: without it a signed-in user could write fills into their own
  * order list or hold the lock against everybody. And `admit` and `begin` need
  * the caller's own Privy token in `Authorization`, which Convex verifies: who
- * the order is for comes from that token, never from the body. `settle` names
- * a row by the id `begin` returned and needs only the key, so a token that
- * lapsed mid-order does not leave an order unrecorded.
+ * the order is for comes from that token, never from the body. `settle` and
+ * `amend` name a row by the id `begin` returned and need only the key, so a
+ * token that lapsed mid-order does not leave an order unrecorded.
  */
 
 import { httpRouter, makeFunctionReference } from "convex/server";
@@ -28,7 +29,7 @@ import type { Decimal } from "@kanon/spec";
 import { requireSubject, type AuthCtx } from "./authz";
 import { checkRateLimit } from "./rateLimit";
 import { describeEnvProblem, parseVenueRecorderEnv } from "./serverEnv";
-import { BeginBody, RECORDER_HEADER, SettleBody, recorderKeyMatches } from "./venueLogic";
+import { AmendBody, BeginBody, RECORDER_HEADER, SettleBody, recorderKeyMatches } from "./venueLogic";
 
 type Side = "long" | "short";
 
@@ -62,6 +63,12 @@ const settleRef = makeFunctionReference<
   },
   null
 >("venueData:settle");
+
+const amendRef = makeFunctionReference<
+  "mutation",
+  { orderId: Id<"venueOrders">; size?: Decimal; fillPrice?: Decimal; fee?: Decimal; block?: number; txHash?: string },
+  null
+>("venueData:amend");
 
 const json = (status: number, body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -160,9 +167,33 @@ const settle = httpAction(async (ctx, request) => {
   return json(200, { ok: true });
 });
 
+const amend = httpAction(async (ctx, request) => {
+  const refused = gate(request, "venue.amend");
+  if (refused) return refused;
+  const body = AmendBody.safeParse(await bodyOf(request));
+  if (!body.success) return json(400, { ok: false, code: "bad_request" });
+
+  const { orderId, size, fillPrice, fee, block, txHash } = body.data;
+  try {
+    await ctx.runMutation(amendRef, {
+      orderId: orderId as Id<"venueOrders">,
+      ...(size !== undefined ? { size } : {}),
+      ...(fillPrice !== undefined ? { fillPrice } : {}),
+      ...(fee !== undefined ? { fee } : {}),
+      ...(block !== undefined ? { block } : {}),
+      ...(txHash !== undefined ? { txHash } : {}),
+    });
+  } catch (err) {
+    console.error("venue.amend: the fill's figures could not be written", err);
+    return json(500, { ok: false, code: "failed" });
+  }
+  return json(200, { ok: true });
+});
+
 const http = httpRouter();
 http.route({ path: "/venue/admit", method: "POST", handler: admit });
 http.route({ path: "/venue/begin", method: "POST", handler: begin });
 http.route({ path: "/venue/settle", method: "POST", handler: settle });
+http.route({ path: "/venue/amend", method: "POST", handler: amend });
 
 export default http;

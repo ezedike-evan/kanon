@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BeginBody, ORDER_LOCK_MS, SettleBody, isLocked, recorderKeyMatches } from "./venueLogic";
+import { AmendBody, BeginBody, ORDER_LOCK_MS, SettleBody, isLocked, recorderKeyMatches } from "./venueLogic";
 
 describe("isLocked", () => {
   const now = 1_000_000;
@@ -74,5 +74,25 @@ describe("SettleBody", () => {
     expect(SettleBody.safeParse({ ...base, size: { atoms: "0.5", decimals: 5 } }).success).toBe(false);
     expect(SettleBody.safeParse({ ...base, txHash: "0x1234" }).success).toBe(false);
     expect(SettleBody.safeParse({ ...base, status: "submitting" }).success).toBe(false);
+  });
+});
+
+describe("AmendBody", () => {
+  it("reads the figures the history adds to a fill", () => {
+    const details = {
+      orderId: "k17abc",
+      size: { atoms: "12", decimals: 5 },
+      fillPrice: { atoms: "828009", decimals: 1 },
+      fee: { atoms: "8575", decimals: 6 },
+      block: 69822923,
+      txHash: "0x" + "33f4cfdc".repeat(8),
+    };
+    expect(AmendBody.parse(details)).toEqual(details);
+    expect(AmendBody.parse({ orderId: "k17abc" })).toEqual({ orderId: "k17abc" });
+  });
+  it("cannot change what became of an order, only add to it", () => {
+    expect(AmendBody.safeParse({ orderId: "k17abc", status: "filled" }).success).toBe(false);
+    expect(AmendBody.safeParse({ orderId: "k17abc", reason: "edited" }).success).toBe(false);
+    expect(AmendBody.safeParse({ orderId: "k17abc", txHash: "0xabc" }).success).toBe(false);
   });
 });
