@@ -25,6 +25,7 @@
  * are for requests that are not one of the three above.
  */
 
+import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { z } from 'zod';
 import { createEd25519Signer, createPerplRest, normalizeEd25519Secret } from '@kanon/execution/perpl-trade';
@@ -36,7 +37,7 @@ import {
   type VenueService,
 } from '@kanon/execution/venue-service';
 import type { TradeConfig } from './config';
-import { createConvexRecorder, type ConvexRecorder } from './convex-recorder';
+import { createConvexRecorder, type Admission, type ConvexRecorder } from './convex-recorder';
 import type { Logger } from './log';
 
 export const TRADE_PREFIX = '/trade/';
@@ -44,6 +45,19 @@ export const TRADE_NOT_CONNECTED = 'Trading is not connected on this gateway.';
 const SIGN_IN_UNCHECKED = 'Your sign-in could not be checked. Try again.';
 /** An order is four short fields; anything larger is not one. */
 const MAX_BODY_BYTES = 2048;
+/**
+ * How long a yes from the backend about a token is taken as read for reading
+ * the account. An order is always put to the backend again. Without this every
+ * read of the account is two round trips before the venue is even asked.
+ */
+const ADMISSION_TTL_MS = 60_000;
+const MAX_ADMISSIONS = 2_000;
+/**
+ * One read of the account serves every caller for this long. It is one shared
+ * account, so ten tickets open at once must not be ten times the requests to
+ * the venue, whose rate limit is not published.
+ */
+const ACCOUNT_TTL_MS = 2_000;
 
 const ROUTES: Record<string, 'GET' | 'POST'> = {
   '/trade/account': 'GET',
@@ -112,9 +126,47 @@ export const disconnectedTrade: TradeRoutes = {
   },
 };
 
-export function createTradeRoutes(deps: { service: VenueService; recorder: ConvexRecorder; log: Logger }): TradeRoutes {
+export function createTradeRoutes(deps: {
+  service: VenueService;
+  recorder: ConvexRecorder;
+  log: Logger;
+  now?: () => number;
+}): TradeRoutes {
   const { service, recorder, log } = deps;
+  const now = deps.now ?? Date.now;
   const answer = (body: VenueAccountView | VenueOrderResult): TradeAnswer => ({ status: 200, body });
+
+  /** Tokens the backend said yes to, by digest, and until when. A token itself is never kept. */
+  const admitted = new Map<string, number>();
+  async function admit(token: string): Promise<Admission> {
+    const key = createHash('sha256').update(token).digest('base64');
+    const until = admitted.get(key);
+    if (until !== undefined && now() < until) return { ok: true };
+    const answered = await recorder.admit(token);
+    if (answered.ok) {
+      if (admitted.size >= MAX_ADMISSIONS) admitted.clear();
+      admitted.set(key, now() + ADMISSION_TTL_MS);
+    } else {
+      admitted.delete(key);
+    }
+    return answered;
+  }
+
+  /** The read of the account now in hand, shared by callers that arrive while it is fresh. */
+  let held: { at: number; view: Promise<VenueAccountView> } | null = null;
+  function readAccount(): Promise<VenueAccountView> {
+    const at = now();
+    if (held && at >= held.at && at - held.at < ACCOUNT_TTL_MS) return held.view;
+    const view = service.account();
+    const mine = { at, view };
+    held = mine;
+    // Only an account that was read is worth handing to the next caller.
+    const drop = (): void => {
+      if (held === mine) held = null;
+    };
+    view.then((v) => (v.status === 'ready' ? undefined : drop()), drop);
+    return view;
+  }
 
   return {
     async handle(req, path) {
@@ -124,12 +176,12 @@ export function createTradeRoutes(deps: { service: VenueService; recorder: Conve
 
       if (path === '/trade/account') {
         if (!token) return answer(unavailable(VENUE_MESSAGES.signIn));
-        const admitted = await recorder.admit(token);
-        if (!admitted.ok) {
-          if (admitted.code === 'unauthenticated') return answer(unavailable(VENUE_MESSAGES.signIn));
-          return answer(unavailable(admitted.code === 'rate_limited' ? admitted.message : SIGN_IN_UNCHECKED));
+        const admission = await admit(token);
+        if (!admission.ok) {
+          if (admission.code === 'unauthenticated') return answer(unavailable(VENUE_MESSAGES.signIn));
+          return answer(unavailable(admission.code === 'rate_limited' ? admission.message : SIGN_IN_UNCHECKED));
         }
-        return answer(await service.account());
+        return answer(await readAccount());
       }
 
       const text = await readBody(req);
@@ -146,6 +198,8 @@ export function createTradeRoutes(deps: { service: VenueService; recorder: Conve
         if (!body.success) return { status: 400, body: { error: 'not an order: { asset, side, usd, leverage }' } };
         if (!token) return answer(unavailable(VENUE_MESSAGES.signIn));
         const result = await service.placeOrder(body.data, recorder.forCaller(token));
+        // What the account held a moment ago is no longer what it holds.
+        held = null;
         log({ level: 'info', event: 'trade_order', ...body.data, result: result.status });
         return answer(result);
       }
@@ -154,6 +208,7 @@ export function createTradeRoutes(deps: { service: VenueService; recorder: Conve
       if (!body.success) return { status: 400, body: { error: 'not a close: { asset }' } };
       if (!token) return answer(unavailable(VENUE_MESSAGES.signIn));
       const result = await service.closePosition(body.data.asset, recorder.forCaller(token));
+      held = null;
       log({ level: 'info', event: 'trade_close', asset: body.data.asset, result: result.status });
       return answer(result);
     },
@@ -179,6 +234,8 @@ export async function connectTrade(config: TradeConfig, log: Logger, fetchImpl?:
     // A venue error carries a path and a status, never a key.
     onError: (scope, err) =>
       log({ level: 'error', event: 'venue_error', scope, error: err instanceof Error ? err.message : String(err) }),
+    // Where each order's time went: the backend, the reads, and the wait for the position to move.
+    onTiming: (timing) => log({ level: 'info', event: 'trade_timing', ...timing }),
     ...withFetch,
   });
   const recorder = createConvexRecorder({

@@ -21,12 +21,15 @@ const REFUSED: VenueOrderResult = { status: 'refused', reason: 'The account hold
 let gateway: Gateway;
 let port: number;
 let admission: Admission;
+/** The routes' clock, moved by a test. */
+let clock: number;
 let seen: { admitted: string[]; callers: string[]; accounts: number; orders: unknown[]; closes: string[] };
 
 async function start(withTrade: boolean): Promise<void> {
   const venue = new FakeVenue();
   seen = { admitted: [], callers: [], accounts: 0, orders: [], closes: [] };
   admission = { ok: true };
+  clock = 1_000_000;
   const callerRecorder = {} as VenueRecorder;
   const recorder: ConvexRecorder = {
     admit: async (token) => (seen.admitted.push(token), admission),
@@ -42,7 +45,7 @@ async function start(withTrade: boolean): Promise<void> {
     log: silentLogger,
     socketFactory: venue.factory,
     fetchImpl: (async () => new Response(JSON.stringify({ markets: [{ id: 16 }] }))) as typeof fetch,
-    ...(withTrade ? { trade: createTradeRoutes({ service, recorder, log: silentLogger }) } : {}),
+    ...(withTrade ? { trade: createTradeRoutes({ service, recorder, log: silentLogger, now: () => clock }) } : {}),
   });
   port = await gateway.listen();
   venue.last.open();
@@ -101,6 +104,43 @@ describe('with a key configured', () => {
     expect(await res.json()).toEqual(READY);
     expect(seen.admitted).toEqual([TOKEN]);
     expect(seen.accounts).toBe(1);
+  });
+
+  it('asks the backend about a caller once a minute, and the venue for the account once every two seconds', async () => {
+    const other = { authorization: 'Bearer ddd.eee.fff' };
+    await call('/trade/account', { headers: auth });
+    await call('/trade/account', { headers: auth });
+    // A second caller is asked about, and is handed the read already in hand: it is one account.
+    await call('/trade/account', { headers: other });
+    expect(seen.admitted).toEqual([TOKEN, 'ddd.eee.fff']);
+    expect(seen.accounts).toBe(1);
+
+    clock += 2_000;
+    await call('/trade/account', { headers: auth });
+    expect(seen.accounts).toBe(2);
+    expect(seen.admitted).toHaveLength(2);
+
+    clock += 60_000;
+    await call('/trade/account', { headers: auth });
+    expect(seen.admitted).toEqual([TOKEN, 'ddd.eee.fff', TOKEN]);
+  });
+
+  it('reads the account afresh after an order or a close, however recent the last read', async () => {
+    await call('/trade/account', { headers: auth });
+    await post('/trade/order', order);
+    await call('/trade/account', { headers: auth });
+    expect(seen.accounts).toBe(2);
+    await post('/trade/close', { asset: 'BTC/USD' });
+    await call('/trade/account', { headers: auth });
+    expect(seen.accounts).toBe(3);
+  });
+
+  it('does not remember a no', async () => {
+    admission = { ok: false, code: 'unauthenticated' };
+    await call('/trade/account', { headers: auth });
+    admission = { ok: true };
+    expect(await (await call('/trade/account', { headers: auth })).json()).toEqual(READY);
+    expect(seen.admitted).toEqual([TOKEN, TOKEN]);
   });
 
   it('reads nothing with no token, or with something that is not one', async () => {

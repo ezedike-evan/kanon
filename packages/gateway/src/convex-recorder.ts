@@ -9,7 +9,13 @@
  */
 
 import { z } from 'zod';
-import type { BeginResult, OrderOutcomeRecord, OrderRecord, VenueRecorder } from '@kanon/execution/venue-service';
+import type {
+  BeginResult,
+  FillDetailsRecord,
+  OrderOutcomeRecord,
+  OrderRecord,
+  VenueRecorder,
+} from '@kanon/execution/venue-service';
 import type { Logger } from './log';
 
 export const RECORDER_HEADER = 'x-kanon-recorder';
@@ -120,6 +126,13 @@ export function createConvexRecorder(opts: {
           if (res?.status === 200 && Ok.safeParse(res.body).success) return;
           if (res) unexpected('/venue/settle', res);
           throw new Error(`the outcome of order ${outcome.orderId} could not be recorded`);
+        },
+
+        async amend(details: FillDetailsRecord): Promise<void> {
+          const res = await post('/venue/amend', null, details);
+          if (res?.status === 200 && Ok.safeParse(res.body).success) return;
+          if (res) unexpected('/venue/amend', res);
+          throw new Error(`the fill of order ${details.orderId} could not be added to its record`);
         },
       };
     },

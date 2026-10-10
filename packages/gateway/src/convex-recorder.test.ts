@@ -120,3 +120,20 @@ describe('settle', () => {
     }
   });
 });
+
+describe('amend', () => {
+  const details = { orderId: 'k17abc', fee: { atoms: '8575', decimals: 6 }, block: 69822923, txHash: `0x${'33f4cfdc'.repeat(8)}` };
+
+  it("adds a fill's figures to its record with the key alone", async () => {
+    const { recorder, calls } = setup(() => json(200, { ok: true }));
+    await recorder.forCaller(TOKEN).amend?.(details);
+    expect(calls[0]).toMatchObject({ url: `${SITE}/venue/amend`, body: details });
+    expect(calls[0]?.headers.authorization).toBeUndefined();
+  });
+
+  it('throws when they were not written', async () => {
+    await expect(setup(() => json(500, { ok: false, code: 'failed' })).recorder.forCaller(TOKEN).amend?.(details)).rejects.toThrow(
+      /k17abc could not be added/,
+    );
+  });
+});

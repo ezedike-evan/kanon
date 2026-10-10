@@ -115,16 +115,27 @@ the gateway at start, naming what is missing.
   limit, lets one order out at a time and writes each order down. With no
   token, or one the backend turns away, nothing is read and nothing is sent.
 - **Answers.** Everything the ticket shows comes back as `200` with a typed
-  body, a refusal included. Logs name the asset, side, size and outcome of
-  each order, never a token or a key.
+  body, a refusal included. An order is answered as soon as the account's
+  position moves; the fill's price, fee and transaction are added to its record
+  when Perpl's history lists them, usually seconds later. The answer does not
+  wait for the order's row to be written either; the next order does. A yes
+  from the backend about a caller is reused for a minute when reading the
+  account, and one read of the account serves every caller for two seconds,
+  since it is one account and Perpl's rate limit is not published. Logs name the asset,
+  side, size and outcome of each order (`trade_order`, `trade_close`) and where
+  its time went (`trade_timing`: the backend, the reads, the wait), never a
+  token or a key.
 
 Checked on 2026-10-10 on a developer's machine with the real key and the
 development backend: with no token and with a made-up one the account is not
 read and an order is not sent ("Sign in to trade."), an order over the limit is
 refused with its reason, another origin is answered `403`, and the order
 service reads the real account. The same day a signed-in user opened and closed
-a position through these routes from the app. Known fault from that run: the
-close filled on the venue and was reported as not filled.
+a position through these routes from the app. In that run the close filled on
+the venue and was reported as not filled, and the open took about sixteen
+seconds: the code waited on Perpl's fill history, which lagged. It now reads
+the result from the position instead. That change is tested against a fake
+venue and has not yet been re-run against Perpl.
 
 - `/healthz` answers `200` while the venue connection is open and heard from in
   the last 20 seconds, `503` otherwise.
