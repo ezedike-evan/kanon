@@ -24,6 +24,8 @@ export const VENUE_LIMITS = {
   maxLeverage: 5,
   /** The furthest a market order may fill from the mark price. */
   slippageBps: 100,
+  /** Whole dollars. The most a position on one market may reach, at its entry price, through orders that add to it. */
+  maxPositionUsd: 300,
 } as const;
 
 export interface VenueLimits {
@@ -31,6 +33,7 @@ export interface VenueLimits {
   maxNotionalUsd: number;
   maxLeverage: number;
   slippageBps: number;
+  maxPositionUsd: number;
 }
 
 /** Perpl's collateral, AUSD, has six decimals. */
@@ -85,6 +88,53 @@ export function checkOrderRequest(
   return { ok: true };
 }
 
+/** A position's size at its entry price, in cents, rounded down. Both figures are the venue's scaled integers. */
+export function positionCents(size: number, entryPrice: number, sizeDecimals: number, priceDecimals: number): bigint {
+  return (BigInt(size) * BigInt(entryPrice) * 100n) / 10n ** BigInt(sizeDecimals + priceDecimals);
+}
+
+/** What the account already holds on the market an order is for. `leverage` is in hundredths. */
+export interface HeldPosition {
+  side: OrderSide;
+  cents: bigint;
+  leverage: number;
+}
+
+const dollars = (cents: bigint): string => `$${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`;
+const multiple = (hundredths: number): string => `${Number((hundredths / 100).toFixed(2))}x`;
+
+/**
+ * Whether an order may go out given what the account holds on that market. A
+ * market holds one position per account, so an order on the same side adds to
+ * it and one on the other side would turn it around. Adding is allowed, at the
+ * position's own leverage and up to the stated size. Turning it around is not:
+ * close it first.
+ */
+export function checkAgainstPosition(
+  req: OrderRequest,
+  symbol: string,
+  held: HeldPosition | null,
+  limits: VenueLimits = VENUE_LIMITS,
+): Check {
+  if (!held) return { ok: true };
+  if (held.side !== req.side) {
+    return { ok: false, reason: `The account holds a ${symbol} ${held.side}. Close it before opening a ${req.side}.` };
+  }
+  if (held.leverage !== req.leverage * 100) {
+    return {
+      ok: false,
+      reason: `The ${symbol} position is at ${multiple(held.leverage)}. An order that adds to it uses the same leverage.`,
+    };
+  }
+  if (held.cents + BigInt(req.usd) * 100n > BigInt(limits.maxPositionUsd) * 100n) {
+    return {
+      ok: false,
+      reason: `The ${symbol} position is ${dollars(held.cents)} at entry. A position here is at most $${limits.maxPositionUsd}.`,
+    };
+  }
+  return { ok: true };
+}
+
 /** The collateral an order ties up: notional over leverage, in collateral atoms, rounded up. */
 export function marginAtoms(usd: number, leverage: number): bigint {
   const scale = 10n ** BigInt(COLLATERAL_DECIMALS);
@@ -134,6 +184,8 @@ export interface VenuePositionView {
   /** Whole or fractional multiple: 2 is 2x. */
   leverage: number;
   collateral: Decimal;
+  /** Size at the entry price, in dollars to two places. What the position limit is measured against. */
+  notional: Decimal;
   /** Milliseconds, or null when the venue did not say. */
   openedAt: number | null;
 }
@@ -171,15 +223,22 @@ export type VenueOrderResult =
       action: 'open' | 'close';
       side: OrderSide;
       size: Decimal;
-      /** Null when the venue reported the fill without a price. */
+      /**
+       * The fill's own figures, from the venue's history. The position moves
+       * first and the history follows seconds later, so any of these is null in
+       * an answer that came back before the history listed the fill. The order's
+       * record is completed when it does.
+       */
       price: Decimal | null;
-      fee: Decimal;
-      block: number;
+      fee: Decimal | null;
+      block: number | null;
       /** The settling transaction: the evidence for this fill. */
       txHash: string | null;
     }
-  /** The venue took the order and nothing filled. Nothing is left resting. */
+  /** The venue forwarded the order and nothing filled. Nothing is left resting. */
   | { status: 'unfilled'; orderId: string; message: string }
+  /** The order was sent and the venue has not said what became of it. It may still fill. */
+  | { status: 'pending'; orderId: string; message: string }
   /** The server's limits or the venue said no. Nothing was opened. */
   | { status: 'refused'; reason: string }
   /** Another order is on its way to the same account. */

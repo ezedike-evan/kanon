@@ -124,6 +124,11 @@ export async function readPerplMarkPrice(opts: PerplPublicOptions, marketId: num
 export async function readPerplAccount(
   rest: PerplRest,
 ): Promise<{ wallet: string; account: PerplAccount; positions: PerplPosition[] } | null> {
+  // Asked together: each is a round trip, and neither needs the other's answer to be asked.
+  const positionsRead = rest.positions().then(
+    (list) => ({ list }),
+    (error: unknown) => ({ error }),
+  );
   let wallet;
   try {
     wallet = await rest.wallet();
@@ -133,7 +138,9 @@ export async function readPerplAccount(
   }
   const account = wallet.as[0];
   if (!account) return null;
-  const positions = (await rest.positions()).filter((p) => p.acc === account.id && isOpenPosition(p));
+  const read = await positionsRead;
+  if ('error' in read) throw read.error;
+  const positions = read.list.filter((p) => p.acc === account.id && isOpenPosition(p));
   return { wallet: wallet.addr, account, positions };
 }
 
@@ -152,21 +159,43 @@ export interface VenueFill {
 }
 
 export type MarketOrderOutcome =
-  /** The order settled. */
-  | { status: 'filled'; requestId: number; fill: VenueFill }
-  /** The venue took the order but nothing filled in time: for an IOC order, nothing was there to trade against. */
+  /**
+   * The order took effect: the account's position on the market changed the way
+   * the order asked. `fill` is the venue's own record of it (price, fee, block,
+   * transaction), or null when its history had not reported the fill yet, which
+   * it does seconds after the position moves. `findFill` looks again.
+   */
+  | {
+      status: 'filled';
+      requestId: number;
+      fill: VenueFill | null;
+      /** The position on the market after the order. Null when the order closed it. */
+      position: PerplPosition | null;
+      findFill: () => Promise<VenueFill | null>;
+    }
+  /** The venue forwarded the order and the position did not change: nothing was there to trade against, or the exchange rejected it. */
   | { status: 'unfilled'; requestId: number }
+  /** The venue took the order and had not said what became of it when the wait ran out. It may still fill. */
+  | { status: 'pending'; requestId: number }
   /** The venue would not take the order. `reason` is the venue's own wording. */
   | { status: 'refused'; code: number; reason: string };
 
 export interface TradeDeps {
   rest: PerplRest;
   sleep?: (ms: number) => Promise<void>;
-  /** How long to wait for the fill before reporting `unfilled`. */
+  /** How long to wait for the order to take effect before reporting `pending`. */
   settleTimeoutMs?: number;
+  /** The pause between looks at the position. Each look is one request; the venue's rate limit is not published. */
   pollMs?: number;
   now?: () => number;
 }
+
+/** How far back the fill history is read. An order produces one fill, or a few. */
+const HISTORY_DEPTH = 20;
+/** The request counter is read on every third look, and once more when the wait runs out. */
+const FORWARD_CHECK_EVERY = 3;
+/** Once the venue says it forwarded the order, the position is given this many more looks to move. */
+const LOOKS_AFTER_FORWARD = 2;
 
 const fillKey = (f: PerplFill): string => `${f.at.b}:${f.oid}:${f.s}:${f.t}`;
 
@@ -179,15 +208,32 @@ const toVenueFill = (f: PerplFill): VenueFill => ({
   txHash: f.at.txid ? (f.at.txid.startsWith('0x') ? f.at.txid : `0x${f.at.txid}`) : null,
 });
 
+interface Watch {
+  /** The account's fills as read just before the order, when the caller already has them. */
+  history?: readonly PerplFill[] | undefined;
+  /** Whether the position on the order's market, as it now stands (null: none), shows the order took effect. */
+  took(position: PerplPosition | null): boolean;
+}
+
 /**
- * Submits one order and waits for the fill it produces. The fill is the newest
- * one on that market and account that was not in the history before the order
- * went in.
+ * Submits one order and waits for it to take effect.
+ *
+ * Acceptance is only an acknowledgement: the venue forwards the order to the
+ * exchange and it settles a block or two later. What tells us it settled is the
+ * account's position, which the venue serves as live state. The fill history is
+ * a separate record that trails the position by seconds (once by more than
+ * twenty, 2026-10-10), so it is read for the fill's details and never waited on
+ * to decide whether the order filled.
+ *
+ * If the position has not moved, the account's request counter says whether the
+ * venue has forwarded the order yet. Forwarded and unmoved a few looks later is
+ * `unfilled`. Not known to be forwarded when the wait runs out is `pending`:
+ * nothing here claims an order did not fill without evidence that it did not.
  */
-async function submitAndSettle(deps: TradeDeps, order: PerplOrderSpec): Promise<MarketOrderOutcome> {
+async function submitAndSettle(deps: TradeDeps, order: PerplOrderSpec, watch: Watch): Promise<MarketOrderOutcome> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const now = deps.now ?? Date.now;
-  const before = new Set((await deps.rest.fills(20)).map(fillKey));
+  const before = new Set((watch.history ?? (await deps.rest.fills(HISTORY_DEPTH))).map(fillKey));
 
   let status;
   try {
@@ -201,15 +247,42 @@ async function submitAndSettle(deps: TradeDeps, order: PerplOrderSpec): Promise<
     return { status: 'refused', code: status?.code ?? -1, reason: status?.error ?? 'the venue returned no status' };
   }
 
-  const deadline = now() + (deps.settleTimeoutMs ?? 20_000);
-  for (;;) {
-    const fresh = (await deps.rest.fills(20)).filter(
+  /** The newest fill on the order's market and account that was not in the history before it went in. */
+  const findFill = async (): Promise<VenueFill | null> => {
+    const fresh = (await deps.rest.fills(HISTORY_DEPTH)).filter(
       (f) => f.mkt === order.mkt && f.acc === order.acc && !before.has(fillKey(f)),
     );
     const fill = fresh.sort((a, b) => b.at.b - a.at.b)[0];
-    if (fill) return { status: 'filled', requestId: order.rq, fill: toVenueFill(fill) };
-    if (now() >= deadline) return { status: 'unfilled', requestId: order.rq };
-    await sleep(deps.pollMs ?? 1_500);
+    return fill ? toVenueFill(fill) : null;
+  };
+
+  const deadline = now() + (deps.settleTimeoutMs ?? 20_000);
+  /** Looks at the position since the venue said it forwarded the order. Zero: not known to be forwarded. */
+  let sinceForward = 0;
+  for (let look = 1; ; look++) {
+    await sleep(deps.pollMs ?? 600);
+    const position =
+      (await deps.rest.positions()).find((p) => p.acc === order.acc && p.mkt === order.mkt && isOpenPosition(p)) ?? null;
+    if (watch.took(position)) {
+      // One look at the history now. It often has nothing yet, and that is not a failure.
+      const fill = await findFill().catch(() => null);
+      return { status: 'filled', requestId: order.rq, fill, position, findFill };
+    }
+
+    const late = now() >= deadline;
+    if (sinceForward > 0) sinceForward++;
+    else if (look % FORWARD_CHECK_EVERY === 0 || late) {
+      const lfr = (await deps.rest.wallet()).as.find((a) => a.id === order.acc)?.lfr ?? 0;
+      if (lfr >= order.rq) sinceForward = 1;
+    }
+    if (sinceForward > LOOKS_AFTER_FORWARD) {
+      // Forwarded, and blocks later the position is as it was. A fill in the history would still be a fill.
+      const fill = await findFill();
+      return fill
+        ? { status: 'filled', requestId: order.rq, fill, position, findFill }
+        : { status: 'unfilled', requestId: order.rq };
+    }
+    if (late && sinceForward === 0) return { status: 'pending', requestId: order.rq };
   }
 }
 
@@ -222,40 +295,62 @@ export interface OpenArgs {
   /** In hundredths: 200 is 2x. */
   leverage: number;
   slippageBps: number;
+  /** The position the account already holds on this market, on the same side, when the order adds to one. */
+  held?: PerplPosition | null | undefined;
+  /** The account's fills as read just before, when the caller already has them. Read here otherwise. */
+  history?: readonly PerplFill[] | undefined;
 }
 
-/** Opens a position at market. The caller has already checked the account may trade and holds nothing on this market. */
+/**
+ * Opens a position at market, or adds to the one held on the same side. The
+ * caller has already checked the account may trade. It took effect when the
+ * position is larger than it was.
+ */
 export function openAtMarket(deps: TradeDeps, args: OpenArgs): Promise<MarketOrderOutcome> {
-  return submitAndSettle(deps, {
-    rq: (args.account.lfr ?? 0) + 1,
-    mkt: args.market.id,
-    acc: args.account.id,
-    t: args.side === 'short' ? PERPL_ORDER_TYPE.openShort : PERPL_ORDER_TYPE.openLong,
-    p: 0,
-    s: args.size,
-    ms: args.slippageBps,
-    fl: PERPL_FLAG.ioc,
-    lv: args.leverage,
-    lb: 0,
-  });
+  const sizeBefore = args.held?.s ?? 0;
+  return submitAndSettle(
+    deps,
+    {
+      rq: (args.account.lfr ?? 0) + 1,
+      mkt: args.market.id,
+      acc: args.account.id,
+      t: args.side === 'short' ? PERPL_ORDER_TYPE.openShort : PERPL_ORDER_TYPE.openLong,
+      p: 0,
+      s: args.size,
+      ms: args.slippageBps,
+      fl: PERPL_FLAG.ioc,
+      lv: args.leverage,
+      lb: 0,
+    },
+    { history: args.history, took: (position) => position !== null && position.s > sizeBefore },
+  );
 }
 
-/** Closes the whole of a position at market. */
+/** Closes the whole of a position at market. It took effect when the position is gone, or smaller than it was. */
 export function closeAtMarket(
   deps: TradeDeps,
-  args: { account: PerplAccount; position: PerplPosition; slippageBps: number },
+  args: {
+    account: PerplAccount;
+    position: PerplPosition;
+    slippageBps: number;
+    history?: readonly PerplFill[] | undefined;
+  },
 ): Promise<MarketOrderOutcome> {
   const { position } = args;
-  return submitAndSettle(deps, {
-    rq: (args.account.lfr ?? 0) + 1,
-    mkt: position.mkt,
-    acc: position.acc,
-    t: position.sd === 2 ? PERPL_ORDER_TYPE.closeShort : PERPL_ORDER_TYPE.closeLong,
-    p: 0,
-    s: position.s,
-    ms: args.slippageBps,
-    fl: PERPL_FLAG.ioc,
-    lv: position.lv,
-    lb: 0,
-  });
+  return submitAndSettle(
+    deps,
+    {
+      rq: (args.account.lfr ?? 0) + 1,
+      mkt: position.mkt,
+      acc: position.acc,
+      t: position.sd === 2 ? PERPL_ORDER_TYPE.closeShort : PERPL_ORDER_TYPE.closeLong,
+      p: 0,
+      s: position.s,
+      ms: args.slippageBps,
+      fl: PERPL_FLAG.ioc,
+      lv: position.lv,
+      lb: 0,
+    },
+    { history: args.history, took: (now) => now === null || now.s < position.s },
+  );
 }

@@ -80,7 +80,7 @@ Exchange addresses (Perpl README, 2026-09-20): mainnet
 `0x1964c32f0be608e7d29302aff5e61268e72080cc`. Read the live address from the
 API rather than trusting this copy.
 
-## What is verified by test (`pnpm --filter @kanon/execution test`, 210 tests)
+## What is verified by test (`pnpm --filter @kanon/execution test`, 229 tests)
 
 Every network boundary is mocked; the logic on this side of it is real.
 
@@ -141,6 +141,22 @@ with) and the gateway serves it at `/trade` (`packages/gateway/src/trade.ts`).
 Both entries pull in the REST client and nothing else, so no chain SDK comes
 with them. A run of the script is therefore a live check of the venue half of
 the app's order path.
+
+How an order's result is read (changed 2026-10-10, after a close that filled was
+reported as not filled): acceptance by Perpl is only an acknowledgement. What
+shows the order took effect is the account's position, which Perpl serves as
+live state about a second old. The fill history is a separate record that
+trails it by seconds, and once by more than twenty. So the code watches the
+position, answers as soon as it moves, and asks the history for the fill's
+price, fee and transaction afterwards. "Nothing filled" is said only when the
+account's request counter shows Perpl forwarded the order and the position is
+unchanged a few looks later. If neither is known when the wait runs out the
+answer is `pending`: sent, result not reported.
+
+An order on the side of a position already held adds to it, at the position's
+leverage and up to `maxPositionUsd` at entry. One on the other side is refused.
+That adds path is covered by tests against a fake venue and has not yet been
+run against Perpl.
 
 The service is framework-free because of where it has to run: Perpl answers
 its trading API with HTTP 451 from regions it does not serve, and that is what

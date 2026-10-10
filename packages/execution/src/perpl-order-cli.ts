@@ -215,7 +215,7 @@ async function main() {
     { rest, settleTimeoutMs: SETTLE_TIMEOUT_MS },
     { market, account, side, size, leverage: leverage * 100, slippageBps: MAX_SLIPPAGE_BPS },
   );
-  report(settled(opened), market);
+  report(await settled(opened), market);
 
   // Read back, not assumed: the close is sized from what the venue says is held, and numbered after its last request.
   const now = await readPerplAccount(rest);
@@ -238,20 +238,42 @@ async function close(rest: PerplRest, market: Market, account: PerplAccount, pos
     { rest, settleTimeoutMs: SETTLE_TIMEOUT_MS },
     { account, position, slippageBps: MAX_SLIPPAGE_BPS },
   );
-  report(settled(closed), market);
+  report(await settled(closed), market);
 }
 
+/** How long to keep asking the venue's history for a fill it has not reported yet. */
+const FILL_RECORD_WAIT_MS = 45_000;
+
 /** The fill of an order that settled. Anything else ends the run with what the venue said. */
-function settled(outcome: MarketOrderOutcome): VenueFill {
+async function settled(outcome: MarketOrderOutcome): Promise<VenueFill> {
   if (outcome.status === 'refused') stop(`Perpl refused the order: ${outcome.reason} (code ${outcome.code}).`);
   if (outcome.status === 'unfilled') {
     stop(
-      `Request ${outcome.requestId} was accepted, but nothing filled within ${SETTLE_TIMEOUT_MS / 1000}s. ` +
+      `Request ${outcome.requestId} was forwarded and the position did not change: nothing filled. ` +
         'Check the account at https://testnet.perpl.xyz before running this again.',
     );
   }
-  console.log(`  accepted for forwarding (request ${outcome.requestId})`);
-  return outcome.fill;
+  if (outcome.status === 'pending') {
+    stop(
+      `Request ${outcome.requestId} was accepted, and Perpl had not reported its result after ${SETTLE_TIMEOUT_MS / 1000}s. ` +
+        'It may still fill. Check the account at https://testnet.perpl.xyz before running this again.',
+    );
+  }
+  console.log(`  accepted for forwarding (request ${outcome.requestId}); the position has changed`);
+  // The position moves first; the history that carries the price and the transaction follows.
+  let fill = outcome.fill;
+  const deadline = Date.now() + FILL_RECORD_WAIT_MS;
+  while (!fill && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2_000));
+    fill = await outcome.findFill();
+  }
+  if (!fill) {
+    stop(
+      `The order filled, but Perpl's history had not listed the fill after ${FILL_RECORD_WAIT_MS / 1000}s, ` +
+        'so there is no transaction to print. Check the account at https://testnet.perpl.xyz.',
+    );
+  }
+  return fill;
 }
 
 function report(fill: VenueFill, market: Market) {
