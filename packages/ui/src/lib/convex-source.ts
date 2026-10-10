@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { createChartReads } from './chart-reads';
 import { createAnalyticsReads } from './analytics-reads';
 import { demoDataSource, type KanonDataSource } from './data';
@@ -19,6 +19,9 @@ import { createDomainReads } from './domain-reads';
 import { createHomeReads } from './home-reads';
 import { ruleHistory } from './domain-map';
 import type { KanonSession, ProfileSettings } from './domain-types';
+import type { MarketFeed } from './market-feed';
+import { createVenueChartReads } from './venue-chart-reads';
+import { createVenueTickerReads } from './venue-ticker-reads';
 
 /**
  * Convex, wired to the live data source, once for both clients.
@@ -75,8 +78,18 @@ export function useConvexKanonSource(input: {
   vaultConfig?: VaultConfigResult | undefined;
   /** Whether a signer exists, so an action can say why it cannot run before it is tried. */
   hasWallet?: boolean | undefined;
+  /**
+   * The market data gateway's client. Present, candles and pair prices are read
+   * from the venue through it; trade markers and everything else stay on Convex.
+   * Absent, nothing changes. Only the value at first render is used.
+   */
+  marketFeed?: MarketFeed | undefined;
 }): KanonDataSource {
   const { hooks, api, session, pinClient } = input;
+  // Fixed for the life of the source. `useSeries`, `useMarkets` and `useTicker` are hooks that
+  // mounted components call on every render, and the venue's call different hooks inside than
+  // Convex's do, so the two must never be swapped under a component.
+  const [marketFeed] = useState(() => input.marketFeed);
 
   // The caller's own `users` row, found from the token. `userId` is only a
   // gate ("signed in, and signup has created a row"); it is never an argument.
@@ -139,21 +152,27 @@ export function useConvexKanonSource(input: {
   // Candles and trade markers: live once signed in, the demo fixture only while signed out.
   const chartStrategyId = activeId ?? strategies?.[strategies.length - 1]?._id;
   const chartReads = useMemo(
-    () =>
-      createChartReads({
+    () => {
+      const chartSession = {
+        pending: session.pending,
+        signedIn: session.signedIn,
+        strategyId: chartStrategyId,
+      };
+      const fromConvex = createChartReads({
         useQuery: hooks.useQuery,
         getSeries: api.series.getSeries,
         getChartMarkers: api.series.getChartMarkers,
-        session: {
-          pending: session.pending,
-          signedIn: session.signedIn,
-          strategyId: chartStrategyId,
-        },
+        session: chartSession,
         demo: demoDataSource,
-      }),
+      });
+      // With a gateway the candles are the venue's. The markers are the user's own trades, which only Convex has.
+      return marketFeed
+        ? { ...fromConvex, ...createVenueChartReads({ feed: marketFeed, session: chartSession }) }
+        : fromConvex;
+    },
     // `hooks` and `api` are module-level in both apps; the session is what changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [hooks.useQuery, session.pending, session.signedIn, chartStrategyId],
+    [hooks.useQuery, session.pending, session.signedIn, chartStrategyId, marketFeed],
   );
 
   // Predict: real markets and the person's stakes, once signed in; the demo cards while signed out.
@@ -207,18 +226,29 @@ export function useConvexKanonSource(input: {
 
   // Per-domain reads that need no root subscription: pairs, activity, follows.
   const domainReads = useMemo(
-    () =>
-      createDomainReads({
+    () => {
+      const fromConvex = createDomainReads({
         useQuery: hooks.useQuery,
         listTickers: api.series.listTickers,
         getTicker: api.series.getTicker,
         listRecentActivity: api.trades.listRecentActivity,
         listFollows: api.copyRelationships.listCopyRelationshipsByOwner,
         session: { pending: session.pending, signedIn: session.signedIn, userId },
-      }),
+      });
+      // With a gateway a pair's price is the venue's, the same one its chart closes on.
+      return marketFeed
+        ? {
+            ...fromConvex,
+            ...createVenueTickerReads({
+              feed: marketFeed,
+              session: { pending: session.pending, signedIn: session.signedIn },
+            }),
+          }
+        : fromConvex;
+    },
     // `hooks` and `api` are module-level in both apps; the session is what changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [hooks.useQuery, session.pending, session.signedIn, userId],
+    [hooks.useQuery, session.pending, session.signedIn, userId, marketFeed],
   );
 
   // Home's own reads: a pair's last-day line and the copy carousel. Market data, screen-scoped.

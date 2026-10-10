@@ -22,6 +22,7 @@ import {
   createVaultClient,
   resolveVaultConfig,
   resolveMarketAddress,
+  resolveMarketFeed,
   resolveRegistryAddress,
   resolveSeriesMap,
   useConvexKanonSource,
@@ -69,6 +70,7 @@ assertPublicEnv(
     vaultCollateralAddress: process.env.NEXT_PUBLIC_VAULT_COLLATERAL_ADDRESS,
     vaultStartBlock: process.env.NEXT_PUBLIC_VAULT_START_BLOCK,
     vaultCollateralDecimals: process.env.NEXT_PUBLIC_VAULT_COLLATERAL_DECIMALS,
+    gatewayUrl: process.env.NEXT_PUBLIC_GATEWAY_URL,
   },
   { platform: 'web', requireCore: typeof window !== 'undefined' },
 );
@@ -138,6 +140,14 @@ const VAULT_CONFIG = resolveVaultConfig({
   collateralDecimals: process.env.NEXT_PUBLIC_VAULT_COLLATERAL_DECIMALS,
   collateralSymbol: process.env.NEXT_PUBLIC_VAULT_COLLATERAL_SYMBOL,
 });
+
+/**
+ * The market data gateway (`packages/gateway`), read the same way. With an
+ * address, charts and pair prices come from the venue through it; with none
+ * they stay on Convex. Creating the feed opens nothing: the first chart to
+ * subscribe does, so this is safe at module load and during a server render.
+ */
+const MARKET_FEED = resolveMarketFeed(process.env.NEXT_PUBLIC_GATEWAY_URL);
 
 /**
  * How Convex learns who is calling: Privy's own access token (an ES256 JWT
@@ -280,6 +290,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
     vaultClient,
     vaultConfig: VAULT_CONFIG,
     hasWallet: Boolean(address),
+    marketFeed: MARKET_FEED,
   });
 
   // Who signed in and how, and the one way out. Convex's session follows Privy's, so `logout`

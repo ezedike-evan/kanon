@@ -169,4 +169,6 @@ export { createVaultReads, type VaultReadsDeps } from './lib/vault-reads';
 export { createStore, shallowEqual, shareStructure, useStoreSelector, type Store } from './lib/store';
 export { monad, monadTestnet, resolveChain, configureChain, activeChain } from './lib/monad-chain';
 export { assertPublicEnv, validatePublicEnv, describePublicEnvProblems } from './lib/public-env';
+// Market data: the gateway's client. An app with a gateway address hands it to `useConvexKanonSource`.
+export { createMarketFeed, resolveMarketFeed, type MarketFeed, type MarketFeedOptions } from './lib/market-feed';
 export { recordWithWalletLink } from './lib/wallet-link';

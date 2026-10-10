@@ -24,6 +24,8 @@ export interface PublicEnvInput {
   vaultCollateralAddress: string | undefined;
   vaultStartBlock: string | undefined;
   vaultCollateralDecimals: string | undefined;
+  /** The market data gateway. Unset, charts read their candles from Convex. */
+  gatewayUrl?: string | undefined;
 }
 
 export interface PublicEnvProblem {
@@ -44,6 +46,7 @@ export interface PublicEnvNames {
   vaultCollateralAddress: string;
   vaultStartBlock: string;
   vaultCollateralDecimals: string;
+  gatewayUrl: string;
 }
 
 const names = (prefix: string): PublicEnvNames => ({
@@ -59,6 +62,7 @@ const names = (prefix: string): PublicEnvNames => ({
   vaultCollateralAddress: `${prefix}_VAULT_COLLATERAL_ADDRESS`,
   vaultStartBlock: `${prefix}_VAULT_START_BLOCK`,
   vaultCollateralDecimals: `${prefix}_VAULT_COLLATERAL_DECIMALS`,
+  gatewayUrl: `${prefix}_GATEWAY_URL`,
 });
 
 export const WEB_ENV_NAMES = names('NEXT_PUBLIC');
@@ -120,6 +124,7 @@ export function validatePublicEnv(env: PublicEnvInput, opts: PublicEnvOptions): 
     (s) => isUint(s) && Number(s) <= 36,
     'an integer from 0 to 36',
   );
+  maybe(n.gatewayUrl, env.gatewayUrl, isHttpUrl, 'an http(s) URL');
   return problems;
 }
 

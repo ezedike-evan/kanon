@@ -62,6 +62,22 @@ describe('validatePublicEnv', () => {
   it('treats blank as unset', () => {
     expect(validatePublicEnv({ ...good, chainId: '  ', registryAddress: '' }, web)).toEqual([]);
   });
+
+  it('takes the gateway address as optional, and as an http or https URL when set', () => {
+    expect(validatePublicEnv({ ...good, gatewayUrl: undefined }, web)).toEqual([]);
+    expect(validatePublicEnv({ ...good, gatewayUrl: '  ' }, web)).toEqual([]);
+    expect(validatePublicEnv({ ...good, gatewayUrl: 'http://localhost:8787' }, web)).toEqual([]);
+    expect(validatePublicEnv({ ...good, gatewayUrl: 'https://gateway.kanon.example/' }, mobile)).toEqual([]);
+    // A build with no browser env still checks an address that was set.
+    expect(validatePublicEnv({ ...empty, gatewayUrl: 'http://localhost:8787' }, { platform: 'web', requireCore: false })).toEqual([]);
+    for (const bad of ['ws://localhost:8787', 'localhost:8787', '8787', 'not a url']) {
+      expect(validatePublicEnv({ ...good, gatewayUrl: bad }, web), bad).toEqual([
+        { name: 'NEXT_PUBLIC_GATEWAY_URL', expected: 'an http(s) URL' },
+      ]);
+      expect(validatePublicEnv({ ...empty, gatewayUrl: bad }, { platform: 'web', requireCore: false }), bad).toHaveLength(1);
+    }
+    expect(validatePublicEnv({ ...good, gatewayUrl: 'wss://x' }, mobile).map((p) => p.name)).toEqual(['EXPO_PUBLIC_GATEWAY_URL']);
+  });
 });
 
 describe('assertPublicEnv', () => {
@@ -74,6 +90,8 @@ describe('assertPublicEnv', () => {
     }
     expect(message).toContain('NEXT_PUBLIC_CHAIN_ID');
     expect(message).not.toContain('hunter2');
+    expect(() => assertPublicEnv({ ...good, gatewayUrl: 'ftp://user:hunter2@host' }, web)).toThrow(/NEXT_PUBLIC_GATEWAY_URL: expected an http\(s\) URL/);
+    expect(() => assertPublicEnv({ ...good, gatewayUrl: 'ftp://user:hunter2@host' }, web)).not.toThrow(/hunter2/);
   });
 
   it('does not throw for a good env', () => {

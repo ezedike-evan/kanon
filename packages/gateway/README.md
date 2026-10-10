@@ -112,8 +112,11 @@ idle drops it. Run one instance: each instance holds its own venue connections
 and its own cache, so more instances multiply the load on the venue rather than
 share it.
 
-Set `GATEWAY_ALLOWED_ORIGINS` to the origin the web app is served from. The
-clients then need the gateway's address; nothing reads it yet.
+Set `GATEWAY_ALLOWED_ORIGINS` to the origin the web app is served from, and
+give the apps the gateway's address: `NEXT_PUBLIC_GATEWAY_URL` for web,
+`EXPO_PUBLIC_GATEWAY_URL` for mobile. With it set, a signed-in chart and the
+pair prices are read from here (`packages/ui/src/lib/market-feed.ts`). Unset,
+they stay on Convex.
 
 ## Two things Perpl does that are not in its documentation
 
