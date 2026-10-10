@@ -1,4 +1,5 @@
-# Render blueprint. One service: the market data gateway (packages/gateway).
+# Render blueprint. One service: the gateway (packages/gateway): market data,
+# and order placing when the trading variables below are filled in.
 # The web app is not hosted here.
 services:
   - type: web
@@ -13,8 +14,9 @@ services:
     numInstances: 1
     # The repo's .npmrc sets node-linker=hoisted, under which pnpm ignores the
     # filter and installs every workspace (Expo, Next and all). The isolated
-    # linker installs only what the gateway needs.
-    buildCommand: pnpm install --frozen-lockfile --filter @kanon/gateway --config.node-linker=isolated
+    # linker installs only what the gateway needs. The trailing dots take the
+    # workspace packages it imports with it (@kanon/execution, @kanon/spec).
+    buildCommand: pnpm install --frozen-lockfile --filter "@kanon/gateway..." --config.node-linker=isolated
     startCommand: pnpm --filter @kanon/gateway start
     # Liveness, not venue health: /healthz goes 503 during a venue outage, and
     # restarting the gateway then would only throw its cache away.
@@ -22,6 +24,8 @@ services:
     buildFilter:
       paths:
         - packages/gateway/**
+        - packages/execution/**
+        - packages/spec/**
         - pnpm-lock.yaml
         - render.yaml
     envVars:
@@ -29,6 +33,18 @@ services:
         value: "22"
       - key: PERPL_NETWORK
         value: testnet
+      # Trading (/trade). Off until all four are filled in on the dashboard; they
+      # are secrets and are never written here. The region above matters for
+      # these: Perpl answers its trading API with HTTP 451 from regions it does
+      # not serve.
+      - key: PERPL_API_KEY
+        sync: false
+      - key: PERPL_API_KEY_SECRET
+        sync: false
+      - key: CONVEX_SITE_URL
+        sync: false
+      - key: VENUE_RECORDER_KEY
+        sync: false
       # Browser origins allowed to connect. Add the deployed web app's origin here.
       - key: GATEWAY_ALLOWED_ORIGINS
         value: http://localhost:3000,http://localhost:8081

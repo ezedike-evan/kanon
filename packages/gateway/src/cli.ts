@@ -3,18 +3,24 @@
  *
  *   pnpm --filter @kanon/gateway start
  *
- * Configuration is read from the environment; see `config.ts`. Logs are one
- * JSON object per line. `GET /healthz` answers 200 while the venue connection
- * is open and has been heard from recently, 503 otherwise.
+ * Configuration is read from the environment; see `config.ts`. A `.env.local`
+ * beside this package's `package.json` is read first if there is one (it is
+ * gitignored, and is where the trading key goes on a developer's machine); a
+ * variable already set in the environment wins over it. Logs are one JSON
+ * object per line. `GET /healthz` answers 200 while the venue connection is
+ * open and has been heard from recently, 503 otherwise.
  */
 
 import { setDefaultResultOrder } from 'node:dns';
+import { existsSync } from 'node:fs';
 import { setDefaultAutoSelectFamily } from 'node:net';
 import { ConfigError, loadConfig } from './config';
 import { createJsonLogger } from './log';
 import { createGateway } from './server';
+import { connectTrade, type TradeRoutes } from './trade';
 
 async function main() {
+  if (existsSync('.env.local')) process.loadEnvFile('.env.local');
   let config;
   try {
     config = loadConfig(process.env);
@@ -31,7 +37,17 @@ async function main() {
   }
 
   const log = createJsonLogger();
-  const gateway = createGateway({ config, log });
+  let trade: TradeRoutes | undefined;
+  if (config.trade) {
+    try {
+      trade = await connectTrade(config.trade, log);
+    } catch (e) {
+      // Names the problem with the secret, never any part of it.
+      console.error(`PERPL_API_KEY_SECRET: ${e instanceof Error ? e.message : 'could not be read'}`);
+      process.exit(2);
+    }
+  }
+  const gateway = createGateway({ config, log, ...(trade ? { trade } : {}) });
   const port = await gateway.listen();
   log({
     level: 'info',
@@ -40,6 +56,8 @@ async function main() {
     network: config.network,
     origins: config.allowedOrigins,
     warm: config.warmStreams,
+    // The network orders go to, or `off`. Never the key.
+    trade: config.trade ? config.trade.network : 'off',
   });
 
   let stopping = false;

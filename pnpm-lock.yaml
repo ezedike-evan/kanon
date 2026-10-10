@@ -273,6 +273,9 @@ importers:
 
   packages/gateway:
     dependencies:
+      '@kanon/execution':
+        specifier: workspace:*
+        version: link:../execution
       vite-node:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.51.2)(tsx@4.21.0)(yaml@2.9.0)

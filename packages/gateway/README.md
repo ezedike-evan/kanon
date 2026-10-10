@@ -15,7 +15,10 @@ Perpl and serves every Kanon client from it.
   They are read from the venue, kept in memory here for speed, and stored
   nowhere.
 
-It holds no keys and places no orders. Everything it serves is public.
+For market data it holds no key: everything it serves is public.
+
+It can also place orders (`/trade`, below). That half is off unless a Perpl API
+key is configured, and with it on this process holds that key.
 
 ## What it serves
 
@@ -78,8 +81,50 @@ pnpm --filter @kanon/gateway start
 | `GATEWAY_MAX_UPSTREAM_CONNECTIONS` | `3` | each carries 15 streams |
 | `GATEWAY_LINGER_SECONDS` | `300` | |
 | `FORCE_IPV4` | `false` | for hosts with broken IPv6 |
+| `PERPL_API_KEY`, `PERPL_API_KEY_SECRET` | none | trading: the one exchange account's API key and its Ed25519 secret |
+| `CONVEX_SITE_URL` | none | trading: the backend's `.convex.site` address |
+| `VENUE_RECORDER_KEY` | none | trading: the key the backend expects from this service; the same value is set there |
+| `PERPL_TRADE_NETWORK` | `testnet` | trading: the network orders go to, separate from `PERPL_NETWORK` |
 
-The rest are in `src/config.ts`. Logs are one JSON object per line.
+The rest are in `src/config.ts`. Logs are one JSON object per line. On a
+developer's machine the variables can go in `packages/gateway/.env.local`
+(gitignored), which is read at start; a variable already in the environment
+wins over it.
+
+## Orders (`/trade`)
+
+Off unless all four trading variables are set. Some but not all of them stops
+the gateway at start, naming what is missing.
+
+| Path | |
+|---|---|
+| `GET /trade/account` | the trading account: balance, open positions, markets and every limit |
+| `POST /trade/order` | `{ asset, side, usd, leverage }`: open at market |
+| `POST /trade/close` | `{ asset }`: close the whole position at market |
+
+- **One account.** Every signed-in user trades the exchange account the key
+  belongs to. Testnet only, $10 to $100 of notional, up to 5x, market orders
+  sent IOC with a 1% slippage bound, one position per market. The logic and the
+  limits are in `@kanon/execution` (`venue-service.ts`, `venue-policy.ts`).
+- **Why here.** Perpl answers its trading API with HTTP 451 from regions it
+  does not serve. The backend's host is in one, so the backend cannot send an
+  order. This process runs where its operator is.
+- **Who may call.** A request carries the caller's own sign-in token in
+  `Authorization: Bearer`. The gateway does not judge it: it hands it to the
+  backend (`src/convex-recorder.ts`), which verifies it, applies the rate
+  limit, lets one order out at a time and writes each order down. With no
+  token, or one the backend turns away, nothing is read and nothing is sent.
+- **Answers.** Everything the ticket shows comes back as `200` with a typed
+  body, a refusal included. Logs name the asset, side, size and outcome of
+  each order, never a token or a key.
+
+Checked on 2026-10-10 on a developer's machine with the real key and the
+development backend: with no token and with a made-up one the account is not
+read and an order is not sent ("Sign in to trade."), an order over the limit is
+refused with its reason, another origin is answered `403`, and the order
+service reads the real account. The same day a signed-in user opened and closed
+a position through these routes from the app. Known fault from that run: the
+close filled on the venue and was reported as not filled.
 
 - `/healthz` answers `200` while the venue connection is open and heard from in
   the last 20 seconds, `503` otherwise.

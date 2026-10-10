@@ -2,9 +2,13 @@
  * The gateway process: one HTTP server that answers the public REST paths from
  * a cache and upgrades `/ws/v1/market-data` to a socket fed by the hub.
  *
- * It holds no keys and places no orders. Everything it serves is public market
- * data that Perpl publishes; it exists because a browser on our origin cannot
- * reach Perpl directly, and so that many viewers cost the venue one connection.
+ * Market data is public data that Perpl publishes; the gateway exists because a
+ * browser on our origin cannot reach Perpl directly, and so that many viewers
+ * cost the venue one connection. For that half it holds no key.
+ *
+ * `/trade` is the other half and is off unless a key is configured (`trade.ts`,
+ * `config.ts`). With it on, this process holds one Perpl API key and places
+ * orders for signed-in callers.
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -16,6 +20,7 @@ import { Hub, type HubClient } from './hub';
 import type { Logger } from './log';
 import { RestProxy } from './rest';
 import { MT } from './streams';
+import { TRADE_PREFIX, disconnectedTrade, type TradeRoutes } from './trade';
 import { UpstreamPool, type SocketFactory } from './upstream';
 import { wsSocketFactory } from './ws-socket';
 
@@ -36,6 +41,8 @@ export interface GatewayDeps {
   log: Logger;
   socketFactory?: SocketFactory;
   fetchImpl?: typeof fetch;
+  /** The order routes, when a key is configured. Without them `/trade` says trading is not connected. */
+  trade?: TradeRoutes;
 }
 
 export interface Gateway {
@@ -46,6 +53,7 @@ export interface Gateway {
 
 export function createGateway(deps: GatewayDeps): Gateway {
   const { config, log } = deps;
+  const trade = deps.trade ?? disconnectedTrade;
 
   let markets: Set<number> | null = null;
   const isKnownMarket = (id: number): boolean | null => (markets === null ? null : markets.has(id));
@@ -107,20 +115,32 @@ export function createGateway(deps: GatewayDeps): Gateway {
       res.end('{"error":"origin not allowed"}');
       return;
     }
+    const url = new URL(req.url ?? '/', 'http://gateway');
+    const isTrade = url.pathname.startsWith(TRADE_PREFIX);
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         ...corsHeaders(origin),
-        'access-control-allow-methods': 'GET',
+        // An order is a POST that carries the caller's sign-in token, so a browser asks first.
+        ...(isTrade
+          ? { 'access-control-allow-methods': 'GET, POST', 'access-control-allow-headers': 'authorization, content-type' }
+          : { 'access-control-allow-methods': 'GET' }),
         'access-control-max-age': '86400',
       });
       res.end();
+      return;
+    }
+    if (isTrade) {
+      const answer = await trade.handle(req, url.pathname);
+      send(answer.status, JSON.stringify(answer.body), {
+        'cache-control': 'no-store',
+        ...(answer.allow ? { allow: answer.allow } : {}),
+      });
       return;
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       send(405, '{"error":"method not allowed"}', { allow: 'GET' });
       return;
     }
-    const url = new URL(req.url ?? '/', 'http://gateway');
     // Liveness for the host: the process is up and answering. It stays 200 through a
     // venue outage, when restarting the gateway would only throw its cache away.
     if (url.pathname === '/livez') {

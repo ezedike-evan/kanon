@@ -15,6 +15,7 @@ describe('loadConfig', () => {
       lingerMs: 300_000,
       maxClients: 2000,
       forceIpv4: false,
+      trade: null,
     });
   });
 
@@ -58,6 +59,62 @@ describe('loadConfig', () => {
     ['a socket URL that is not one', { PERPL_WS_URL: 'https://app.perpl.xyz' }],
   ])('refuses %s', (_label, env) => {
     expect(() => loadConfig(env)).toThrow(ConfigError);
+  });
+});
+
+describe('trading settings', () => {
+  const trade = {
+    PERPL_API_KEY: 'pk_test_example',
+    PERPL_API_KEY_SECRET: 'ab'.repeat(32),
+    CONVEX_SITE_URL: 'https://example-123.convex.site/',
+    VENUE_RECORDER_KEY: 'r'.repeat(48),
+  };
+
+  it('is off, and holds no key, when none of them is set', () => {
+    expect(loadConfig({}).trade).toBeNull();
+    expect(loadConfig({ PERPL_TRADE_NETWORK: 'mainnet' }).trade).toBeNull();
+  });
+
+  it('is on with all four, on testnet unless told otherwise', () => {
+    expect(loadConfig(trade).trade).toEqual({
+      apiKey: 'pk_test_example',
+      secret: 'ab'.repeat(32),
+      network: 'testnet',
+      convexSiteUrl: 'https://example-123.convex.site',
+      recorderKey: 'r'.repeat(48),
+    });
+    expect(loadConfig({ ...trade, PERPL_TRADE_NETWORK: 'mainnet' }).trade?.network).toBe('mainnet');
+  });
+
+  it('keeps the order network apart from the market data network', () => {
+    const cfg = loadConfig({ ...trade, PERPL_NETWORK: 'mainnet' });
+    expect(cfg.network).toBe('mainnet');
+    expect(cfg.trade?.network).toBe('testnet');
+  });
+
+  it('refuses to start half-connected, and names what is missing', () => {
+    const { VENUE_RECORDER_KEY: _key, ...partial } = trade;
+    expect(() => loadConfig(partial)).toThrow(/Not set: VENUE_RECORDER_KEY$/);
+    expect(() => loadConfig({ PERPL_API_KEY: trade.PERPL_API_KEY })).toThrow(
+      /Not set: PERPL_API_KEY_SECRET, CONVEX_SITE_URL, VENUE_RECORDER_KEY$/,
+    );
+  });
+
+  it('never repeats a value in what it reports', () => {
+    for (const env of [
+      { ...trade, VENUE_RECORDER_KEY: 'too-short-recorder-key' },
+      { ...trade, PERPL_API_KEY_SECRET: 'too-short-secret' },
+      { ...trade, CONVEX_SITE_URL: 'not-a-url-but-secretish' },
+    ]) {
+      let message = '';
+      try {
+        loadConfig(env);
+      } catch (e) {
+        message = (e as Error).message;
+      }
+      expect(message).not.toBe('');
+      expect(message).not.toMatch(/too-short|secretish/);
+    }
   });
 });
 
