@@ -25,6 +25,7 @@ import {
   createSeriesMarkers,
   createTextWatermark,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type ITextWatermarkPluginApi,
@@ -62,6 +63,7 @@ import type {
   ChartPalette,
   Drawing,
   DrawingKind,
+  EnginePriceLine,
   RuntimeCommand,
   RuntimeEvent,
   RuntimeInit,
@@ -575,6 +577,44 @@ export function createChartRuntime(
     close: c[4],
   });
 
+  // ---- host price lines -------------------------------------------------------
+  // Levels the host draws, such as an open position's entry. They live on the
+  // series and nowhere near `history`: no undo, selection, `state` event or saved
+  // drawing ever holds one, and `clear` leaves them alone. They are not part of
+  // the price scale's fit, so a level far from the candles does not flatten them.
+  const priceLines = new Map<string, { line: IPriceLine; spec: EnginePriceLine }>();
+  const priceLineOptions = (spec: EnginePriceLine) => {
+    const color = spec.tone === 'long' ? palette.up : palette.down;
+    return {
+      price: spec.price,
+      title: spec.label,
+      color,
+      lineWidth: 1 as const,
+      lineStyle: LineStyle.Solid,
+      axisLabelVisible: true,
+      axisLabelColor: color,
+      axisLabelTextColor: palette.background,
+    };
+  };
+  /** Replace-all: a line the host no longer lists goes, one it still lists is updated where it is. */
+  function setPriceLines(next: readonly EnginePriceLine[]): void {
+    const listed = new Set(next.map((spec) => spec.id));
+    for (const [id, held] of priceLines) {
+      if (listed.has(id)) continue;
+      series.removePriceLine(held.line);
+      priceLines.delete(id);
+    }
+    for (const spec of next) {
+      const held = priceLines.get(spec.id);
+      if (held) {
+        held.spec = spec;
+        held.line.applyOptions(priceLineOptions(spec));
+      } else {
+        priceLines.set(spec.id, { line: series.createPriceLine(priceLineOptions(spec)), spec });
+      }
+    }
+  }
+
   let watermarkLines: [string, string] | null = null;
   function applyWatermark(): void {
     if (!watermarkLines) return;
@@ -607,6 +647,7 @@ export function createChartRuntime(
       wickDownColor: next.down,
       priceLineColor: withAlpha(next.textStrong, 0.7),
     });
+    for (const held of priceLines.values()) held.line.applyOptions(priceLineOptions(held.spec));
     drawingsPrimitive.redraw();
     structurePrimitive.redraw();
     tagPrimitive.redraw();
@@ -660,6 +701,9 @@ export function createChartRuntime(
         }
         case 'markers':
           markersApi.setMarkers(command.markers.map((m) => ({ ...m, time: m.time as UTCTimestamp })));
+          break;
+        case 'priceLines':
+          setPriceLines(command.lines);
           break;
         case 'watermark':
           watermarkLines = command.lines;

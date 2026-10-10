@@ -1,10 +1,13 @@
 /**
  * Device preferences: the few settings that are this device's, not the
- * account's. Two exist, and both are applied somewhere real:
+ * account's. Each one is applied somewhere real:
  *
  *   - `haptics`: gates every pattern `useHaptics()` plays.
  *   - `chartBucketSeconds`: the timeframe the Chart tab opens on. `null` means
  *     "the rule's own timeframe", which is what the chart did before this.
+ *   - `chartPanelOpen`, `predictMarketsPanelOpen`, `predictSettlePanelOpen`:
+ *     whether each desktop side panel is open or shrunk to its rail. Open is the
+ *     default, so the layout a first visit paints is the one that stays.
  *
  * Nothing here can loosen a pinned rule: a rule is on-chain and only the
  * cooling-off flow changes it. These are how the app feels, not what it allows.
@@ -23,9 +26,24 @@ export interface Preferences {
   haptics: boolean;
   /** Seconds per candle, one of the chart's timeframes, or null for the rule's own. */
   chartBucketSeconds: number | null;
+  /** Desktop, Chart: the panel with the markets, the rule and the order ticket. False is its rail. */
+  chartPanelOpen: boolean;
+  /** Desktop, Predict: the panel left of the reel (assets, window, markets in view). */
+  predictMarketsPanelOpen: boolean;
+  /** Desktop, Predict: the panel right of the reel (how it settles, your predictions). */
+  predictSettlePanelOpen: boolean;
 }
 
-export const DEFAULT_PREFERENCES: Preferences = { haptics: true, chartBucketSeconds: null };
+/** The preferences that say whether a desktop side panel is open. */
+export type PanelPreference = 'chartPanelOpen' | 'predictMarketsPanelOpen' | 'predictSettlePanelOpen';
+
+export const DEFAULT_PREFERENCES: Preferences = {
+  haptics: true,
+  chartBucketSeconds: null,
+  chartPanelOpen: true,
+  predictMarketsPanelOpen: true,
+  predictSettlePanelOpen: true,
+};
 
 export const PREFERENCES_STORAGE_KEY = 'kanon.preferences.v1';
 
@@ -47,15 +65,26 @@ export function parsePreferences(raw: string | null | undefined): Preferences {
   if (typeof value !== 'object' || value === null) return DEFAULT_PREFERENCES;
   const v = value as Record<string, unknown>;
   const bucket = v['chartBucketSeconds'];
+  const flag = (key: 'haptics' | PanelPreference): boolean =>
+    typeof v[key] === 'boolean' ? (v[key] as boolean) : DEFAULT_PREFERENCES[key];
   return {
-    haptics: typeof v['haptics'] === 'boolean' ? v['haptics'] : DEFAULT_PREFERENCES.haptics,
+    haptics: flag('haptics'),
     chartBucketSeconds:
       typeof bucket === 'number' && timeframeByBucket(bucket) ? bucket : DEFAULT_PREFERENCES.chartBucketSeconds,
+    chartPanelOpen: flag('chartPanelOpen'),
+    predictMarketsPanelOpen: flag('predictMarketsPanelOpen'),
+    predictSettlePanelOpen: flag('predictSettlePanelOpen'),
   };
 }
 
 export function serializePreferences(p: Preferences): string {
-  return JSON.stringify({ haptics: p.haptics, chartBucketSeconds: p.chartBucketSeconds });
+  return JSON.stringify({
+    haptics: p.haptics,
+    chartBucketSeconds: p.chartBucketSeconds,
+    chartPanelOpen: p.chartPanelOpen,
+    predictMarketsPanelOpen: p.predictMarketsPanelOpen,
+    predictSettlePanelOpen: p.predictSettlePanelOpen,
+  });
 }
 
 export const preferencesStore = createStore<Preferences>(DEFAULT_PREFERENCES);

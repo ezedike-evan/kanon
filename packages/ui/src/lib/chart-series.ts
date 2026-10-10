@@ -9,13 +9,31 @@
  */
 import type { Decimal, Series } from '@kanon/spec';
 import { compareDecimal, subDecimal } from '@kanon/spec';
-import type { Candle5 } from './chart-protocol';
+import type { Candle5, EnginePriceLine } from './chart-protocol';
 import { displayDecimals, formatAtoms } from './chart-format';
 
 export { applyPatch, diffCandles, type SeriesDiff } from './chart-candles';
 
 export function decimalToNumber(d: Decimal): number {
   return Number(d.atoms) / 10 ** d.decimals;
+}
+
+/** A horizontal level across the chart, as a screen supplies it: exact until the moment it is drawn. */
+export interface PriceLevel {
+  id: string;
+  price: Decimal;
+  label: string;
+  tone: EnginePriceLine['tone'];
+}
+
+/** Levels as the runtime draws them. A price that is not a number has no place on the axis and is left out. */
+export function toEnginePriceLines(levels: readonly PriceLevel[]): EnginePriceLine[] {
+  const lines: EnginePriceLine[] = [];
+  for (const level of levels) {
+    const price = decimalToNumber(level.price);
+    if (Number.isFinite(price)) lines.push({ id: level.id, price, label: level.label, tone: level.tone });
+  }
+  return lines;
 }
 
 /** All candles of a series as compact rows. */

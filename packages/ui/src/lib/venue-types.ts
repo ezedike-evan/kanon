@@ -28,6 +28,8 @@ export interface VenueLimits {
   maxLeverage: number;
   /** The furthest a market order may fill from the mark price. */
   slippageBps: number;
+  /** Whole dollars. The most a position on one market may reach, at its entry price, through orders that add to it. */
+  maxPositionUsd: number;
 }
 
 export interface VenuePositionView {
@@ -40,6 +42,12 @@ export interface VenuePositionView {
   leverage: number;
   /** AUSD, six decimals. */
   collateral: Decimal;
+  /**
+   * Size times entry price, in dollars to two places. What `maxPositionUsd` is
+   * measured against. It is the position at the price it was entered at, not at
+   * the market's price now, so it says nothing about how the position is doing.
+   */
+  notional: Decimal;
   /** Milliseconds, or null when the venue did not say. */
   openedAt: number | null;
 }
@@ -87,16 +95,23 @@ export type VenueOrderResult =
       action: 'open' | 'close';
       side: VenueSide;
       size: Decimal;
-      /** Null when the venue reported the fill without a price. */
+      /**
+       * The fill's own figures, from the venue's history. The position moves
+       * first and the history follows seconds later, so any of these is null in
+       * an answer that came back before the history listed the fill. The order's
+       * row (`VenueOrderRow`, same id) gains them when it does.
+       */
       price: Decimal | null;
       /** AUSD. Negative atoms are a rebate. */
-      fee: Decimal;
-      block: number;
+      fee: Decimal | null;
+      block: number | null;
       /** The settling transaction: the evidence for this fill. */
       txHash: string | null;
     }
   /** The venue took the order and nothing filled. Nothing is left resting. */
   | { status: 'unfilled'; orderId: string; message: string }
+  /** The order was sent and the venue has not said what became of it. It may still fill. */
+  | { status: 'pending'; orderId: string; message: string }
   /** The server's limits or the venue said no. Nothing was opened. Not a fault. */
   | { status: 'refused'; reason: string }
   /** Another order is on its way to the same account. */
@@ -147,8 +162,13 @@ export interface VenueAccountRead {
   refresh(): void;
 }
 
-/** What is on its way to the venue: an open on one side, or a close. Null when nothing is. */
-export type TicketSending = { action: 'open'; side: VenueSide } | { action: 'close' } | null;
+/**
+ * What is on its way to the venue: an order on one side (an open, or an add to
+ * the position held on that side), or the close of one market's position. Null
+ * when nothing is. A close names its market, since one can be sent for a
+ * market that is not the one on the chart.
+ */
+export type TicketSending = { action: 'open'; side: VenueSide } | { action: 'close'; asset: string } | null;
 
 /** A row of the caller's own orders, with every absent field made null. */
 export interface VenueOrder {

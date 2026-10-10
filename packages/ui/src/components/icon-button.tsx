@@ -18,6 +18,8 @@ export interface IconButtonProps {
   size?: keyof typeof BOX | undefined;
   color?: ColorToken | undefined;
   disabled?: boolean | undefined;
+  /** For a button that opens and closes something: whether that thing is open now. */
+  expanded?: boolean | undefined;
   className?: string | undefined;
 }
 
@@ -36,6 +38,7 @@ export function IconButton({
   size = 'md',
   color,
   disabled,
+  expanded,
   className,
 }: IconButtonProps) {
   const { tap } = useHaptics();
@@ -44,6 +47,7 @@ export function IconButton({
     <Pressable
       role="button"
       aria-label={label}
+      {...(expanded === undefined ? null : { 'aria-expanded': expanded })}
       disabled={disabled}
       hitSlop={size === 'sm' ? 6 : 2}
       onPressIn={tap}

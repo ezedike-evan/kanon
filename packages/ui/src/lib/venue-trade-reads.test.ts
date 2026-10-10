@@ -38,7 +38,7 @@ const READY: Extract<VenueAccountView, { status: 'ready' }> = {
   accountId: 7,
   balance: { atoms: '1234560000', decimals: 6 },
   canTrade: true,
-  limits: { minNotionalUsd: 10, maxNotionalUsd: 100, maxLeverage: 5, slippageBps: 100 },
+  limits: { minNotionalUsd: 10, maxNotionalUsd: 100, maxLeverage: 5, slippageBps: 100, maxPositionUsd: 300 },
   markets: [{ asset: 'BTC/USD', maxLeverage: 5, open: true }],
   positions: [],
 };
@@ -365,6 +365,7 @@ describe('createVenueTradeReads', () => {
           entryPrice: FILLED.price,
           leverage: 2,
           collateral: { atoms: '12500000', decimals: 6 },
+          notional: { atoms: '2510', decimals: 2 },
           openedAt: null,
         },
       ],

@@ -13,6 +13,7 @@ import { Avatar } from '../avatar';
 import { Badge } from '../badge';
 import { EmptyState } from '../empty-state';
 import { Icon } from '../icons';
+import { PanelRail, PanelToggle, usePanelOpen } from '../panel-rail';
 import { SectionHeader } from '../section-header';
 import { Delta, Label } from '../stat';
 import { directionOf } from '../tone';
@@ -26,9 +27,20 @@ import { SETTLE_STEPS } from './reel-sheets';
  * gives them content only once the window is a desktop's, so a phone pays for none
  * of it. Everything they show is what the reel already holds: the feed's markets,
  * the live tickers, and `settleTerms`. Nothing here decides a result.
+ *
+ * Each collapses to a 40px rail (`components/panel-rail.tsx`) and the reel, which
+ * keeps its own 440px, re-centres in the width that frees. The choice is
+ * remembered on the device, one per panel.
  */
 
 const PANEL = 'hidden min-h-0 shrink-0 bg-panel lg:flex';
+
+/** What each panel is called, open or collapsed, so the landmark and both toggles agree. */
+const MARKETS_PANEL = { label: 'Markets', name: 'markets' } as const;
+const SETTLE_PANEL = {
+  label: 'How it settles, and your predictions',
+  name: 'how it settles and your predictions',
+} as const;
 
 /* -------------------------------------------------------------------------- */
 /* Left: what to look at                                                       */
@@ -208,14 +220,26 @@ export function ReelLeftPanel({
   now: number;
   onPick: (marketId: string) => void;
 }) {
+  const [open, setOpen] = usePanelOpen('predictMarketsPanelOpen');
+  if (!open) {
+    return <PanelRail side="left" {...MARKETS_PANEL} caption="Markets" onOpen={() => setOpen(true)} />;
+  }
   return (
-    <View role="complementary" aria-label="Markets" className={cx(PANEL, 'w-[264px] border-r border-hairline xl:w-[296px]')}>
+    <View
+      role="complementary"
+      aria-label={MARKETS_PANEL.label}
+      className={cx(PANEL, 'w-[264px] border-r border-hairline xl:w-[296px]')}
+    >
       <ScrollView className="min-h-0 flex-1" showsVerticalScrollIndicator={false}>
-        <SectionHeader
-          title="Assets"
-          {...(assets.length > 0 ? { count: assets.length } : {})}
-          className="px-4 pb-2.5 pt-4"
-        />
+        {/* The toggle shares the first heading's row, so collapsing costs the panel no height. */}
+        <View className="flex-row items-center pr-1">
+          <SectionHeader
+            title="Assets"
+            {...(assets.length > 0 ? { count: assets.length } : {})}
+            className="min-w-0 flex-1 pb-2.5 pl-4 pt-4"
+          />
+          <PanelToggle side="left" open name={MARKETS_PANEL.name} onToggle={() => setOpen(false)} className="mt-1.5" />
+        </View>
         {live ? (
           <>
             <Pressable
@@ -347,15 +371,36 @@ export function ReelRightPanel({
   const settled = useMemo(() => held.filter((h) => h.position.result !== null), [held]);
   const shown = tab === 'open' ? open : settled;
   const { select } = useHaptics();
+  const [expanded, setExpanded] = usePanelOpen('predictSettlePanelOpen');
 
+  if (!expanded) {
+    return (
+      <PanelRail
+        side="right"
+        from="xl"
+        {...SETTLE_PANEL}
+        caption="How it settles · Predictions"
+        onOpen={() => setExpanded(true)}
+      />
+    );
+  }
   return (
     <View
       role="complementary"
-      aria-label="How it settles, and your predictions"
+      aria-label={SETTLE_PANEL.label}
       className="hidden min-h-0 w-[320px] shrink-0 border-l border-hairline bg-panel xl:flex"
     >
       <ScrollView className="min-h-0 flex-1" showsVerticalScrollIndicator={false}>
-        <SectionHeader title="How it settles" className="px-4 pb-3 pt-4" />
+        <View className="flex-row items-center pr-1">
+          <SectionHeader title="How it settles" className="min-w-0 flex-1 pb-3 pl-4 pt-4" />
+          <PanelToggle
+            side="right"
+            open
+            name={SETTLE_PANEL.name}
+            onToggle={() => setExpanded(false)}
+            className="mt-1"
+          />
+        </View>
         <View className="gap-3 px-4">
           {SETTLE_STEPS.map((step, i) => (
             <View key={i} className="flex-row items-start gap-3">

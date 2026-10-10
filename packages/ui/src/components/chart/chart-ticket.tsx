@@ -1,4 +1,4 @@
-import { Component, memo, type ReactNode } from 'react';
+import { Component, memo, useEffect, useState, type ReactNode } from 'react';
 import { Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { baseOf } from '../../lib/chart-assets';
 import { cx } from '../../lib/cx';
@@ -10,12 +10,18 @@ import {
   closePositionLabel,
   formatLeverage,
   formatUsd,
-  openOrderLabel,
+  isClosing,
+  openingIntent,
   orderRowView,
   positionFacts,
+  sheetLine,
   sheetPrimary,
+  sideButton,
+  sizeChipLabel,
   ticketLine,
+  ticketSecondLine,
   type OutcomeView,
+  type SheetIntent,
   type TxRef,
 } from '../../lib/venue-trade';
 import type { VenuePositionView, VenueSide } from '../../lib/venue-types';
@@ -24,9 +30,11 @@ import { Badge } from '../badge';
 import { BottomSheet } from '../bottom-sheet';
 import { Icon } from '../icons';
 import { SectionHeader } from '../section-header';
+import { SegmentedControl } from '../segmented-control';
 import { Skeleton } from '../skeleton';
 import { Label } from '../stat';
 import { Num } from '../ui';
+import { OpenPositions, SIDE_WORD, SideGlyph } from './chart-trades';
 
 /*
  * The order ticket: a real market order on the venue, for the asset on the
@@ -36,6 +44,11 @@ import { Num } from '../ui';
  * bottom-anchored action sends it. On both, an order only ever leaves a surface
  * that shows its size, its leverage and every limit it is held to.
  *
+ * A market holds one position. With one open on the chart's asset the ticket
+ * shows it with its close, offers an order that adds to it (its own side, its
+ * own leverage, inside the position limit) and keeps the other side off, since
+ * the server refuses that until the position is closed.
+ *
  * What it must never do: imply the account is the viewer's own (it is one
  * testnet account, shared by everyone signed in), style a refusal as a fault
  * (it is an answer), or show a profit or a loss (the server computes none).
@@ -44,37 +57,27 @@ import { Num } from '../ui';
 /** How many of the caller's orders the list shows. The newest is first. */
 const RECENT_ORDERS = 5;
 
-const SIDE_WORD: Record<VenueSide, string> = { long: 'LONG', short: 'SHORT' };
-
 /* -------------------------------------------------------------------------- */
 /* Pieces                                                                      */
 /* -------------------------------------------------------------------------- */
 
-/** A direction's arrow. Green and red never stand alone: its word is always beside it. */
-function SideGlyph({ side, size = 14, onFill }: { side: VenueSide; size?: number; onFill?: boolean }) {
-  return (
-    <Icon
-      name={side === 'long' ? 'arrow-up' : 'arrow-down'}
-      size={size}
-      color={onFill ? 'void' : side}
-      strokeWidth={2}
-    />
-  );
-}
-
 /**
  * LONG or SHORT, outlined in its direction colour. On the desktop ticket a
  * press sends the order; on the phone's bar it opens the sheet on that side.
- * The label says which.
+ * The label says which. The side of an open position reads `ADD LONG`, since an
+ * order on it adds to the position.
  */
 export function DirectionButton({
   side,
+  word = SIDE_WORD[side],
   label,
   disabled,
   onPress,
 }: {
   side: VenueSide;
-  /** What a press does, for a screen reader: `Open long, 25 dollars, 2x`. */
+  /** What the button reads: `LONG`, or `ADD LONG` beside an open long. */
+  word?: string | undefined;
+  /** What a press does, for a screen reader: `Open long, 25 dollars, 2x`. Or why it does nothing. */
   label: string;
   disabled: boolean;
   onPress: () => void;
@@ -95,9 +98,7 @@ export function DirectionButton({
       )}
     >
       <SideGlyph side={side} />
-      <Text className={cx('font-mono-bold text-12 tracking-w14', long ? 'text-long' : 'text-short')}>
-        {SIDE_WORD[side]}
-      </Text>
+      <Text className={cx('font-mono-bold text-12 tracking-w14', long ? 'text-long' : 'text-short')}>{word}</Text>
     </Pressable>
   );
 }
@@ -138,6 +139,7 @@ function ChoiceChips({
   describe,
   onChoose,
   disabled,
+  off,
   dense,
 }: {
   /** The group's name for a screen reader: `Order size`. */
@@ -149,6 +151,8 @@ function ChoiceChips({
   describe: (option: number) => string;
   onChoose: (option: number) => void;
   disabled: boolean;
+  /** Options that stay in view and cannot be chosen: the server would refuse an order at each. */
+  off?: readonly number[] | undefined;
   /** 28px for the desktop panel; 44px for a thumb. */
   dense: boolean;
 }) {
@@ -157,13 +161,14 @@ function ChoiceChips({
     <View role="radiogroup" aria-label={label} className="flex-row flex-wrap gap-1.5">
       {options.map((option) => {
         const on = option === value;
+        const unavailable = disabled || (off?.includes(option) ?? false);
         return (
           <Pressable
             key={option}
             role="radio"
             aria-checked={on}
             aria-label={describe(option)}
-            disabled={disabled}
+            disabled={unavailable}
             onPress={() => {
               if (on) return;
               select();
@@ -173,7 +178,7 @@ function ChoiceChips({
               'flex-1 items-center justify-center rounded-xs border px-1',
               dense ? 'h-7 min-w-9' : 'h-11 min-w-12',
               on ? 'border-bone bg-bone' : 'border-hairline bg-panel hover:bg-raised active:bg-raised',
-              disabled && 'opacity-40',
+              unavailable && 'opacity-40',
             )}
           >
             <Num className={cx('font-mono-medium text-12', on ? 'text-void' : 'text-bone')}>{format(option)}</Num>
@@ -193,6 +198,33 @@ function ChoiceGroup({ label, range, children }: { label: string; range: string;
         <Num className="text-11 text-ash">{range}</Num>
       </View>
       {children}
+    </View>
+  );
+}
+
+/**
+ * The leverage of an order that adds to a position: the position's own. It sits
+ * where the leverage chips sit and is plainly not one of them, since there is
+ * nothing to choose. The server takes an add at no other leverage.
+ */
+function FixedLeverage({ leverage, dense }: { leverage: number; dense: boolean }) {
+  return (
+    <View className="gap-1.5">
+      <Label>Leverage</Label>
+      <View
+        className={cx(
+          'flex-row items-center justify-between gap-2 rounded-xs border border-hairline bg-sunken px-2.5',
+          dense ? 'h-7' : 'h-11',
+        )}
+      >
+        <View className="flex-row items-center gap-1.5">
+          <Icon name="lock" size={12} color="ash" />
+          <Num className="font-mono-medium text-12">{formatLeverage(leverage)}</Num>
+        </View>
+        <Text numberOfLines={1} className="shrink font-sans text-11 text-ash">
+          Fixed by the position
+        </Text>
+      </View>
     </View>
   );
 }
@@ -302,6 +334,7 @@ function OutcomeBlock({ outcome, onDismiss }: { outcome: OutcomeView; onDismiss:
  * What the account holds open on this asset: side, size, entry, leverage and
  * collateral. No mark price and no result. With `onClose` it carries its own
  * CLOSE; the sheet leaves that out, since its close is the bottom-anchored action.
+ * `closing` is this position's close on its way, not a close of some other market's.
  */
 function PositionBlock({
   position,
@@ -356,18 +389,26 @@ function PositionBlock({
 }
 
 /**
- * The middle of a ticket, the same on both layouts: the open position, or the
- * size and leverage to choose, and under either the order type and the slippage
- * bound, which hold for a close as much as for an open. Every figure here is
- * the server's. Until the account is read there are none, so it draws none.
+ * The middle of a ticket, the same on both layouts: the open position if there
+ * is one, the size and leverage of the next order, and under them every limit
+ * that order is held to. Every figure here is the server's. Until the account
+ * is read there are none, so it draws none.
+ *
+ * With a position open the next order adds to it. A size that would take the
+ * position past its limit stays in view and cannot be chosen, and the leverage
+ * is the position's, shown as fixed. `adding` is off where the surface is being
+ * used to close (the phone's sheet, set to close): the choices of an add are
+ * then left out, and the position and the limits stay.
  */
 function TicketBody({
   ticket,
   dense,
+  adding,
   onClose,
 }: {
   ticket: VenueTicket;
   dense: boolean;
+  adding: boolean;
   onClose?: (() => void) | undefined;
 }) {
   const { view, locked, sending } = ticket;
@@ -381,48 +422,56 @@ function TicketBody({
   }
   if (!view.limits) return null;
   const off = locked || view.hold !== null;
+  const { position } = view;
   return (
     <>
-      {view.position ? (
+      {position ? (
         <PositionBlock
-          position={view.position}
+          position={position}
           dense={dense}
           onClose={onClose}
-          closing={sending?.action === 'close'}
+          closing={isClosing(sending, position.asset)}
           locked={locked}
         />
-      ) : (
+      ) : null}
+      {!position || adding ? (
         <>
-          <ChoiceGroup label="Size" range={view.limits.size}>
+          <ChoiceGroup label={position ? 'Size to add' : 'Size'} range={view.limits.size}>
             <ChoiceChips
-              label="Order size"
+              label={position ? 'Size to add' : 'Order size'}
               options={view.sizes}
               value={view.usd}
               format={formatUsd}
-              describe={(usd) => `Size ${usd} dollars`}
+              describe={(usd) => sizeChipLabel(view, usd)}
               onChoose={ticket.chooseUsd}
               disabled={off}
+              off={view.sizesOff}
               dense={dense}
             />
           </ChoiceGroup>
-          <ChoiceGroup label="Leverage" range={view.limits.leverage}>
-            <ChoiceChips
-              label="Leverage"
-              options={view.leverages}
-              value={view.leverage}
-              format={formatLeverage}
-              describe={(leverage) => `Leverage ${formatLeverage(leverage)}`}
-              onChoose={ticket.chooseLeverage}
-              disabled={off}
-              dense={dense}
-            />
-          </ChoiceGroup>
+          {position && view.leverageFixed ? (
+            <FixedLeverage leverage={position.leverage} dense={dense} />
+          ) : (
+            <ChoiceGroup label="Leverage" range={view.limits.leverage}>
+              <ChoiceChips
+                label="Leverage"
+                options={view.leverages}
+                value={view.leverage}
+                format={formatLeverage}
+                describe={(leverage) => `Leverage ${formatLeverage(leverage)}`}
+                onChoose={ticket.chooseLeverage}
+                disabled={off}
+                dense={dense}
+              />
+            </ChoiceGroup>
+          )}
         </>
-      )}
+      ) : null}
       <Facts
         rows={[
           ['Order type', view.limits.orderType],
           ['Max slippage', view.limits.slippage],
+          ['Position', view.limits.position],
         ]}
         dense={dense}
       />
@@ -482,7 +531,7 @@ function RuleCheck({
 }
 
 /* -------------------------------------------------------------------------- */
-/* Recent orders                                                               */
+/* The caller's orders                                                         */
 /* -------------------------------------------------------------------------- */
 
 interface OrdersProps {
@@ -492,12 +541,12 @@ interface OrdersProps {
 }
 
 /**
- * The list is the one part of the ticket that subscribes to a query, and a
- * query the server cannot answer throws while it renders. A list that cannot be
- * read says so in its own place: it does not take the ticket, or the chart
+ * The caller's orders are a query, and a query the server cannot answer throws
+ * while it renders. Whatever reads them does so inside one of these and says so
+ * in its own place (`fallback`): it does not take the ticket, or the chart
  * beside it, down with it.
  */
-class OrdersBoundary extends Component<OrdersProps & { children: ReactNode }, { failed: boolean }> {
+class OrdersBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
   override state = { failed: false };
 
   static getDerivedStateFromError(): { failed: boolean } {
@@ -505,18 +554,50 @@ class OrdersBoundary extends Component<OrdersProps & { children: ReactNode }, { 
   }
 
   override render(): ReactNode {
-    if (!this.state.failed) return this.props.children;
-    const { inset, className } = this.props;
-    const pad = inset ? 'px-4' : '';
-    return (
-      <View {...(className ? { className } : {})}>
-        <SectionHeader title="Recent orders" className={cx('pb-2.5', pad)} />
-        <Text role="status" className={cx('pb-4 font-sans text-12 leading-[18px] text-ash', pad)}>
-          The order list could not be read. Orders can still be placed.
-        </Text>
-      </View>
-    );
+    return this.state.failed ? this.props.fallback : this.props.children;
   }
+}
+
+function OrdersUnread({ inset, className }: OrdersProps) {
+  const pad = inset ? 'px-4' : '';
+  return (
+    <View {...(className ? { className } : {})}>
+      <SectionHeader title="Your orders" className={cx('pb-2.5', pad)} />
+      <Text role="status" className={cx('pb-4 font-sans text-12 leading-[18px] text-ash', pad)}>
+        The order list could not be read. Orders can still be placed.
+      </Text>
+    </View>
+  );
+}
+
+/** Hands the caller's orders to the ticket as they change. Draws nothing. */
+function FillRows({ ticket }: { ticket: VenueTicket }) {
+  const orders = useVenueOrders();
+  const { followFill } = ticket;
+  useEffect(() => {
+    if (orders.status === 'ready') followFill(orders.orders);
+  }, [orders, followFill]);
+  return null;
+}
+
+/**
+ * A fill is answered the moment the position moves, before the venue's history
+ * has its price, fee, block and transaction. The order's own row gains them
+ * seconds later, and this puts them into the answer on screen as it does, so
+ * the transaction link appears in place.
+ *
+ * It subscribes to the caller's orders only while such an answer is showing,
+ * and stops once the answer is whole, is dismissed or gives way to the next
+ * order. Mounted once per ticket, beside whatever draws it. If the orders
+ * cannot be read the answer stays as it was, and says what it is waiting for.
+ */
+export function FillFollower({ ticket }: { ticket: VenueTicket }) {
+  if (ticket.awaitingFill === null) return null;
+  return (
+    <OrdersBoundary key={ticket.awaitingFill} fallback={null}>
+      <FillRows ticket={ticket} />
+    </OrdersBoundary>
+  );
 }
 
 /**
@@ -527,7 +608,7 @@ class OrdersBoundary extends Component<OrdersProps & { children: ReactNode }, { 
  */
 export const RecentOrders = memo(function RecentOrders(props: OrdersProps) {
   return (
-    <OrdersBoundary {...props}>
+    <OrdersBoundary fallback={<OrdersUnread {...props} />}>
       <OrderList {...props} />
     </OrdersBoundary>
   );
@@ -541,12 +622,12 @@ function OrderList({ inset, className }: OrdersProps) {
   return (
     <View {...(className ? { className } : {})}>
       <SectionHeader
-        title="Recent orders"
+        title="Your orders"
         {...(rows.length > 0 ? { count: rows.length } : {})}
         className={cx('pb-2.5', pad)}
       />
       {orders.status === 'loading' ? (
-        <View aria-busy aria-label="Loading recent orders">
+        <View aria-busy aria-label="Loading your orders">
           {[0, 1].map((i) => (
             <View key={i} className={cx('min-h-14 justify-center gap-1.5 border-b border-hairline py-3', pad)}>
               <Skeleton width="55%" height={12} />
@@ -598,6 +679,10 @@ function OrderList({ inset, className }: OrdersProps) {
  * order for the asset on the chart at the size and leverage chosen above them,
  * and the answer is shown here, in place. The buttons stay put: if the panel is
  * short the part above them scrolls instead.
+ *
+ * With a position open the button on its side reads ADD and adds to it, and the
+ * other side is off. The line under the buttons says why, in the words the
+ * server would refuse it with.
  */
 export const OrderTicket = memo(function OrderTicket({
   ticket,
@@ -612,9 +697,9 @@ export const OrderTicket = memo(function OrderTicket({
 }) {
   const { view, sending, locked } = ticket;
   const line = ticketLine(view, sending);
-  const off = locked || view.hold !== null || view.usd === null || view.leverage === null;
-  const label = (side: VenueSide) =>
-    view.usd !== null && view.leverage !== null ? openOrderLabel(side, view.usd, view.leverage) : `Open ${side}`;
+  const second = ticketSecondLine(view, sending);
+  const long = sideButton(view, 'long', locked);
+  const short = sideButton(view, 'short', locked);
   return (
     <View className="min-h-0 shrink border-t border-hairline bg-void" aria-busy={sending !== null}>
       <ScrollView className="min-h-0" contentContainerClassName="gap-3 px-4 pt-4" showsVerticalScrollIndicator={false}>
@@ -626,22 +711,35 @@ export const OrderTicket = memo(function OrderTicket({
           <Text className="font-mono text-10 leading-4 text-ash">{view.venueLine}</Text>
         </View>
         {ticket.outcome ? <OutcomeBlock outcome={ticket.outcome} onDismiss={ticket.dismiss} /> : null}
-        <TicketBody ticket={ticket} dense onClose={ticket.close} />
+        <TicketBody ticket={ticket} dense adding onClose={ticket.close} />
       </ScrollView>
 
       <View className="shrink-0 gap-2 px-4 pb-4 pt-3">
         <View className="flex-row gap-2">
-          <DirectionButton side="long" label={label('long')} disabled={off} onPress={() => ticket.open('long')} />
-          <DirectionButton side="short" label={label('short')} disabled={off} onPress={() => ticket.open('short')} />
+          <DirectionButton
+            side="long"
+            word={long.word}
+            label={long.accessibilityLabel}
+            disabled={long.disabled}
+            onPress={() => ticket.open('long')}
+          />
+          <DirectionButton
+            side="short"
+            word={short.word}
+            label={short.accessibilityLabel}
+            disabled={short.disabled}
+            onPress={() => ticket.open('short')}
+          />
         </View>
-        <Text
-          role="status"
-          accessibilityLiveRegion="polite"
-          className={cx('font-mono text-10 leading-4', line ? 'text-bone' : 'text-ash')}
-          style={{ fontVariant: ['tabular-nums'] }}
-        >
-          {line ?? 'A press sends a market order to one account that everyone signed in shares.'}
-        </Text>
+        <View role="status" accessibilityLiveRegion="polite" className="gap-1">
+          <Text
+            className={cx('font-mono text-10 leading-4', line ? 'text-bone' : 'text-ash')}
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
+            {line ?? 'A press sends a market order to one account that everyone signed in shares.'}
+          </Text>
+          {second ? <Text className="font-mono text-10 leading-4 text-ash">{second}</Text> : null}
+        </View>
         <RuleCheck onPress={onCheckRule} busy={checking} note={note} />
       </View>
     </View>
@@ -709,11 +807,44 @@ function SideChoice({
   );
 }
 
+const INTENTS = [
+  { value: 'add', label: 'Add' },
+  { value: 'close', label: 'Close' },
+] as const;
+
+/**
+ * With a position open the sheet does one of two things, and this says which:
+ * add to the position, or close it. It decides what the single action at the
+ * foot does, so the sheet never has two of them. Under it, why there is no side
+ * to pick: the other one waits for this position to close.
+ */
+function IntentChoice({
+  intent,
+  onIntent,
+  note,
+}: {
+  intent: SheetIntent;
+  onIntent: (intent: SheetIntent) => void;
+  note: string | null;
+}) {
+  return (
+    <View className="gap-1.5">
+      <Label>This position</Label>
+      <SegmentedControl options={INTENTS} value={intent} onChange={onIntent} label="Add to the position or close it" />
+      {note ? <Text className="font-sans text-12 leading-[18px] text-ash">{note}</Text> : null}
+    </View>
+  );
+}
+
 /**
  * The phone's ticket: a bottom sheet, opened from the bar. Side, size and
  * leverage are chosen here, beside the limits they are held to, and the one
- * action that sends anything is held at the foot, under the thumb. With a
- * position open that action closes it, since nothing else can be done first.
+ * action that sends anything is held at the foot, under the thumb.
+ *
+ * With a position open that action closes it or adds to it, whichever the
+ * choice near the top says, and it says close until adding is asked for. Under
+ * the ticket, every position on the shared account with its own close, then the
+ * caller's orders.
  */
 export function TicketSheet({
   open,
@@ -721,6 +852,7 @@ export function TicketSheet({
   ticket,
   side,
   onSide,
+  onAsset,
   onCheckRule,
   checking,
   note,
@@ -731,14 +863,28 @@ export function TicketSheet({
   /** The side tapped on the bar, or picked here. Null until one is. */
   side: VenueSide | null;
   onSide: (side: VenueSide) => void;
+  /** Shows a market on the chart: a press on one of the open positions. The ticket then is for it. */
+  onAsset?: ((asset: string) => void) | undefined;
   onCheckRule: () => void;
   checking: boolean;
   note: string | null;
 }) {
   const { tap } = useHaptics();
   const { view, sending, locked } = ticket;
-  const primary = sheetPrimary(view, side, sending, locked);
-  const line = ticketLine(view, sending);
+
+  // What the one action does while a position is open. It starts over each time the sheet opens
+  // and each time the position under it changes (it appeared, it closed, the chart moved to another
+  // market), so an add is always something that was asked for and never something left over.
+  const [intent, setIntent] = useState<SheetIntent>('close');
+  const under = open ? `${ticket.asset}:${view.position?.side ?? ''}` : null;
+  const [seen, setSeen] = useState<string | null>(null);
+  if (seen !== under) {
+    setSeen(under);
+    setIntent(seen === null ? openingIntent(view, side) : 'close');
+  }
+
+  const primary = sheetPrimary(view, { side, intent }, sending, locked);
+  const line = sheetLine(view, intent, sending);
   const press = () => {
     if (primary.action === 'close') ticket.close();
     else if (primary.action === 'open' && primary.side) ticket.open(primary.side);
@@ -810,11 +956,14 @@ export function TicketSheet({
         </View>
 
         {ticket.outcome ? <OutcomeBlock outcome={ticket.outcome} onDismiss={ticket.dismiss} /> : null}
-        {view.status === 'ready' && !view.position ? (
+        {view.status !== 'ready' ? null : view.position ? (
+          <IntentChoice intent={intent} onIntent={setIntent} note={view.sideNote} />
+        ) : (
           <SideChoice side={side} onSide={onSide} disabled={locked || view.hold !== null} />
-        ) : null}
-        <TicketBody ticket={ticket} dense={false} />
+        )}
+        <TicketBody ticket={ticket} dense={false} adding={intent === 'add'} />
         <RuleCheck onPress={onCheckRule} busy={checking} note={note} roomy />
+        <OpenPositions ticket={ticket} onAsset={onAsset} dense={false} />
         <RecentOrders inset={false} />
       </View>
     </BottomSheet>

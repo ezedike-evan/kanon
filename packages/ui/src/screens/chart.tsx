@@ -15,7 +15,8 @@ import {
   type FeedStatus,
   type Readout,
 } from '../components/chart/chart-chrome';
-import { TicketSheet } from '../components/chart/chart-ticket';
+import { NO_ORDERS, VenueOrdersFeed } from '../components/chart/chart-fills';
+import { FillFollower, TicketSheet } from '../components/chart/chart-ticket';
 import { ChartView, type ChartViewHandle } from '../components/chart/chart-view';
 import { useChartPalette } from '../components/chart/palette';
 import { Meta } from '../components/ui';
@@ -31,7 +32,8 @@ import { useKanonData, type SeriesState } from '../lib/data';
 import { SPEC } from '../lib/demo';
 import { routes } from '../lib/routes';
 import { useVenueTicket } from '../lib/use-venue-ticket';
-import type { VenueSide } from '../lib/venue-types';
+import { fillMarkers, mergeMarkers, positionLevels } from '../lib/venue-chart-overlays';
+import type { VenueOrder, VenueSide } from '../lib/venue-types';
 import { useNavigator, useRouteParam } from '../nav';
 import { web } from '../lib/desktop';
 import { cx } from '../lib/cx';
@@ -68,7 +70,9 @@ function feedStatus(state: SeriesState): FeedStatus {
  * A full charting workstation over the canonical series the contract checked
  * the rule against: candles, drawing tools, a last-price tag with the bar
  * countdown, the pinned rule as the indicator line, and trade markers (arrows
- * for executed trades, a circle in `refused` for a block).
+ * for executed trades, a circle in `refused` for a block). The viewer's own
+ * venue orders are on it too: a fill as a marker on its candle (a square for a
+ * close), and the open position's entry as a level labelled with side and size.
  *
  * This screen is chrome and state. The chart itself is `ChartView`, one shared
  * runtime that runs directly on the web and inside a WebView on a device.
@@ -178,6 +182,16 @@ export function ChartScreen() {
     }
   }, [checking, requestProposal, nav]);
 
+  // What the venue puts on the tape: the open position's entry as a level, and the viewer's own
+  // fills as markers beside the rule's. A position is its side, size and entry; no result is drawn.
+  const [myOrders, setMyOrders] = useState<readonly VenueOrder[]>(NO_ORDERS);
+  const openPosition = ticket.view.position;
+  const priceLevels = useMemo(() => positionLevels(openPosition), [openPosition]);
+  const markers = useMemo(
+    () => mergeMarkers(allMarkers, fillMarkers(myOrders, asset, timeframe.bucketSeconds)),
+    [allMarkers, myOrders, asset, timeframe.bucketSeconds],
+  );
+
   const change = useMemo(() => (series && series.candles.length > 0 ? changeOver24h(series, decimals) : null), [series, decimals]);
 
   const readout = useMemo<Readout | null>(() => {
@@ -275,7 +289,8 @@ export function ChartScreen() {
                 asset={asset}
                 bucketSeconds={timeframe.bucketSeconds}
                 series={series}
-                markers={allMarkers}
+                markers={markers}
+                priceLevels={priceLevels}
                 palette={palette}
                 tool={tool}
                 magnet={magnet}
@@ -366,6 +381,9 @@ export function ChartScreen() {
 
       {fullscreen ? null : <TabBar active="chart" />}
 
+      {/* Draws nothing: the caller's own orders, read while the chart is mounted, for the fill markers. */}
+      <VenueOrdersFeed onOrders={setMyOrders} />
+
       <MarketSheet
         open={sheet}
         onClose={() => setSheet(false)}
@@ -387,10 +405,13 @@ export function ChartScreen() {
         ticket={ticket}
         side={order?.side ?? null}
         onSide={(side) => setOrder({ side })}
+        onAsset={setAsset}
         onCheckRule={checkRule}
         checking={checking}
         note={note}
       />
+      {/* A fill answered before the venue listed it gains its price, fee, block and transaction here. Draws nothing. */}
+      <FillFollower ticket={ticket} />
     </Screen>
   );
 }

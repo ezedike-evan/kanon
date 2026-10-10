@@ -8,7 +8,7 @@ import { assetTitle, baseOf, predicateCode } from '../../lib/chart-assets';
 import { cx } from '../../lib/cx';
 import { routes } from '../../lib/routes';
 import type { VenueTicket } from '../../lib/use-venue-ticket';
-import { barLine, barSummary } from '../../lib/venue-trade';
+import { barLine, barSummary, sideButton } from '../../lib/venue-trade';
 import type { VenueSide } from '../../lib/venue-types';
 import { Link } from '../../nav';
 import { useHaptics } from '../../platform';
@@ -443,8 +443,12 @@ export function ChartBottomBar({
  * The phone's way into the order ticket, bottom-anchored and compact. It sends
  * nothing itself: LONG and SHORT open the ticket sheet on that side, where the
  * size, the leverage and every limit are in view before anything goes out. The
- * line above them says what is happening (an order on its way, a position to
- * close first, the last answer) and opens the same sheet.
+ * line above them says what is happening (an order on its way, why nothing can
+ * be sent, the last answer, why one side is off) and opens the same sheet.
+ *
+ * With a position open its own side reads ADD and opens the sheet set to add;
+ * the other side is off until the position closes. The line opens the sheet set
+ * to close, which is where every open position can be closed.
  */
 export function QuickTradeBar({
   ticket,
@@ -461,7 +465,9 @@ export function QuickTradeBar({
 }) {
   const { view, sending, locked, outcome } = ticket;
   const line = barLine(view, sending, outcome);
-  const off = locked || view.hold !== null;
+  // With a position open, its own side reads ADD and the other is off until the position closes.
+  const long = sideButton(view, 'long', locked);
+  const short = sideButton(view, 'short', locked);
   return (
     <View className={cx('shrink-0 border-t border-hairline bg-void px-3 pb-2 pt-0.5', className)} aria-busy={sending !== null}>
       <Pressable
@@ -486,16 +492,18 @@ export function QuickTradeBar({
       <View className="flex-row gap-2">
         <DirectionButton
           side="long"
-          label="Long: open the order ticket"
-          disabled={off}
+          word={long.word}
+          label={long.sheetLabel}
+          disabled={long.disabled}
           onPress={() => onSide('long')}
         />
         {/* The tab bar's raised centre action rises into this row; keep clear of it. */}
         <View className="w-14" />
         <DirectionButton
           side="short"
-          label="Short: open the order ticket"
-          disabled={off}
+          word={short.word}
+          label={short.sheetLabel}
+          disabled={short.disabled}
           onPress={() => onSide('short')}
         />
       </View>

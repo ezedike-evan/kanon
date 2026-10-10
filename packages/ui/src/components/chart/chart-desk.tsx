@@ -1,4 +1,4 @@
-import { memo, useMemo, type ReactNode } from 'react';
+import { memo, useMemo, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { formatBps, formatDecimal, isMarketAsset } from '@kanon/spec';
 import type { DrawingKind } from '../../lib/chart-protocol';
@@ -13,6 +13,7 @@ import { Link } from '../../nav';
 import { useHaptics } from '../../platform';
 import { Avatar } from '../avatar';
 import { Icon } from '../icons';
+import { PanelToggle, usePanelOpen } from '../panel-rail';
 import { SectionHeader } from '../section-header';
 import { SkeletonRow } from '../skeleton';
 import { Delta } from '../stat';
@@ -20,7 +21,9 @@ import { DIRECTION_TONE, directionOf, TONE_TEXT } from '../tone';
 import { Dot, Meta, Num } from '../ui';
 import { useLayout } from '../shell/use-layout';
 import { STATUS_DOT, STATUS_LABEL, TOOLS, ToolButton, type ChangeText, type FeedStatus, type Readout } from './chart-chrome';
+import { DESK_PANEL_LABEL, DESK_PANEL_NAME, DeskPanelRail } from './chart-desk-rail';
 import { OrderTicket, RecentOrders } from './chart-ticket';
+import { OpenPositions } from './chart-trades';
 import { ToolIcon } from './tool-icons';
 
 /*
@@ -333,11 +336,14 @@ function SymbolBlock({
   price,
   change,
   status,
+  trailing,
 }: {
   symbol: string;
   price: string | null;
   change: ChangeText | null;
   status: FeedStatus;
+  /** A control at the end of the first row: the panel's collapse toggle. */
+  trailing?: ReactNode;
 }) {
   const tone = change ? TONE_TEXT[DIRECTION_TONE[change.direction]] : 'text-ash';
   return (
@@ -355,6 +361,7 @@ function SymbolBlock({
           <Dot className={STATUS_DOT[status]} />
           <Text className="font-mono text-9 tracking-w14 text-ash">{STATUS_LABEL[status]}</Text>
         </View>
+        {trailing}
       </View>
       <Num className="text-30 tracking-t30">{price ?? '—'}</Num>
       {change ? (
@@ -449,7 +456,6 @@ function Watchlist({ asset, onAsset }: { asset: string; onAsset: (asset: string)
   );
   return (
     <View>
-      <SectionHeader title="Markets" {...(assets.length > 0 ? { count: assets.length } : {})} className="px-4 pb-2.5 pt-4" />
       {markets.status === 'loading' ? (
         <>
           <SkeletonRow />
@@ -461,6 +467,77 @@ function Watchlist({ asset, onAsset }: { asset: string; onAsset: (asset: string)
         </Text>
       ) : (
         assets.map((a) => <WatchRow key={a} asset={a} selected={a === asset} onSelect={onAsset} />)
+      )}
+    </View>
+  );
+}
+
+type PanelTab = 'markets' | 'trades';
+
+/**
+ * The panel's two lists behind one strip of tabs: the markets to switch between,
+ * and what has been traded (every position open on the shared account, then the
+ * caller's own orders). Only the list in view is mounted, so the order list
+ * subscribes while Trades is showing and not before. The count on Trades is the
+ * positions open, so one that needs closing is in view from Markets too.
+ */
+function PanelLists({
+  asset,
+  onAsset,
+  ticket,
+}: {
+  asset: string;
+  onAsset: (asset: string) => void;
+  ticket: VenueTicket;
+}) {
+  const { select } = useHaptics();
+  const [tab, setTab] = useState<PanelTab>('markets');
+  const held = ticket.positions.length;
+  const tabs: ReadonlyArray<readonly [PanelTab, string, number]> = [
+    ['markets', 'Markets', 0],
+    ['trades', 'Trades', held],
+  ];
+  return (
+    <View>
+      <View className="px-4 pb-2.5 pt-4">
+        <View
+          role="tablist"
+          aria-label="Markets and trades"
+          className="flex-row rounded-sm border border-hairline bg-sunken p-0.5"
+        >
+          {tabs.map(([key, label, n]) => {
+            const on = tab === key;
+            return (
+              <Pressable
+                key={key}
+                role="tab"
+                aria-selected={on}
+                aria-label={n > 0 ? `${label}, ${n} open ${n === 1 ? 'position' : 'positions'}` : label}
+                onPress={() => {
+                  if (on) return;
+                  select();
+                  setTab(key);
+                }}
+                className={cx(
+                  'h-7 flex-1 flex-row items-center justify-center gap-1.5 rounded-xs border',
+                  on ? 'border-hairline bg-lift' : 'border-transparent hover:bg-raised',
+                )}
+              >
+                <Text className={cx('text-11', on ? 'font-mono-bold text-bone' : 'font-mono text-ash')}>{label}</Text>
+                {n > 0 ? <Num className="text-10 text-ash">{n}</Num> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+      {tab === 'markets' ? (
+        <Watchlist asset={asset} onAsset={onAsset} />
+      ) : (
+        <>
+          <OpenPositions ticket={ticket} onAsset={onAsset} dense className="pt-1.5" />
+          {/* Its last row's rule and the pinned rule's top border are one line, not two. */}
+          <RecentOrders inset className="-mb-px border-t border-hairline pt-4" />
+        </>
       )}
     </View>
   );
@@ -524,9 +601,12 @@ function RuleBlock({
 }
 
 /**
- * The panel: the symbol at a glance, the markets to switch between, the pinned rule
- * and its structure toggle, the caller's recent orders, and the ticket. Its width is
+ * The panel: the symbol at a glance, the Markets and Trades tabs (the markets to
+ * switch between; the shared account's open positions and the caller's orders), the
+ * pinned rule and its structure toggle, and the ticket. Its width is
  * 264 from `lg` and 300 from `xl`, so the canvas keeps room at a laptop's width.
+ * It collapses to a rail (`chart-desk-rail.tsx`), and the choice is remembered on
+ * the device.
  */
 export function DeskPanel({
   asset,
@@ -555,21 +635,37 @@ export function DeskPanel({
   checking: boolean;
   note: string | null;
 }) {
-  // The watchlist subscribes to every pair and the order list to the caller's orders, so both
+  // The watchlist subscribes to every pair and the Trades tab to the caller's orders, so the tabs
   // mount only where there is a panel to show them in.
   const desktop = useLayout() === 'desktop';
+  // Collapsed, the panel is a 40px rail and the canvas takes the width. The ticket's state is the
+  // screen's, so an order on its way and its answer outlive the panel that showed them.
+  const [open, setOpen] = usePanelOpen('chartPanelOpen');
+  if (!open) {
+    return (
+      <DeskPanelRail position={ticket.view.position} held={ticket.positions.length} onOpen={() => setOpen(true)} />
+    );
+  }
   return (
     <View
       role="complementary"
-      aria-label="Markets and order ticket"
+      aria-label={DESK_PANEL_LABEL}
       className="hidden min-h-0 w-[264px] shrink-0 border-l border-hairline bg-panel lg:flex xl:w-[300px]"
     >
-      <SymbolBlock symbol={asset} price={price} change={change} status={status} />
+      <SymbolBlock
+        symbol={asset}
+        price={price}
+        change={change}
+        status={status}
+        // Pulled into the block's padding, so the row keeps its height and the toggle sits where the rail's does.
+        trailing={
+          <PanelToggle side="right" open name={DESK_PANEL_NAME} onToggle={() => setOpen(false)} className="-my-1.5 -mr-3" />
+        }
+      />
       {/* Never squeezed to nothing: a tall ticket scrolls its own middle before this list gives up its last rows. */}
       <ScrollView className="min-h-28 flex-1" showsVerticalScrollIndicator={false}>
-        {desktop ? <Watchlist asset={asset} onAsset={onAsset} /> : null}
+        {desktop ? <PanelLists asset={asset} onAsset={onAsset} ticket={ticket} /> : null}
         <RuleBlock name={rule.name} predicates={rule.predicates} structure={structure} />
-        {desktop ? <RecentOrders inset className="border-t border-hairline pt-4" /> : null}
       </ScrollView>
       <OrderTicket ticket={ticket} onCheckRule={onCheckRule} checking={checking} note={note} />
     </View>

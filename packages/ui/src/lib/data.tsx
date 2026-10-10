@@ -440,8 +440,9 @@ export interface KanonDataSource {
    */
   useVenueAccount(): VenueAccountRead;
   /**
-   * Opens a position at market on that account and reads the account again.
-   * Resolves with the answer, a refusal included; it never rejects.
+   * Opens a position at market on that account, or adds to the one it holds on
+   * the same side, and reads the account again. Resolves with the answer, a
+   * refusal included; it never rejects.
    */
   placeVenueOrder(request: VenueOrderRequest): Promise<VenueOrderResult>;
   /** Closes the whole of the account's position on `asset`, at market. Never rejects. */

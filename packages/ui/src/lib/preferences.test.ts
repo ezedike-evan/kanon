@@ -40,16 +40,72 @@ describe('parsePreferences', () => {
   });
 
   it('round-trips', () => {
-    const p = { haptics: false, chartBucketSeconds: 14_400 };
+    const p = {
+      haptics: false,
+      chartBucketSeconds: 14_400,
+      chartPanelOpen: false,
+      predictMarketsPanelOpen: true,
+      predictSettlePanelOpen: false,
+    };
     expect(parsePreferences(serializePreferences(p))).toEqual(p);
+  });
+
+  it('opens every side panel until one has been collapsed', () => {
+    expect(DEFAULT_PREFERENCES).toMatchObject({
+      chartPanelOpen: true,
+      predictMarketsPanelOpen: true,
+      predictSettlePanelOpen: true,
+    });
+    // Stored before the panels could collapse: the keys are absent, and the panels stay open.
+    expect(parsePreferences('{"haptics":false,"chartBucketSeconds":900}')).toEqual({
+      ...DEFAULT_PREFERENCES,
+      haptics: false,
+      chartBucketSeconds: 900,
+    });
+  });
+
+  it('reads a collapsed panel, one panel at a time', () => {
+    expect(parsePreferences('{"chartPanelOpen":false}')).toEqual({ ...DEFAULT_PREFERENCES, chartPanelOpen: false });
+    expect(parsePreferences('{"predictMarketsPanelOpen":false}')).toEqual({
+      ...DEFAULT_PREFERENCES,
+      predictMarketsPanelOpen: false,
+    });
+    expect(parsePreferences('{"predictSettlePanelOpen":false}')).toEqual({
+      ...DEFAULT_PREFERENCES,
+      predictSettlePanelOpen: false,
+    });
+  });
+
+  it('keeps a panel open when its stored value is not a yes or a no', () => {
+    const junk = '{"chartPanelOpen":"false","predictMarketsPanelOpen":0,"predictSettlePanelOpen":null}';
+    expect(parsePreferences(junk)).toEqual(DEFAULT_PREFERENCES);
+  });
+
+  it('carries nothing through that the app does not offer', () => {
+    expect(parsePreferences('{"chartPanelOpen":false,"somethingElse":true}')).toEqual({
+      ...DEFAULT_PREFERENCES,
+      chartPanelOpen: false,
+    });
   });
 });
 
 describe('the store', () => {
   it('hydrates from storage', async () => {
     await hydratePreferences(memoryStorage('{"haptics":false,"chartBucketSeconds":3600}'));
-    expect(getPreferences()).toEqual({ haptics: false, chartBucketSeconds: 3600 });
+    expect(getPreferences()).toEqual({ ...DEFAULT_PREFERENCES, haptics: false, chartBucketSeconds: 3600 });
     expect(preferredTimeframe()?.label).toBe('1H');
+  });
+
+  it('remembers a collapsed panel across a reload, and leaves the other panels as they were', async () => {
+    const storage = memoryStorage();
+    updatePreferences({ chartPanelOpen: false }, storage);
+    expect(getPreferences()).toMatchObject({ chartPanelOpen: false, predictMarketsPanelOpen: true });
+    await Promise.resolve();
+
+    resetPreferences(); // a new page load: the store starts from the defaults, panels open
+    expect(getPreferences().chartPanelOpen).toBe(true);
+    await hydratePreferences(storage);
+    expect(getPreferences()).toEqual({ ...DEFAULT_PREFERENCES, chartPanelOpen: false });
   });
 
   it('writes a change through to storage and applies it at once', async () => {

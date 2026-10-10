@@ -77,8 +77,24 @@ export interface ChartPalette {
 export interface EngineMarker {
   time: number;
   position: 'aboveBar' | 'belowBar';
-  shape: 'arrowUp' | 'arrowDown' | 'circle';
+  shape: 'arrowUp' | 'arrowDown' | 'circle' | 'square';
   color: string;
+}
+
+/**
+ * A horizontal level the host owns, such as an open position's entry. It is not
+ * a drawing: it never enters the drawings a `state` event carries, so it is
+ * never saved, undone, selected or cleared, and it leaves only when the host
+ * sends a list without it.
+ */
+export interface EnginePriceLine {
+  /** Stable for the life of the level, so a changed line is updated in place. */
+  id: string;
+  price: number;
+  /** Drawn on the line, in words: colour never carries a direction alone. */
+  label: string;
+  /** Which palette colour draws it. Resolved in the runtime, so a `theme` command recolours it. */
+  tone: 'long' | 'short';
 }
 
 /** What the pinned rule's predicates found on the visible series, in time/price space. */
@@ -122,6 +138,8 @@ export type RuntimeCommand =
   /** Upsert candles at the tail: the live last-candle update. Never a mid-series edit. */
   | { type: 'patch'; candles: Candle5[] }
   | { type: 'markers'; markers: EngineMarker[] }
+  /** Replace every host price line: one whose id is not in the list is removed, the rest are updated in place. */
+  | { type: 'priceLines'; lines: EnginePriceLine[] }
   | { type: 'watermark'; lines: [string, string] }
   | { type: 'tool'; tool: DrawingKind | null }
   | { type: 'magnet'; on: boolean }

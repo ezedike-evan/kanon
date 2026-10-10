@@ -23,7 +23,7 @@ import type {
   RuntimeState,
   StructureItem,
 } from '../../lib/chart-protocol';
-import { seriesDisplayDecimals, seriesToCandle5 } from '../../lib/chart-series';
+import { seriesDisplayDecimals, seriesToCandle5, toEnginePriceLines, type PriceLevel } from '../../lib/chart-series';
 import { Meta } from '../ui';
 import { CHART_FONT } from './palette';
 import type { ChartEngineHandle, ChartEngineProps } from './engine-types';
@@ -41,6 +41,11 @@ export interface ChartViewProps {
   /** `null` while loading: the previous chart stays until the next series arrives. An empty series clears it. */
   series: Series | null;
   markers: readonly TradeMarker[];
+  /**
+   * Horizontal levels the screen owns, such as an open position's entry, for the
+   * asset in `asset`. Not drawings: they are never saved, undone or selected.
+   */
+  priceLevels?: readonly PriceLevel[];
   palette: ChartPalette;
   tool: DrawingKind | null;
   magnet: boolean;
@@ -64,14 +69,35 @@ export interface ChartViewProps {
  *    per tick.
  *  - drawings: loaded from the store for the asset+timeframe after `data`, and
  *    saved when the runtime reports a committed change.
+ *  - price levels: the whole list as one `priceLines` command when it changes,
+ *    and an empty list while the candles drawn are not yet this asset's.
  *  - everything else (theme, markers, tool, magnet, structure, watermark): one
  *    command each, only when its prop actually changed.
  *
  * The engine module is loaded with a dynamic `import()` so the DOM-touching
  * runtime never reaches the Next.js server bundle.
  */
+const NO_LEVELS: readonly PriceLevel[] = [];
+/** A runtime that has been sent no price lines holds none. */
+const NO_LINES_SIG = '[]';
+
 export const ChartView = forwardRef<ChartViewHandle, ChartViewProps>(function ChartView(
-  { asset, bucketSeconds, series, markers, palette, tool, magnet, structure, watermark, store, onCrosshair, onState, onPriceAxisWidth },
+  {
+    asset,
+    bucketSeconds,
+    series,
+    markers,
+    priceLevels = NO_LEVELS,
+    palette,
+    tool,
+    magnet,
+    structure,
+    watermark,
+    store,
+    onCrosshair,
+    onState,
+    onPriceAxisWidth,
+  },
   ref,
 ) {
   const [Engine, setEngine] = useState<EngineComponent | null>(null);
@@ -103,11 +129,12 @@ export const ChartView = forwardRef<ChartViewHandle, ChartViewProps>(function Ch
     rows: Candle5[] | null;
     palette: ChartPalette | null;
     markers: unknown;
+    priceLines: string;
     tool: DrawingKind | null | undefined;
     magnet: boolean | undefined;
     structure: unknown;
     watermark: string;
-  }>({ key: null, rows: null, palette: null, markers: null, tool: undefined, magnet: undefined, structure: null, watermark: '' });
+  }>({ key: null, rows: null, palette: null, markers: null, priceLines: NO_LINES_SIG, tool: undefined, magnet: undefined, structure: null, watermark: '' });
   const runtimeState = useRef<RuntimeState | null>(null);
   // The palette the runtime was *created* with. The theme can resolve after the first render
   // (it is read from storage), so the palette now in use may already differ from it.
@@ -131,7 +158,7 @@ export const ChartView = forwardRef<ChartViewHandle, ChartViewProps>(function Ch
       case 'ready':
         // A fresh runtime (first mount, a strict-mode remount, or a WebView the OS
         // killed) knows nothing: forget what was sent so the effects resend it all.
-        sent.current = { key: null, rows: null, palette: initPalette.current, markers: null, tool: undefined, magnet: undefined, structure: null, watermark: '' };
+        sent.current = { key: null, rows: null, palette: initPalette.current, markers: null, priceLines: NO_LINES_SIG, tool: undefined, magnet: undefined, structure: null, watermark: '' };
         readyRef.current = true;
         runtimeState.current = null;
         setEpoch((n) => n + 1);
@@ -190,7 +217,8 @@ export const ChartView = forwardRef<ChartViewHandle, ChartViewProps>(function Ch
     const starts = new Set(series.candles.map((c) => c.timestamp));
     return toEngineMarkers(
       markers.filter((m) => starts.has(m.timestamp)),
-      { up: palette.up, down: palette.down, refused: palette.refused },
+      // A close takes the neutral ink, never a direction colour: see `markers.ts`.
+      { up: palette.up, down: palette.down, refused: palette.refused, closed: palette.textStrong },
     );
   }, [series, markers, palette]);
   // A live tick rebuilds the array; only a real change in the markers crosses the bridge.
@@ -200,6 +228,22 @@ export const ChartView = forwardRef<ChartViewHandle, ChartViewProps>(function Ch
     sent.current.markers = markerSig;
     send({ type: 'markers', markers: engineMarkers });
   }, [epoch, engineMarkers, markerSig, send]);
+
+  // Price levels. The float boundary is here, as it is for candles. A level belongs to the
+  // asset it was read for, so while another chart's candles are still drawn (a new asset or
+  // timeframe on its way, under the cover) the runtime holds none. The candles effect above
+  // has already run in this commit, so `sent.key` names what is drawn now.
+  const engineLines = useMemo(() => toEnginePriceLines(priceLevels), [priceLevels]);
+  const lineSig = JSON.stringify(engineLines);
+  useEffect(() => {
+    if (epoch === 0) return;
+    const drawn = sent.current.key === key;
+    const sig = drawn ? lineSig : NO_LINES_SIG;
+    if (sent.current.priceLines === sig) return;
+    sent.current.priceLines = sig;
+    send({ type: 'priceLines', lines: drawn ? engineLines : [] });
+    // `series` is a dependency so this runs again when the candles for `key` land.
+  }, [epoch, series, key, lineSig, engineLines, send]);
 
   useEffect(() => {
     if (epoch === 0 || sent.current.tool === tool) return;
