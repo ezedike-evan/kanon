@@ -179,14 +179,29 @@ desktop one by class (`hidden lg:flex` for what only desktop draws, `lg:hidden` 
 what only a phone draws), so there is one tree and one chart or reel instance.
 Chart: a fixed 40px tool rail left of the canvas, a 44px toolbar (symbol, timeframe
 strip, history, magnet, full screen), and a 264 to 300px panel with the symbol, the
-Markets watchlist (feed-backed assets only), the pinned rule with its structure
-toggle, the caller's recent orders, and the order ticket pinned to the foot. The
-ticket sends a market order: size and leverage are chips, every limit it is held to
-is in view, the answer (a fill with its transaction, or a refusal in the server's
-words) is shown in place, and no result of a position is shown. On a phone the
-bottom bar opens the same ticket as a bottom sheet, and the order leaves from the
-sheet's bottom-anchored action. Checking the market against the rule is the
-ticket's secondary action. Predict: the reel stays a 440px centred column, paged by
+list area, the pinned rule with its structure toggle, and the order ticket pinned
+to the foot. The list area has two tabs. Markets is the watchlist (feed-backed
+assets only). Trades is every open position on the shared trading account, each
+with its own close, then the caller's own orders. The ticket sends a market order:
+size and leverage are chips, every limit it is held to is in view, the answer (a
+fill with its transaction, or a refusal in the server's words) is shown in place,
+and no result of a position is shown. A fill's price, fee and transaction can
+arrive a few seconds after the fill itself; they read "Not reported yet" until
+they do. With a position open, the same side adds to it at the position's
+leverage and the other side is off until it is closed. On a phone the bottom bar
+opens the same ticket as a bottom sheet, and the order leaves from the sheet's
+bottom-anchored action. Checking the market against the rule is the ticket's
+secondary action. On the chart itself an open position draws a labelled line at
+its entry price, and the caller's fills are marked on their candles: an open as
+an arrow on its side, a close as a neutral square. Neither shows a result.
+
+**Side panels collapse.** The chart's panel and both Predict panels shrink to a
+40px rail with one button that opens them again, and the choice is remembered.
+The chart's rail says what it hides and shows the side of any open position, so
+a position is never out of sight. There is no slide: a moving width would resize
+the chart on every frame.
+
+Predict: the reel stays a 440px centred column, paged by
 wheel, arrow and page keys, between a left panel (asset filter with live prices,
 window, the markets in view) and, from 1280, a right panel (how it settles, this market's
 terms, open and settled predictions). AI: `SplitPane` with the conversation held to
