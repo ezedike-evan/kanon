@@ -127,3 +127,20 @@ describe('with no gateway address', () => {
     expect(await disconnectedVenueTrade.closeTimed({ tradeId: 't1' })).toEqual(off);
   });
 });
+
+describe('public market data', () => {
+  it('reads a public path with no token, even when nobody is signed in', async () => {
+    const { actions, calls } = setup(() => json({ markets: [] }), null);
+    expect(await actions.publicGet?.('/v1/pub/context')).toEqual({ markets: [] });
+    expect(calls).toEqual([{ url: 'http://localhost:8787/v1/pub/context', method: 'GET', headers: {}, body: undefined }]);
+  });
+
+  it('rejects when the gateway does not answer with the data', async () => {
+    const { actions } = setup(() => json({ error: 'no' }, 502));
+    await expect(actions.publicGet?.('/v1/market-data/ticker')).rejects.toThrow('502');
+  });
+
+  it('is absent when no gateway is connected', () => {
+    expect(disconnectedVenueTrade.publicGet).toBeUndefined();
+  });
+});

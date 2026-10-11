@@ -249,6 +249,19 @@ sections with no route (Overview, Copy trading, Appearance, About) switch in pla
 predicate that refused it, proof link) with the filter chips above it. A phone keeps
 the push navigation.
 
+**Perpl risk (`/risk`, reached from Profile).** One column on a phone, market cards two
+across from `lg`. Top to bottom: what is worth a look (a position half-way or more to its
+liquidation price, a wide book, a mark away from the oracle, crowded funding, a stale or
+closed market), each as one sentence with its figure, or one calm line when nothing is
+flagged; the account (free AUSD, AUSD inside positions, exposure at the mark, positions
+flagged) and each position with its liquidation price and a meter of how much of the way
+from entry to liquidation the mark has gone, labelled CLEAR, WATCH or NEAR; then every
+market as a card of eight figures. Risk is a price and a distance, never money made or
+lost. Direction colour appears only on a side and on the day's move, each with its arrow;
+NEAR takes `short` with its word, WATCH and CLEAR stay neutral. The foot of the screen
+says how the liquidation price is worked out and links to Perpl's formula. Signed out,
+the markets are shown and the account asks for sign-in.
+
 **One record for three ways of trading.** Trading records lists every trade the person
 took, newest first by the day it was opened: a position from the chart's ticket, a
 timed trade from Predict, and a setup put to their rule (executed or refused). Each row

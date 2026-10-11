@@ -14,6 +14,7 @@ import { useKanonSelector } from './data';
 import { shallowEqual } from './store';
 import type { CopyLeadsState, SparklineState } from './home-types';
 import type { VaultSource } from './vault-types';
+import type { PerplRiskState } from './perpl-risk-reads';
 import type { TimedStateRead, TimedTradesState } from './timed-types';
 import type { VenueAccountRead, VenueOrdersState } from './venue-types';
 
@@ -113,6 +114,11 @@ export function useTimedState(): TimedStateRead {
 /** The signed-in user's own timed trades, running and finished, newest first. */
 export function useTimedTrades(): TimedTradesState {
   return useKanonSelector((s) => s.useTimedTrades)();
+}
+
+/** Perpl's markets with their terms, funding and newest state. Public data, polled only while mounted. */
+export function usePerplRisk(): PerplRiskState {
+  return useKanonSelector((s) => s.usePerplRisk)();
 }
 
 /**

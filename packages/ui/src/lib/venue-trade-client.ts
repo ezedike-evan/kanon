@@ -22,6 +22,7 @@ export const TRADE_UNREACHABLE = 'The trading service could not be reached. Try 
 
 /** A read of the account is three requests to the venue behind one of ours. */
 const ACCOUNT_TIMEOUT_MS = 30_000;
+const PUBLIC_TIMEOUT_MS = 15_000;
 /** An order waits for its fill, which the gateway gives twenty seconds, plus the calls around it. */
 const ORDER_TIMEOUT_MS = 75_000;
 
@@ -80,6 +81,18 @@ export function createVenueTradeActions(opts: VenueTradeClientOptions): VenueTra
     openTimed: ({ asset, direction, stakeUsd, seconds }) =>
       call('/predict/open', ORDER_TIMEOUT_MS, { asset, direction, stakeUsd, seconds }),
     closeTimed: ({ tradeId }) => call('/predict/close', ORDER_TIMEOUT_MS, { tradeId }),
+    // Market data is public: no token is read and none is sent.
+    async publicGet(path) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), PUBLIC_TIMEOUT_MS);
+      try {
+        const res = await (opts.fetchImpl ?? fetch)(`${base}${path}`, { signal: controller.signal });
+        if (!res.ok) throw new Error(`the gateway answered ${res.status}`);
+        return (await res.json()) as unknown;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
   };
 }
 

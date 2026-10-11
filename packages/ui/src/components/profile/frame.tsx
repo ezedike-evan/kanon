@@ -210,6 +210,12 @@ function InlinePane({ section }: { section: InlineSection }) {
               />
               <ListRow leading="bar-chart" title="Analytics" subtitle="Adherence, risk, flow" href={routes.analytics} />
               <ListRow
+                leading="line-chart"
+                title="Perpl risk"
+                subtitle="Liquidation distance, funding, books"
+                href={routes.risk}
+              />
+              <ListRow
                 leading="vault"
                 title="Guarded vault"
                 subtitle="Funds the contract enforces"

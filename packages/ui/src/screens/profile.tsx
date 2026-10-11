@@ -80,11 +80,12 @@ const RecordsSection = memo(function RecordsSection() {
           subtitle="What each refusal kept you out of"
           href={routes.blocked}
         />
+        <ListRow leading="bar-chart" title="Analytics" subtitle="Adherence, risk, flow" href={routes.analytics} />
         <ListRow
-          leading="bar-chart"
-          title="Analytics"
-          subtitle="Adherence, risk, flow"
-          href={routes.analytics}
+          leading="line-chart"
+          title="Perpl risk"
+          subtitle="Liquidation distance, funding, books"
+          href={routes.risk}
           divider={false}
         />
       </Card>

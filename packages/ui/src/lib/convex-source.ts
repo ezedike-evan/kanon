@@ -25,6 +25,7 @@ import { createVenueTickerReads } from './venue-ticker-reads';
 import { disconnectedVenueTrade } from './venue-trade-client';
 import { createVenueTradeReads, type VenueTradeActions } from './venue-trade-reads';
 import { createTimedTradeReads } from './timed-trade-reads';
+import { DISCONNECTED_RISK_STORE, createRiskStore, useRiskStore, type PerplRiskState } from './perpl-risk-reads';
 
 /**
  * Convex, wired to the live data source, once for both clients.
@@ -309,6 +310,18 @@ export function useConvexKanonSource(input: {
     [hooks.useQuery, venueTrade, session.pending, session.signedIn],
   );
 
+  // Perpl's public market data for the risk screen, through the gateway. No session is involved:
+  // one store for the life of the calls object, polling only while the screen is mounted.
+  const perplRiskReads = useMemo(() => {
+    const get = venueTrade.publicGet;
+    const store = get ? createRiskStore({ get: (path) => get(path) }) : DISCONNECTED_RISK_STORE;
+    return {
+      usePerplRisk(): PerplRiskState {
+        return useRiskStore(store);
+      },
+    };
+  }, [venueTrade]);
+
   // Guarded vaults and copy trading: the chain for what is true on-chain, Convex for finding it again.
   // Read only while a vault or copy screen is mounted (`useVaults`), never at the root.
   const vaultStrategy = useMemo(() => {
@@ -377,6 +390,7 @@ export function useConvexKanonSource(input: {
       ...vaultReads,
       ...venueTradeReads,
       ...timedTradeReads,
+      ...perplRiskReads,
       session: kanonSession,
       settings: userId ? settings : live.settings,
       ruleHistory: userId ? history : live.ruleHistory,
@@ -389,6 +403,7 @@ export function useConvexKanonSource(input: {
       vaultReads,
       venueTradeReads,
       timedTradeReads,
+      perplRiskReads,
       kanonSession,
       settings,
       history,

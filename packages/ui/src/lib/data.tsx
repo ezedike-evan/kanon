@@ -76,6 +76,7 @@ import type {
   TimedStateRead,
   TimedTradesState,
 } from './timed-types';
+import { RISK_NOT_CONNECTED, type PerplRiskState } from './perpl-risk-reads';
 export type * from './timed-types';
 
 /**
@@ -484,6 +485,13 @@ export interface KanonDataSource {
    * trade is ever a fixture.
    */
   useTimedTrades(): TimedTradesState;
+
+  /**
+   * Perpl's markets with their margin terms, funding and newest state, for the
+   * risk screen. Public market data through the gateway: read (two requests on
+   * a timer) only while a caller is mounted, and the same signed in or out.
+   */
+  usePerplRisk(): PerplRiskState;
 }
 
 const dec = (n: string, decimals = 2): Decimal => parseDecimal(n, decimals);
@@ -574,6 +582,9 @@ const DEMO_TIMED_STATE: TimedStateRead = {
   refresh() {},
 };
 const DEMO_TIMED_TRADES: TimedTradesState = { status: 'empty' };
+
+/** No gateway behind the demo source: the risk screen says market data is not connected, and invents no market. */
+const DEMO_PERPL_RISK: PerplRiskState = { status: 'unavailable', message: RISK_NOT_CONNECTED };
 const demoTimedOpen = async (): Promise<TimedOpenResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 const demoTimedClose = async (): Promise<TimedCloseResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 
@@ -755,6 +766,7 @@ export const demoDataSource: KanonDataSource = {
   openTimedTrade: demoTimedOpen,
   closeTimedTrade: demoTimedClose,
   useTimedTrades: () => DEMO_TIMED_TRADES,
+  usePerplRisk: () => DEMO_PERPL_RISK,
 };
 
 /** Re-exported so a real provider can fall back to the demo trade id. */

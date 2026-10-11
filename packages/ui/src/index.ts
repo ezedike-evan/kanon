@@ -112,6 +112,7 @@ export { PinningScreen } from './screens/pinning';
 export { ProposalScreen } from './screens/proposal';
 export { TradeDetailScreen } from './screens/trade-detail';
 export { BlockedLogScreen } from './screens/blocked-log';
+export { PerplRiskScreen } from './screens/perpl-risk';
 export { CoolingOffScreen } from './screens/cooling-off';
 export { StrategyCardScreen } from './screens/strategy-card';
 export { OnboardingPasskeyScreen } from './screens/onboarding-passkey';

@@ -68,6 +68,12 @@ export interface VenueTradeActions {
   openTimed(args: TimedRequest): Promise<unknown>;
   /** Ends the caller's own running trade before its time. */
   closeTimed(args: { tradeId: string }): Promise<unknown>;
+  /**
+   * One of the gateway's public market-data paths, as parsed JSON. No sign-in
+   * token is sent, since the gateway serves these to anyone. Rejects when it
+   * cannot be read. Absent when no gateway is connected.
+   */
+  publicGet?(path: string): Promise<unknown>;
 }
 
 export interface VenueTradeReadsDeps {
