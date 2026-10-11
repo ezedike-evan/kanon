@@ -44,6 +44,8 @@ export const TIMED_MESSAGES = {
   notYours: 'That trade is not one of yours, or it has already ended.',
   unread: 'The venue could not be read. Try again.',
   openFeeMissing: 'The opening fee was not reported. The result leaves it out.',
+  partClosed: 'The closing order filled in part. Closing the rest.',
+  manyFills: 'Closed in more than one fill. The exit shown is the first fill.',
 } as const;
 
 /** A running trade as the store keeps it. */
@@ -278,6 +280,14 @@ export function createTimedRunner(deps: TimedRunnerDeps): TimedRunner {
       },
     };
 
+    // A closing order is immediate-or-cancel, so it can fill in part. The trade is over when
+    // nothing of its position is left, which is read from the account, not taken from one fill.
+    const stillHeld = async (): Promise<boolean> => {
+      const account = await service.account().catch(() => null);
+      return account?.status === 'ready' && account.positions.some((p) => p.asset === trade.asset);
+    };
+    let fills = 0;
+
     for (let attempt = 1; attempt <= CLOSE_TRIES && !stopped; attempt++) {
       let result;
       try {
@@ -288,7 +298,27 @@ export function createTimedRunner(deps: TimedRunnerDeps): TimedRunner {
       }
 
       if (result.status === 'filled') {
-        await write({ tradeId: trade.id, status: 'closed', endedBy, closedAt: now() });
+        fills += 1;
+        if (await stillHeld()) {
+          // The first fill's figures are the trade's; the next order closes what is left. Out of
+          // tries, the trade stays `closing` and the sweep below comes back to it: a remainder is
+          // never left on the account with the trade marked closed.
+          await finish({
+            orderId: result.orderId,
+            ...(result.price ? { fillPrice: result.price } : {}),
+            ...(result.fee ? { fee: result.fee } : {}),
+            ...(result.txHash ? { txHash: result.txHash } : {}),
+          });
+          await write({ tradeId: trade.id, reason: TIMED_MESSAGES.partClosed });
+          continue;
+        }
+        await write({
+          tradeId: trade.id,
+          status: 'closed',
+          endedBy,
+          closedAt: now(),
+          ...(fills > 1 ? { reason: TIMED_MESSAGES.manyFills } : {}),
+        });
         await finish({
           orderId: result.orderId,
           ...(result.price ? { fillPrice: result.price } : {}),

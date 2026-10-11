@@ -163,7 +163,10 @@ Predict's timed trades run on the same service (`src/timed-policy.ts`,
 opened at market and closed by the server when the time is up, or sooner if its
 loss at the mark price reaches its stake. The result is the price change
 between the two fills times the size, less the fees reported, in integers.
-Tested against a fake venue; not yet run against Perpl.
+A closing order is immediate-or-cancel and can fill in part, so a trade is
+marked closed only once the account holds nothing of its position: what a
+part-fill leaves is closed by the next order, and a trade that runs out of
+tries stays `closing` and is come back to. Tested against a fake venue.
 
 The service is framework-free because of where it has to run: Perpl answers
 its trading API with HTTP 451 from regions it does not serve, and that is what

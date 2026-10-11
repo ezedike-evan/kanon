@@ -72,10 +72,12 @@ interface World {
   startFails: boolean;
   owner: boolean;
   stored: TimedRecord[];
+  /** How many filled closes leave part of the position open before one closes the rest. */
+  partFills: number;
 }
 
 function setup(over: Partial<World> = {}, depsOver: Partial<TimedRunnerDeps> = {}) {
-  const world: World = { open: FILLED, closes: [CLOSED], held: [], mark: 828471, startFails: false, owner: true, stored: [], ...over };
+  const world: World = { open: FILLED, closes: [CLOSED], held: [], mark: 828471, startFails: false, owner: true, stored: [], partFills: 0, ...over };
   let clock = 1_000_000;
   const timers: Array<{ run: () => void; at: number; live: boolean }> = [];
   const placed: Array<[OrderRequest, PlaceOptions | undefined]> = [];
@@ -95,8 +97,13 @@ function setup(over: Partial<World> = {}, depsOver: Partial<TimedRunnerDeps> = {
     closePosition: async (asset, recorder) => {
       closed.push(asset);
       closer = recorder;
-      const answer = world.closes.length > 1 ? world.closes.shift() : world.closes[0];
-      return answer ?? CLOSED;
+      const answer = (world.closes.length > 1 ? world.closes.shift() : world.closes[0]) ?? CLOSED;
+      // A close that fills takes the position off the account, unless this one is to fill in part.
+      if (answer.status === 'filled') {
+        if (world.partFills > 0) world.partFills -= 1;
+        else world.held = world.held.filter((held) => held !== asset);
+      }
+      return answer;
     },
   };
   const plain: VenueRecorder = { begin: async () => ({ ok: true, orderId: 'o' }), settle: async () => {}, amend: async () => {} };
@@ -366,6 +373,51 @@ describe('ending a trade', () => {
       undefined,
     ]);
     expect(t.updates[4]).toMatchObject({ status: 'closed', endedBy: 'time' });
+  });
+});
+
+describe('a close that fills in part', () => {
+  it('closes what is left before calling the trade closed, and says it took more than one fill', async () => {
+    const t = setup({ held: ['BTC/USD'], partFills: 1 });
+    await t.runner.open(ask, TOKEN);
+    await t.advance(60_000);
+
+    // Two closing orders: the first left part of the position on the account.
+    expect(t.closed).toEqual(['BTC/USD', 'BTC/USD']);
+    expect(t.world.held).toEqual([]);
+    expect(t.updates[0]).toEqual({ tradeId: 'trade-1', status: 'closing' });
+    // The first fill's figures are the trade's.
+    expect(t.updates[1]).toMatchObject({ tradeId: 'trade-1', exitPrice: { atoms: '828771', decimals: 1 } });
+    expect(t.updates[2]).toEqual({ tradeId: 'trade-1', reason: TIMED_MESSAGES.partClosed });
+    expect(t.updates[3]).toEqual({
+      tradeId: 'trade-1',
+      status: 'closed',
+      endedBy: 'time',
+      closedAt: 1_060_000,
+      reason: TIMED_MESSAGES.manyFills,
+    });
+    expect(t.updates).toHaveLength(4);
+    expect(t.liveTimers()).toBe(0);
+  });
+
+  it('is never marked closed while a remainder is on the account, and comes back to it', async () => {
+    const t = setup({ held: ['BTC/USD'], partFills: 99 });
+    await t.runner.open(ask, TOKEN);
+    await t.advance(60_000);
+    expect(t.closed).toHaveLength(8);
+    expect(t.world.held).toEqual(['BTC/USD']);
+    expect(t.updates.some((u) => u.status === 'closed')).toBe(false);
+    // Out of tries for now: a timer is left to come back to the remainder (beside the loss check's own).
+    expect(t.liveTimers()).toBeGreaterThan(0);
+
+    // The next sweep finds the venue able to take all of it.
+    t.world.partFills = 0;
+    await t.advance(120_000);
+    expect(t.world.held).toEqual([]);
+    expect(t.updates.filter((u) => u.status === 'closed')).toEqual([
+      expect.objectContaining({ endedBy: 'time' }),
+    ]);
+    expect(t.liveTimers()).toBe(0);
   });
 });
 
