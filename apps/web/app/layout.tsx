@@ -4,8 +4,17 @@ import { Providers } from '@/src/providers';
 import { ThemeRoot } from '@/src/theme-root';
 import './globals.css';
 
+/**
+ * Where the site is served from, for absolute links in its metadata. On Vercel
+ * this is the production domain (the custom one once it is attached); anywhere
+ * else it is the local dev server. Never a domain this project does not own.
+ */
+const SITE_URL = process.env.VERCEL_PROJECT_PRODUCTION_URL
+  ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+  : 'http://localhost:3000';
+
 export const metadata: Metadata = {
-  metadataBase: new URL('https://kanon.app'),
+  metadataBase: new URL(SITE_URL),
   title: 'Kanon',
   applicationName: 'Kanon',
   description:

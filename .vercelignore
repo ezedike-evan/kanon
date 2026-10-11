@@ -1,0 +1,55 @@
+# What `vercel deploy` must not upload.
+#
+# The Vercel CLI does NOT fall back to .gitignore for this repository: a deploy
+# on 11 October 2026 uploaded `.env` files that .gitignore lists. Everything
+# that must stay on this machine is therefore named here. When this file exists
+# the CLI uses it and nothing else, so it also repeats .gitignore.
+#
+# After changing it, check before deploying:
+#   git ls-files -o -i --exclude-from=.vercelignore | grep -v node_modules | grep '\.env'
+# must list every local settings file, and after a deploy the deployment's file
+# list must contain no `.env` other than `.env.example`.
+
+# Local settings and keys. Only the example files, which hold no values, go up.
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+
+# Contracts: the web build reads none of it. `broadcast/` is the deploy log.
+packages/contracts/broadcast/
+packages/contracts/cache/
+packages/contracts/out/
+packages/contracts/lib/
+packages/contracts/deployments/31337.json
+
+# Not part of the web build.
+design/
+docs/
+.claude/
+.agents/
+.github/
+.expo/
+**/.expo/
+packages/indexer/.envio/
+packages/indexer/generated/
+packages/indexer/build/
+packages/indexer/logs/
+
+# The same as .gitignore.
+node_modules/
+.next/
+.next-*/
+out/
+dist/
+coverage/
+.turbo/
+*.tsbuildinfo
+.DS_Store
+packages/tokens/preset.cjs
+packages/tokens/theme.css
+*.log
+apps/mobile/scratch.js
+.vercel

@@ -13,3 +13,4 @@ packages/tokens/preset.cjs
 packages/tokens/theme.css
 *.log
 apps/mobile/scratch.js
+.vercel

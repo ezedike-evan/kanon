@@ -11,6 +11,7 @@
     "web": "pnpm tokens && pnpm --filter @kanon/web dev",
     "build": "pnpm tokens && pnpm --filter @kanon/web build",
     "build:mobile": "pnpm tokens && pnpm --filter @kanon/mobile bundle",
+    "deploy:web": "bash scripts/deploy-web.sh",
     "test": "pnpm -r test",
     "typecheck": "pnpm tokens && pnpm -r typecheck",
     "lint": "pnpm --filter @kanon/web lint"
