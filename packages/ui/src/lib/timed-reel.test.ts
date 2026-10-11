@@ -21,6 +21,8 @@ import {
   timeOptions,
   titleText,
 } from './timed-reel';
+import { DEMO_ASSETS, demoTicker } from './domain-demo';
+import { SAMPLE_TIMED_STATE } from './timed-sample';
 import { TIME_IS_UP, formatClockTime, timedTradeFromRow, timedView } from './timed-trade';
 import type { TimedState, TimedStateView, TimedTrade } from './timed-types';
 
@@ -206,6 +208,37 @@ describe('what a slide is doing', () => {
     expect(slideBadge({ kind: 'ended', trade: trade() })).toBe('ENDED');
     expect(slideBadge({ kind: 'held', tag: 'IN A TRADE', short: '', line: '' })).toBe('IN A TRADE');
   });
+
+  it('says SAMPLE, not OPEN, on the signed-out sample, and only where it would have said OPEN', () => {
+    expect(slideBadge({ kind: 'actions' }, false, true)).toBe('SAMPLE');
+    expect(slideBadge({ kind: 'running', trade: trade() }, false, true)).toBe('RUNNING');
+    expect(slideBadge({ kind: 'held', tag: 'CLOSED', short: '', line: '' }, false, true)).toBe('CLOSED');
+  });
+});
+
+describe('the signed-out sample', () => {
+  it('is a reel of the demo pairs at every time, each free, with nothing running', () => {
+    expect(SAMPLE_TIMED_STATE).toMatchObject({ status: 'ready', sample: true });
+    expect(SAMPLE_TIMED_STATE.markets.map((m) => m.asset)).toEqual([...DEMO_ASSETS]);
+    expect(SAMPLE_TIMED_STATE.markets.every((m) => m.open && m.busy === null)).toBe(true);
+    expect(assetOptions(SAMPLE_TIMED_STATE)).toEqual(['BTC', 'ETH', 'SOL', 'MON']);
+
+    const slides = reelSlides(SAMPLE_TIMED_STATE, NO_FILTER);
+    expect(slides).toHaveLength(DEMO_ASSETS.length * SAMPLE_TIMED_STATE.limits.durations.length);
+    expect(slides[0]).toEqual({ id: 'BTC/USD|60', asset: 'BTC/USD', base: 'BTC', seconds: 60 });
+    // Every slide offers its two actions: no slide of the sample is held, running or ended.
+    for (const slide of slides) {
+      const view = timedView(SAMPLE_TIMED_STATE, { asset: slide.asset, stakeUsd: null, seconds: slide.seconds });
+      expect(view.sample).toBe(true);
+      expect(slideMode(slide, view, [], [])).toEqual({ kind: 'actions' });
+    }
+    // The pair filter and the time filter work on it as on the server's state.
+    expect(reelSlides(SAMPLE_TIMED_STATE, { asset: 'ETH', seconds: 300 }).map((s) => s.id)).toEqual(['ETH/USD|300']);
+  });
+
+  it('has a demo price for every pair it lists, so no slide is drawn without one', () => {
+    for (const market of SAMPLE_TIMED_STATE.markets) expect(demoTicker(market.asset).status).toBe('demo');
+  });
 });
 
 describe('what a slide says', () => {
@@ -270,6 +303,9 @@ describe('what a slide says', () => {
     const closed = { kind: 'held', tag: 'CLOSED', short: 'The market is closed', line: 'The BTC market is closed.' } as const;
     // A row has room for a few words, not the sentence the slide itself says.
     expect(slideRowView(slide, closed).state).toBe('The market is closed');
+    // Signed out, a row that would say Open says what it is.
+    expect(slideRowView(slide, { kind: 'actions' }, true).state).toBe('Sample');
+    expect(slideRowView(slide, closed, true).state).toBe('The market is closed');
   });
 
   it('uses no exclamation mark, no em dash and no gambling word', () => {

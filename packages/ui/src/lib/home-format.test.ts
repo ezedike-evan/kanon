@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { parseDecimal } from '@kanon/spec';
 import { DEMO_ACTIVITY } from './domain-demo';
-import { activityCopy, baseOf, dayLabel, formatSize, greetingName, groupByDay, relativeTime, shortAddress, shortDate } from './home-format';
+import {
+  activityCopy,
+  baseOf,
+  dayLabel,
+  formatSize,
+  greetingName,
+  groupByDay,
+  relativeTime,
+  shortAddress,
+  shortDate,
+  walletChip,
+} from './home-format';
 import { chartRoute, parseChartAsset } from './routes';
 
 const NOW = Date.parse('2026-09-21T12:00:00Z');
@@ -9,6 +20,40 @@ const ago = (ms: number) => NOW - ms;
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
+
+describe('walletChip', () => {
+  const ADDRESS = '0x9fE2aB0c1d3E4f5a6B7c8D9e0F1a2B3c4D5e41Ab';
+
+  it('says nothing while auth is still resolving', () => {
+    expect(walletChip({ pending: true, signedIn: false, hasWallet: false, address: null })).toBeNull();
+    expect(walletChip({ pending: true, signedIn: true, hasWallet: true, address: ADDRESS })).toBeNull();
+  });
+
+  it('signed out is the way to sign in, and never reports a wallet as failed', () => {
+    const chip = walletChip({ pending: false, signedIn: false, hasWallet: false, address: null });
+    expect(chip).toEqual({ label: 'Sign in', to: 'signin', connected: false, accessibilityLabel: 'Sign in' });
+    expect(JSON.stringify(chip)).not.toMatch(/not connected|failed|error/i);
+  });
+
+  it('signed in states the wallet and opens Profile', () => {
+    expect(walletChip({ pending: false, signedIn: true, hasWallet: true, address: ADDRESS })).toEqual({
+      label: '0x9fE2…41Ab',
+      to: 'profile',
+      connected: true,
+      accessibilityLabel: `Wallet ${ADDRESS}. Open profile.`,
+    });
+    expect(walletChip({ pending: false, signedIn: true, hasWallet: true, address: null })).toMatchObject({
+      label: 'Wallet ready',
+      to: 'profile',
+      connected: true,
+    });
+    expect(walletChip({ pending: false, signedIn: true, hasWallet: false, address: null })).toMatchObject({
+      label: 'No wallet',
+      to: 'profile',
+      connected: false,
+    });
+  });
+});
 
 describe('shortAddress', () => {
   it('keeps the two ends', () => {

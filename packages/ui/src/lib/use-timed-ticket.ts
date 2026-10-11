@@ -136,9 +136,10 @@ export function useTimedTicket(): TimedTicket {
   const canRefresh = session.signedIn && !session.pending;
 
   // The last state that listed anything, kept for as long as somebody is signed in.
+  // The signed-out sample is never kept: it is no server's answer to fall back on.
   const [lastReady, setLastReady] = useState<TimedState | null>(null);
   useEffect(() => {
-    if (state.status === 'ready') setLastReady(state);
+    if (state.status === 'ready' && !state.sample) setLastReady(state);
     else if (!canRefresh) setLastReady(null);
   }, [state, canRefresh]);
   const listed = state.status === 'unavailable' && canRefresh && lastReady ? lastReady : state;

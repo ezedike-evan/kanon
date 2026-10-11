@@ -34,6 +34,14 @@ import type {
 
 /** What a ticket says while nobody is signed in. Nothing is called in that state. */
 export const SIGN_IN_TO_TRADE = 'Sign in to trade.';
+/** The same as something to press: the label of the link that leads to sign-in. */
+export const SIGN_IN_ACTION = 'Sign in to trade';
+/**
+ * Whether a line a ticket is about to show is the one that asks for sign-in. A
+ * screen then draws it as a link to the front door instead of as a sentence
+ * with nothing to press.
+ */
+export const asksToSignIn = (line: string | null | undefined): boolean => line === SIGN_IN_TO_TRADE;
 export const ACCOUNT_UNREAD = 'The trading account could not be read. Try again.';
 export const ACCOUNT_UNKNOWN_SHAPE = 'The trading account came back in a shape this screen does not know.';
 /** A call that threw may or may not have reached the venue, so this claims neither. */

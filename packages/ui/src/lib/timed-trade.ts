@@ -498,6 +498,11 @@ export interface TimedView {
   slippage: string | null;
   /** Why no trade can be opened right now, in one line. Null when one can. */
   hold: string | null;
+  /**
+   * The signed-out sample: what is here is to be looked at, the screen labels
+   * it, and UP and DOWN lead to sign-in instead of sending anything.
+   */
+  sample: boolean;
 }
 
 /** Why a market cannot take a trade right now, as a tag and a line. Both null when it can. */
@@ -537,6 +542,7 @@ export function timedView(state: TimedState, wanted: TimedWanted): TimedView {
       leverage: null,
       slippage: null,
       hold: state.status === 'unavailable' ? state.message : 'Reading what can be traded.',
+      sample: false,
     };
   }
 
@@ -580,6 +586,7 @@ export function timedView(state: TimedState, wanted: TimedWanted): TimedView {
     leverage: market ? market.leverage : null,
     slippage: formatBps(limits.slippageBps),
     hold,
+    sample: state.sample === true,
   };
 }
 
@@ -617,9 +624,9 @@ export function openLabel(request: TimedRequest): string {
   return `Open ${request.direction} on ${baseOf(request.asset)}, ${stake}, ${durationWords(request.seconds)}`;
 }
 
-/** The request the choices in force make on one side, or null while they make none. */
+/** The request the choices in force make on one side, or null while they make none. A sample makes none: nothing is sent with it. */
 export function requestOf(view: TimedView, direction: TimedDirection): TimedRequest | null {
-  if (view.hold !== null || view.asset === null || view.stakeUsd === null || view.seconds === null) return null;
+  if (view.sample || view.hold !== null || view.asset === null || view.stakeUsd === null || view.seconds === null) return null;
   return { asset: view.asset, direction, stakeUsd: view.stakeUsd, seconds: view.seconds };
 }
 
@@ -641,9 +648,15 @@ export interface DirectionAction {
   sending: boolean;
 }
 
+/** What the signed-out sample says where a slide would say whose account a trade goes to. The way to sign in follows it. */
+export const SAMPLE_LEAD = 'Sample prices.';
+
 /**
  * One of the two primary actions. `locked` is something on its way, or an
  * answer whose state read has not landed yet.
+ *
+ * On the signed-out sample the action is on and opens nothing: the screen sends
+ * its press to sign-in, and its name says so instead of naming an order.
  */
 export function directionAction(
   view: TimedView,
@@ -652,6 +665,10 @@ export function directionAction(
   locked: boolean,
 ): DirectionAction {
   const word = DIRECTION_WORD[direction];
+  if (view.sample) {
+    const name = direction === 'up' ? 'Up' : 'Down';
+    return { direction, word, accessibilityLabel: `${name}. A sample: sign in to trade.`, disabled: false, sending: false };
+  }
   if (sending?.action === 'open' && sending.direction === direction) {
     return { direction, word, accessibilityLabel: sendingLine(sending), disabled: true, sending: true };
   }

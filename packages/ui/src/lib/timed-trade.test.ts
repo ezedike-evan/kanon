@@ -577,6 +577,24 @@ describe('the two actions', () => {
     expect(sendingLine({ action: 'close', tradeId: 't1' })).toBe('Asking the server to end the trade…');
   });
 
+  it('on the signed-out sample are on, name sign-in instead of an order, and make no request', () => {
+    const sample = timedView({ ...READY, sample: true }, NOTHING);
+    expect(sample).toMatchObject({ status: 'ready', sample: true, hold: null });
+    // The choices are the sample's own, so the slide has something to show.
+    expect(choiceFacts(sample).length).toBeGreaterThan(0);
+    for (const direction of ['up', 'down'] as const) {
+      expect(requestOf(sample, direction)).toBeNull();
+      const action = directionAction(sample, direction, null, false);
+      expect(action).toMatchObject({ disabled: false, sending: false });
+      expect(action.accessibilityLabel).toMatch(/sample: sign in to trade/i);
+      expect(action.accessibilityLabel).not.toMatch(/^Open /);
+    }
+    // What the server answers is never a sample.
+    expect(timedView(READY, NOTHING).sample).toBe(false);
+    expect(timedView({ status: 'loading' }, NOTHING).sample).toBe(false);
+    expect(timedView({ status: 'unavailable', message: 'x' }, NOTHING).sample).toBe(false);
+  });
+
   it('are off with the reason when nothing can be opened, and make no request', () => {
     const off = timedView({ status: 'unavailable', message: 'Sign in to trade.' }, NOTHING);
     expect(requestOf(off, 'up')).toBeNull();

@@ -39,6 +39,7 @@ import type { PredictFeed } from './predict-types';
 import { createStore, useStoreSelector, type Store } from './store';
 import { DEMO_ACTIVITY, DEMO_FOLLOWS, DEMO_MARKETS, demoTicker } from './domain-demo';
 import { DEMO_COPY_LEADS, demoSparkline } from './home-demo';
+import { DEMO_RULES } from './profile-demo';
 import type { CopyLeadsState, SparklineState } from './home-types';
 import type {
   ActivityState,
@@ -60,6 +61,7 @@ import { DEMO_COPY, DEMO_VAULTS, demoOutcome } from './vault-demo';
 export type * from './vault-types';
 export type * from './domain-types';
 import { SIGN_IN_TO_TRADE } from './venue-trade';
+import { SAMPLE_TIMED_STATE } from './timed-sample';
 import type {
   VenueAccountRead,
   VenueOrderRequest,
@@ -465,7 +467,7 @@ export interface KanonDataSource {
    * leverage the server offers) and whether each market is free. A hook: it is
    * read (a call to the gateway) only while the Predict screen is mounted, then
    * again after an open or a close, on `refresh()` and on a slow interval.
-   * Signed out it is `unavailable`.
+   * Signed out it is the labelled sample (`timed-sample.ts`), and nothing is read.
    */
   useTimedState(): TimedStateRead;
   /**
@@ -561,9 +563,13 @@ const DEMO_VENUE_ACCOUNT: VenueAccountRead = {
 const DEMO_VENUE_ORDERS: VenueOrdersState = { status: 'empty' };
 const demoVenueOrder = async (): Promise<VenueOrderResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 
-/** The demo opens no timed trade either: Predict says to sign in, and shows no made-up countdown or result. */
+/**
+ * The demo opens no timed trade either. Predict shows the labelled sample (the
+ * pairs and the choices, to look at) and no made-up countdown or result; a
+ * press on it leads to sign-in.
+ */
 const DEMO_TIMED_STATE: TimedStateRead = {
-  state: { status: 'unavailable', message: SIGN_IN_TO_TRADE },
+  state: SAMPLE_TIMED_STATE,
   refreshing: false,
   refresh() {},
 };
@@ -714,17 +720,8 @@ export const demoDataSource: KanonDataSource = {
   useBlockedLog: () => DEMO_BLOCKED_LOG,
   session: { mode: 'demo', pending: false, signedIn: false, hasWallet: false },
   settings: { name: 'Demo', username: 'demo', email: null, hasWallet: false },
-  ruleHistory: [
-    {
-      id: 'demo-rule',
-      status: 'pinned',
-      specHash: RULE.specHash,
-      pinnedAt: null,
-      name: RULE.name,
-      asset: RULE.asset,
-      active: true,
-    },
-  ],
+  // The same history Profile lists, so Home's "Rules pinned" and Profile's count are one number.
+  ruleHistory: DEMO_RULES,
   useMarkets: () => DEMO_MARKETS,
   useTicker: demoTicker,
   useActivity: (limit = 10): ActivityState => ({ status: 'demo', items: DEMO_ACTIVITY.slice(0, limit) }),

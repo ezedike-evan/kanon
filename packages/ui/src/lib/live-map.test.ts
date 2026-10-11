@@ -17,6 +17,7 @@ import {
   countTrades,
   emptyRule,
   homeFromTrades,
+  lossAvoided,
   pickStrategies,
   pinAvailabilityFor,
   pinningData,
@@ -33,6 +34,8 @@ import {
   type LiveStrategy,
   type LiveTrade,
 } from './live-map';
+import { DEMO_ANALYTICS } from './analytics-demo';
+import { BLOCKED } from './demo';
 
 const usd = (v: string) => parseDecimal(v, 2);
 const T = Date.parse('2026-09-02T14:32:07Z');
@@ -386,6 +389,15 @@ describe('blocked log', () => {
   it('is loading while the report has not arrived and there is something to model', () => {
     const log = blockedLogFromTrades({ trades: [bosRefusal], spec: RULE_04, report: undefined, now: T });
     expect(log.loading).toBe(true);
+  });
+
+  it('states its figure as a loss avoided: positive, the way Analytics states it, and never below zero', () => {
+    expect(formatDecimal(lossAvoided({ wouldHaveLost: usd('-627.36') }))).toBe('627.36');
+    expect(formatDecimal(lossAvoided({ wouldHaveLost: usd('0.00') }))).toBe('0.00');
+    // A sum that is somehow a gain avoided no loss: it is not printed as one.
+    expect(formatDecimal(lossAvoided({ wouldHaveLost: usd('12.00') }))).toBe('0.00');
+    // The demo's two screens are one number.
+    expect(lossAvoided(BLOCKED)).toEqual(DEMO_ANALYTICS.avoided.lossAvoided);
   });
 });
 

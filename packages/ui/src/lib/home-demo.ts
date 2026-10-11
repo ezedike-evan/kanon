@@ -5,8 +5,8 @@ import { DEMO_MARKETS } from './domain-demo';
 /**
  * The signed-out fixtures for Home's own hooks. Built once and shared, so a demo
  * Home re-renders on nothing and does no work per mount. Deterministic: the same
- * line every time, and a line that ends the way its pair's 24-hour move says it
- * did, so the demo never draws a rising line beside a falling figure.
+ * line for the same move, and a line that ends the way its pair's 24-hour move
+ * says it did, so the demo never draws a rising line beside a falling figure.
  */
 
 const POINTS = 24;
@@ -37,18 +37,21 @@ export function demoLine(seed: number, changeBps: number, points = POINTS): numb
   return walk.map((v, i) => v + (drift * i) / (points - 1));
 }
 
-const DEMO_LINES: Record<string, number[]> =
-  DEMO_MARKETS.status === 'demo'
-    ? Object.fromEntries(DEMO_MARKETS.pairs.map((p, i) => [p.asset, demoLine(101 + i * 17, p.changeBps ?? 0)]))
-    : {};
-
 const NO_DEMO_LINE: SparklineState = { status: 'empty' };
-const DEMO_SPARKLINES: Record<string, SparklineState> = Object.fromEntries(
-  Object.entries(DEMO_LINES).map(([asset, points]) => [asset, { status: 'demo', points } satisfies SparklineState]),
-);
+
+// Built on first use, as the demo pairs are: a line lands on its pair's own 24-hour move.
+let sparklines: Record<string, SparklineState> | null = null;
+function demoSparklines(): Record<string, SparklineState> {
+  if (sparklines) return sparklines;
+  const pairs = DEMO_MARKETS.status === 'demo' ? DEMO_MARKETS.pairs : [];
+  sparklines = Object.fromEntries(
+    pairs.map((p, i) => [p.asset, { status: 'demo', points: demoLine(101 + i * 17, p.changeBps ?? 0) } satisfies SparklineState]),
+  );
+  return sparklines;
+}
 
 export function demoSparkline(asset: string): SparklineState {
-  return DEMO_SPARKLINES[asset.replace(/\s+/g, '').toUpperCase()] ?? NO_DEMO_LINE;
+  return demoSparklines()[asset.replace(/\s+/g, '').toUpperCase()] ?? NO_DEMO_LINE;
 }
 
 const lead = (

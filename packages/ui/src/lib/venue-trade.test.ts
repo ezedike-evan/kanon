@@ -3,11 +3,14 @@ import {
   ACCOUNT_UNKNOWN_SHAPE,
   NOT_REPORTED_YET,
   ORDER_UNKNOWN_SHAPE,
+  SIGN_IN_ACTION,
+  SIGN_IN_TO_TRADE,
   STALE_SENDING_MS,
   TX_NOT_REPORTED,
   addOrderLabel,
   asAccount,
   asOrderResult,
+  asksToSignIn,
   barLine,
   barSummary,
   chosenOption,
@@ -465,6 +468,21 @@ describe('ticketView', () => {
   it("holds with the server's own message when the account is unavailable", () => {
     const view = ticketView({ status: 'unavailable', message: 'Sign in to trade.' }, 'BTC/USD', NOTHING_PICKED);
     expect(view).toMatchObject({ status: 'unavailable', message: 'Sign in to trade.', hold: 'Sign in to trade.', sizes: [] });
+  });
+
+  it('knows the line that asks for sign-in, on every surface that shows it, so each can draw it as a link', () => {
+    const signedOut = ticketView({ status: 'unavailable', message: SIGN_IN_TO_TRADE }, 'BTC/USD', NOTHING_PICKED);
+    expect(asksToSignIn(ticketLine(signedOut, null))).toBe(true);
+    expect(asksToSignIn(sheetLine(signedOut, 'close', null))).toBe(true);
+    expect(asksToSignIn(barLine(signedOut, null, null))).toBe(true);
+    // The link's own label is the sentence without its full stop.
+    expect(`${SIGN_IN_ACTION}.`).toBe(SIGN_IN_TO_TRADE);
+
+    // Any other reason stays a sentence: there is nothing sign-in would fix.
+    const down = ticketView({ status: 'unavailable', message: 'The trading account could not be read. Try again.' }, 'BTC/USD', NOTHING_PICKED);
+    expect(asksToSignIn(ticketLine(down, null))).toBe(false);
+    expect(asksToSignIn(null)).toBe(false);
+    expect(asksToSignIn(undefined)).toBe(false);
   });
 
   it('opens on the smallest size and 1x, with every limit worded from what the server sent', () => {

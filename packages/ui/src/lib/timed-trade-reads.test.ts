@@ -20,6 +20,7 @@ import {
   createTimedTradeReads,
   type TimedSnapshot,
 } from './timed-trade-reads';
+import { SAMPLE_TIMED_STATE } from './timed-sample';
 import type { TimedStateRead, TimedStateView, TimedTradeView, TimedTradesState } from './timed-types';
 import { SIGN_IN_TO_TRADE } from './venue-trade';
 import { TRADE_NOT_CONNECTED } from './venue-trade-client';
@@ -222,6 +223,17 @@ describe('createTimedStateStore', () => {
     stop();
   });
 
+  it('never takes a sample from the server: the flag is not a field a read can set', async () => {
+    const state = scripted();
+    const store = createTimedStateStore({ read: state.call });
+    const stop = store.subscribe(() => {});
+    state.calls[0]!.resolve({ ...READY, sample: true });
+    await flush();
+    expect(store.getSnapshot().state).toEqual(READY);
+    expect(store.getSnapshot().state).not.toHaveProperty('sample');
+    stop();
+  });
+
   it('survives a read that throws before it returns a promise', async () => {
     const store = createTimedStateStore({
       read: () => {
@@ -287,13 +299,11 @@ describe('createTimedTradeReads', () => {
     await h.unmount();
   });
 
-  it('signed out: "Sign in to trade.", no trades, and nothing is called', async () => {
+  it('signed out: the labelled sample, no trades, and nothing is called', async () => {
     const t = setup({ pending: false, signedIn: false });
     const { h, seen } = await mount(t.reads);
-    expect(last(seen.state)).toMatchObject({
-      state: { status: 'unavailable', message: 'Sign in to trade.' },
-      refreshing: false,
-    });
+    expect(last(seen.state)).toMatchObject({ state: SAMPLE_TIMED_STATE, refreshing: false });
+    expect(last(seen.state).state).toMatchObject({ status: 'ready', sample: true });
     expect(last(seen.trades)).toEqual({ status: 'empty' });
     last(seen.state).refresh();
     expect(await t.reads.openTimedTrade(REQUEST)).toEqual({ status: 'unavailable', message: 'Sign in to trade.' });
@@ -477,7 +487,7 @@ describe('createTimedTradeReads', () => {
 });
 
 describe('the demo source and Predict', () => {
-  it('says to sign in, lists no trade, and opens nothing', async () => {
+  it('shows the labelled sample, lists no trade, and opens nothing', async () => {
     const h = createHarness();
     let state: TimedStateRead | undefined;
     let trades: TimedTradesState | undefined;
@@ -487,7 +497,7 @@ describe('the demo source and Predict', () => {
       return null;
     }
     await h.render(createElement(Predict));
-    expect(state).toMatchObject({ state: { status: 'unavailable', message: 'Sign in to trade.' }, refreshing: false });
+    expect(state).toMatchObject({ state: SAMPLE_TIMED_STATE, refreshing: false });
     expect(trades).toEqual({ status: 'empty' });
     state?.refresh();
     expect(await demoDataSource.openTimedTrade(REQUEST)).toEqual({ status: 'unavailable', message: 'Sign in to trade.' });
@@ -587,10 +597,10 @@ describe('useConvexKanonSource and Predict', () => {
     await a.h.unmount();
   });
 
-  it('signed out: Predict says to sign in, and nothing is called or subscribed', async () => {
+  it('signed out: Predict shows the sample, and nothing is called or subscribed', async () => {
     const a = app(false);
     await a.render(true);
-    expect(last(a.seen).state).toEqual({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
+    expect(last(a.seen).state).toBe(SAMPLE_TIMED_STATE);
     expect(await a.source().openTimedTrade({ asset: 'BTC/USD', direction: 'up', stakeUsd: 10, seconds: 60 })).toEqual({
       status: 'unavailable',
       message: SIGN_IN_TO_TRADE,

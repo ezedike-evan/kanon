@@ -21,8 +21,6 @@ export const DEMO_PROFILE: ProfileSettings = {
 /** Milliseconds for the demo account's creation: a fixed month, never "today". */
 export const DEMO_JOINED_AT = Date.parse('2026-06-11T09:00:00Z');
 
-const px = (v: string) => parseDecimal(v, 2);
-
 interface AssetSpec {
   asset: string;
   base: number;
@@ -81,43 +79,14 @@ function buildTrades(): ActivityItem[] {
 
 export const DEMO_TRADES: ActivityItem[] = buildTrades();
 
-const stake = (
-  id: string,
-  asset: string,
-  direction: 'above' | 'below',
-  target: string,
-  side: 'above' | 'below',
-  amount: string,
-  result: 'won' | 'lost' | 'refunded' | null,
-  window: string,
-  at: string,
-): LedgerRecord => ({
-  type: 'stake',
-  id,
-  at: Date.parse(at),
-  stake: {
-    id,
-    marketId: `demo-market-${id}`,
-    asset,
-    direction,
-    target: px(target),
-    side,
-    stake: parseDecimal(amount, 2),
-    result,
-    window,
-    at: Date.parse(at),
-  },
-});
-
-export const DEMO_STAKES: LedgerRecord[] = [
-  stake('s1', 'BTC/USD', 'above', '68450.00', 'above', '25.00', 'won', '1H', '2026-09-02T11:00:00Z'),
-  stake('s2', 'ETH/USD', 'below', '3320.00', 'below', '40.00', 'lost', '4H', '2026-09-01T08:00:00Z'),
-  stake('s3', 'SOL/USD', 'above', '168.00', 'above', '15.00', 'won', '1H', '2026-08-30T16:00:00Z'),
-  stake('s4', 'BTC/USD', 'below', '66900.00', 'below', '30.00', 'refunded', '1D', '2026-08-29T00:00:00Z'),
-  stake('s5', 'ETH/USD', 'above', '3480.00', 'above', '20.00', 'lost', '1H', '2026-08-27T13:00:00Z'),
-];
-
-export const DEMO_RECORDS: LedgerRecord[] = mergeRecords(tradeRecords(DEMO_TRADES), DEMO_STAKES);
+/**
+ * The demo record is the 33 setups put to the rule, and nothing else. It lists
+ * no Predict row: Predict is a timed trade now, a sample one would be a made-up
+ * trade with a made-up result, and the threshold-market stakes it used to list
+ * describe a screen that no longer exists. (A real stake left from those markets
+ * still reaches the record, through `stakeRecords`.)
+ */
+export const DEMO_RECORDS: LedgerRecord[] = mergeRecords(tradeRecords(DEMO_TRADES));
 
 const rule = (
   id: string,

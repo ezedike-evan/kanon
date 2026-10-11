@@ -212,10 +212,11 @@ describe('demo record', () => {
     expect(behaviourFrom(totals.executed, totals.refused).attempts).toBe(33);
   });
 
-  it('is newest first and carries stakes', () => {
+  it('is newest first, and is the 33 rule setups with no made-up Predict row', () => {
     const times = DEMO_RECORDS.map((r) => r.at);
     expect([...times].sort((a, b) => b - a)).toEqual(times);
-    expect(recordTotals(DEMO_RECORDS).predictions).toBe(5);
+    expect(recordTotals(DEMO_RECORDS)).toEqual({ all: 33, chart: 0, predictions: 0, executed: 24, refused: 9 });
+    expect(DEMO_RECORDS.every((r) => r.type === 'trade')).toBe(true);
   });
 
   it('every refused demo trade names the predicate that refused it', () => {

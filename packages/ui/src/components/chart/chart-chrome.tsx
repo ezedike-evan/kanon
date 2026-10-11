@@ -8,12 +8,13 @@ import { assetTitle, baseOf, predicateCode } from '../../lib/chart-assets';
 import { cx } from '../../lib/cx';
 import { routes } from '../../lib/routes';
 import type { VenueTicket } from '../../lib/use-venue-ticket';
-import { barLine, barSummary, sideButton } from '../../lib/venue-trade';
+import { asksToSignIn, barLine, barSummary, sideButton } from '../../lib/venue-trade';
 import type { VenueSide } from '../../lib/venue-types';
 import { Link } from '../../nav';
 import { useHaptics } from '../../platform';
 import { BottomSheet } from '../bottom-sheet';
 import { Icon } from '../icons';
+import { SignInLink } from '../sign-in-link';
 import { Dot, Meta, Num } from '../ui';
 import { DirectionButton } from './chart-ticket';
 import { ToolIcon, type ToolGlyph } from './tool-icons';
@@ -470,25 +471,42 @@ export function QuickTradeBar({
   const short = sideButton(view, 'short', locked);
   return (
     <View className={cx('shrink-0 border-t border-hairline bg-void px-3 pb-2 pt-0.5', className)} aria-busy={sending !== null}>
-      <Pressable
-        role="button"
-        aria-label={`Open the order ticket. ${line}`}
-        onPress={onOpen}
-        className="h-8 flex-row items-center justify-between gap-3 active:opacity-70"
-      >
-        <Text
-          numberOfLines={1}
-          accessibilityLiveRegion="polite"
-          className={cx('min-w-0 flex-1 font-mono text-10', sending || view.hold !== null ? 'text-bone' : 'text-ash')}
-          style={{ fontVariant: ['tabular-nums'] }}
-        >
-          {line}
-        </Text>
-        <View className="shrink-0 flex-row items-center gap-1">
-          <Num className="text-10">{barSummary(view)}</Num>
-          <Icon name="chevron-up" size={12} color="ash" />
+      {asksToSignIn(line) ? (
+        // Nobody is signed in: the line is the way to. The ticket still opens, from its own name beside it.
+        <View className="h-8 flex-row items-center justify-between gap-3">
+          <SignInLink size={10} />
+          <Pressable
+            role="button"
+            aria-label="Open the order ticket"
+            hitSlop={10}
+            onPress={onOpen}
+            className="shrink-0 flex-row items-center gap-1 active:opacity-70"
+          >
+            <Num className="text-10">{barSummary(view)}</Num>
+            <Icon name="chevron-up" size={12} color="ash" />
+          </Pressable>
         </View>
-      </Pressable>
+      ) : (
+        <Pressable
+          role="button"
+          aria-label={`Open the order ticket. ${line}`}
+          onPress={onOpen}
+          className="h-8 flex-row items-center justify-between gap-3 active:opacity-70"
+        >
+          <Text
+            numberOfLines={1}
+            accessibilityLiveRegion="polite"
+            className={cx('min-w-0 flex-1 font-mono text-10', sending || view.hold !== null ? 'text-bone' : 'text-ash')}
+            style={{ fontVariant: ['tabular-nums'] }}
+          >
+            {line}
+          </Text>
+          <View className="shrink-0 flex-row items-center gap-1">
+            <Num className="text-10">{barSummary(view)}</Num>
+            <Icon name="chevron-up" size={12} color="ash" />
+          </View>
+        </Pressable>
+      )}
       <View className="flex-row gap-2">
         <DirectionButton
           side="long"

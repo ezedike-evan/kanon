@@ -3,15 +3,18 @@ import { formatDecimal } from '@kanon/spec';
 import { Body, Screen, StatusBar, TabBar } from '../components/chrome';
 import { Dot, Meta, Num } from '../components/ui';
 import { Link } from '../nav';
+import { cx } from '../lib/cx';
 import { useBlockedLog } from '../lib/domains';
+import { lossAvoided } from '../lib/live-map';
 import { routes, tradeRoute } from '../lib/routes';
 
 /**
  * 07 · BLOCKED TRADES LOG.
  *
- * Trades refused, and how many would have lost. Adherence is the primary
- * metric, and this is where it is earned. Nothing here is styled as an error
- * and nothing apologises: a refusal is the product working.
+ * Trades refused, and the loss they kept the account out of. Adherence is the
+ * primary metric, and this is where it is earned. Nothing here is styled as an
+ * error and nothing apologises: a refusal is the product working, so its figure
+ * is stated the way Analytics states it, as a loss avoided and never as a loss.
  */
 export function BlockedLogScreen() {
   const BLOCKED = useBlockedLog();
@@ -32,9 +35,9 @@ export function BlockedLogScreen() {
             </Num>
           </View>
           <View className="flex-[1.5] items-end gap-2 py-4">
-            <Meta>WOULD HAVE LOST</Meta>
+            <Meta>LOSS AVOIDED</Meta>
             <Num className="font-mono-medium text-31 tracking-t30 leading-[0.9]">
-              {BLOCKED.loading ? '—' : formatDecimal(BLOCKED.wouldHaveLost)}
+              {BLOCKED.loading ? '—' : formatDecimal(lossAvoided(BLOCKED))}
             </Num>
           </View>
         </View>
@@ -50,9 +53,10 @@ export function BlockedLogScreen() {
           <Text className="font-mono text-10 tracking-w06 text-verified">ADHERENCE · RISK · FLOW ›</Text>
         </Link>
 
-        <View className="mt-6 pb-5">
+        {/* Straight under the Analytics row, whose lower hairline is the list's first rule: no band between two lines. */}
+        <View className="pb-5">
           {BLOCKED.rows.length === 0 ? (
-            <Text className="border-t border-hairline pt-4 font-mono text-11 text-ash leading-[1.5]">
+            <Text className="pt-4 font-mono text-11 text-ash leading-[1.5]">
               Every setup put to the rule so far satisfied it.
             </Text>
           ) : null}
@@ -60,7 +64,7 @@ export function BlockedLogScreen() {
             <Link
               key={row.tradeId ?? `${row.symbol}-${row.at}`}
               href={row.tradeId ? tradeRoute(row.tradeId) : routes.refused}
-              className="flex-row gap-3 border-t border-hairline py-3.5"
+              className={cx('flex-row gap-3 py-3.5', i > 0 && 'border-t border-hairline')}
               aria-label={`Refusal ${i + 1} of ${BLOCKED.rows.length}: ${row.symbol}`}
             >
               <Dot className="mt-1.25 bg-refused" />

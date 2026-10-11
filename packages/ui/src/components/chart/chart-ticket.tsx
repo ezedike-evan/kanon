@@ -7,6 +7,7 @@ import { relativeTime } from '../../lib/home-format';
 import { useNowMs } from '../../lib/use-now';
 import type { VenueTicket } from '../../lib/use-venue-ticket';
 import {
+  asksToSignIn,
   closePositionLabel,
   formatLeverage,
   formatUsd,
@@ -31,6 +32,7 @@ import { BottomSheet } from '../bottom-sheet';
 import { Icon } from '../icons';
 import { SectionHeader } from '../section-header';
 import { SegmentedControl } from '../segmented-control';
+import { SignInLink } from '../sign-in-link';
 import { Skeleton } from '../skeleton';
 import { Label } from '../stat';
 import { Num } from '../ui';
@@ -732,12 +734,17 @@ export const OrderTicket = memo(function OrderTicket({
           />
         </View>
         <View role="status" accessibilityLiveRegion="polite" className="gap-1">
-          <Text
-            className={cx('font-mono text-10 leading-4', line ? 'text-bone' : 'text-ash')}
-            style={{ fontVariant: ['tabular-nums'] }}
-          >
-            {line ?? 'A press sends a market order to one account that everyone signed in shares.'}
-          </Text>
+          {asksToSignIn(line) ? (
+            // Nobody is signed in: the line is the way to, not a sentence with nothing to press.
+            <SignInLink size={10} className="self-start" />
+          ) : (
+            <Text
+              className={cx('font-mono text-10 leading-4', line ? 'text-bone' : 'text-ash')}
+              style={{ fontVariant: ['tabular-nums'] }}
+            >
+              {line ?? 'A press sends a market order to one account that everyone signed in shares.'}
+            </Text>
+          )}
           {second ? <Text className="font-mono text-10 leading-4 text-ash">{second}</Text> : null}
         </View>
         <RuleCheck onPress={onCheckRule} busy={checking} note={note} />
@@ -898,17 +905,21 @@ export function TicketSheet({
       meta={view.network ? `PERPL ${view.network.toUpperCase()}` : 'PERPL'}
       footer={
         <View className="gap-2.5">
-          <Text
-            role="status"
-            accessibilityLiveRegion="polite"
-            className={cx('font-mono text-11 leading-4', line ? 'text-bone' : 'text-ash')}
-            style={{ fontVariant: ['tabular-nums'] }}
-          >
-            {line ??
-              (view.limits
-                ? `A market order fills within ${view.limits.slippage} of the mark price, or not at all.`
-                : '')}
-          </Text>
+          {asksToSignIn(line) ? (
+            <SignInLink className="self-start" />
+          ) : (
+            <Text
+              role="status"
+              accessibilityLiveRegion="polite"
+              className={cx('font-mono text-11 leading-4', line ? 'text-bone' : 'text-ash')}
+              style={{ fontVariant: ['tabular-nums'] }}
+            >
+              {line ??
+                (view.limits
+                  ? `A market order fills within ${view.limits.slippage} of the mark price, or not at all.`
+                  : '')}
+            </Text>
+          )}
           <Pressable
             role="button"
             aria-label={primary.accessibilityLabel}

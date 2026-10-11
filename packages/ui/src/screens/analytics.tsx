@@ -583,18 +583,12 @@ function renderFlow(asset: string, state: NansenState): ReactNode {
         </View>
       );
     case 'not_connected':
+      // No flow source behind this build. That is a deployment's business, not a visitor's:
+      // the card says what is (not) reported and nothing about how it is configured.
       return (
-        <View className="gap-2.5">
-          <Text className="font-mono-medium text-12 text-bone">Connect Nansen</Text>
-          <Note>
-            No Nansen key is set, so no flow is shown for {label}. Set NANSEN_API_KEY in the Convex
-            environment to read smart-money net flow. Nothing here is estimated.
-          </Note>
-          <ExternalLink href={NANSEN_DOCS} className="pt-1">
-            <Text className="font-mono text-10 tracking-w14 text-verified">
-              NANSEN NET-FLOW API ↗
-            </Text>
-          </ExternalLink>
+        <View className="gap-2">
+          <Text className="font-mono-medium text-12 text-bone">No flow reported</Text>
+          <Note>No smart-money flow is reported for {label} here. Nothing is estimated in its place.</Note>
         </View>
       );
     case 'unsupported':

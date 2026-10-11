@@ -1,5 +1,6 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import type { KanonDataSource } from './data';
+import { SAMPLE_TIMED_STATE } from './timed-sample';
 import {
   TIMED_CLOSE_UNREAD,
   TIMED_OPEN_UNREAD,
@@ -38,9 +39,11 @@ import type { VenueTradeActions, VenueTradeSession } from './venue-trade-reads';
  *
  * Which state a viewer sees, as for the order ticket:
  *   - auth still resolving -> `loading`, and nothing is called
- *   - signed out           -> `unavailable` with "Sign in to trade.", and nothing
- *                             is called. There is no demo trade: the screen is
- *                             never shown a countdown or a result that is made up.
+ *   - signed out           -> the labelled sample (`timed-sample.ts`): pairs and
+ *                             choices to look at, and nothing is called. Opening
+ *                             or ending a trade answers "Sign in to trade.".
+ *                             There is no demo trade: the screen is never shown
+ *                             a countdown or a result that is made up.
  *   - signed in            -> the live read
  *
  * A call that throws is caught here and comes back as an `unavailable` value
@@ -77,10 +80,7 @@ export interface TimedStateStore {
 }
 
 const LOADING_SNAPSHOT: TimedSnapshot = { state: { status: 'loading' }, refreshing: false };
-const SIGNED_OUT_SNAPSHOT: TimedSnapshot = {
-  state: { status: 'unavailable', message: SIGN_IN_TO_TRADE },
-  refreshing: false,
-};
+const SIGNED_OUT_SNAPSHOT: TimedSnapshot = { state: SAMPLE_TIMED_STATE, refreshing: false };
 
 /** A store that reads nothing: what the screen subscribes to while nobody is signed in. */
 const idle = (snapshot: TimedSnapshot): TimedStateStore => ({

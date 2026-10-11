@@ -222,7 +222,11 @@ caller's history open from a rail on every slide; a finished trade's money
 result is one neutral row inside its bottom sheet, beside the two transaction
 links. On desktop a left panel filters by pair and time and, from 1280, a right
 panel lists what is running and the history. There is no "how it settles"
-panel: the result is the venue's two fills.
+panel: the result is the venue's two fills. Signed out the reel is a labelled
+sample, so a visitor can see and swipe it: the demo pairs at fixed times and
+stakes, each slide badged `SAMPLE` over the demo price line, with UP, DOWN and
+the one note under them leading to sign-in. It shows no trade, no countdown and
+no result, and nothing is sent from it.
 AI: `SplitPane` with the conversation held to
 720 and the spec draft as an always-visible 360px panel instead of the dock. A bottom
 sheet is a 560px panel centred at the foot of the pane from `lg`.
@@ -340,7 +344,7 @@ begins), `refusal` (heavy impact; felt before it is read). No-op on the web.
 | `app/compile/pin` | `pinning.png` | Ceremony. Hash, bond, biometric |
 | `app/trades/proposal` | `proposal.png` | Satisfied predicates, undo countdown |
 | `app/trades/[id]` | `trade-detail.png` | Evidence chain, verify link |
-| `app/blocked` | `blocked-log.png` | Refusals, and how many would have lost |
+| `app/blocked` | `blocked-log.png` | Refusals, and the loss they avoided (stated as Analytics states it, never as a loss) |
 | `app/rules/[id]/loosen` | `cooling-off.png` | Unskippable countdown, diff |
 | `app/share/[id]` | `strategy-card.png` | Shareable, must work at thumbnail size |
 | `app/onboarding` | `onboarding-*.png` | Three screens, ends in a text field |

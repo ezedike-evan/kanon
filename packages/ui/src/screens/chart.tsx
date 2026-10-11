@@ -124,7 +124,9 @@ export function ChartScreen() {
   const [runtime, setRuntime] = useState<RuntimeState>(NO_STATE);
   const [tool, setToolState] = useState<DrawingKind | null>(null);
   const [magnet, setMagnet] = useState(false);
-  const [toolsCollapsed, setToolsCollapsed] = useState(false);
+  // The floating palette is the phone's and the tablet's (`lg:hidden`; desktop has its fixed rail).
+  // It starts collapsed to one button, so it does not open over the newest candles and the watermark.
+  const [toolsCollapsed, setToolsCollapsed] = useState(true);
   const [legendCollapsed, setLegendCollapsed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [sheet, setSheet] = useState(false);

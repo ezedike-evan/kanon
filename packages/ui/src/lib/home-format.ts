@@ -18,6 +18,44 @@ export function shortAddress(address: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
 
+/**
+ * What Home's header chip says, and where it leads.
+ *
+ * Signed in it states the wallet: a short address, `Wallet ready` when a signer
+ * exists and its address is not known yet, `No wallet` when there is none. It
+ * opens Profile, where the account is managed. Signed out there is no wallet to
+ * report on, and "Not connected" read as one that had failed: the chip is the
+ * way to sign in, and says so. `null` while auth is still resolving, so nothing
+ * is said that has to be taken back.
+ */
+export interface WalletChip {
+  label: string;
+  /** `signin` leads to the front door, `profile` to the account. */
+  to: 'signin' | 'profile';
+  /** A wallet exists and can sign: the chip carries the lit dot. */
+  connected: boolean;
+  accessibilityLabel: string;
+}
+
+export function walletChip(input: {
+  pending: boolean;
+  signedIn: boolean;
+  hasWallet: boolean;
+  address: string | null;
+}): WalletChip | null {
+  if (input.pending) return null;
+  if (!input.signedIn) return { label: 'Sign in', to: 'signin', connected: false, accessibilityLabel: 'Sign in' };
+  if (!input.hasWallet) {
+    return { label: 'No wallet', to: 'profile', connected: false, accessibilityLabel: 'No wallet yet. Open profile.' };
+  }
+  return {
+    label: input.address ? shortAddress(input.address) : 'Wallet ready',
+    to: 'profile',
+    connected: true,
+    accessibilityLabel: `Wallet ${input.address ?? 'connected'}. Open profile.`,
+  };
+}
+
 /** The name a greeting uses: the first word of the name, else the handle, else nothing. */
 export function greetingName(settings: { name: string; username: string } | null): string | null {
   if (!settings) return null;

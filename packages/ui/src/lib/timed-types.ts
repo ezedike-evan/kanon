@@ -50,7 +50,7 @@ export interface TimedMarketView {
 }
 
 export type TimedStateView =
-  /** Trading is not connected, nobody is signed in, or the venue could not be read. */
+  /** Trading is not connected, the session has lapsed, or the venue could not be read. */
   | { status: 'unavailable'; message: string }
   | {
       status: 'ready';
@@ -58,6 +58,12 @@ export type TimedStateView =
       network: TimedNetwork;
       limits: TimedLimits;
       markets: TimedMarketView[];
+      /**
+       * Set only on the signed-out sample (`timed-sample.ts`): the pairs and the
+       * choices are there to be looked at, and nothing can be sent with them.
+       * The server's answer never carries it (`asTimedState` reads known fields only).
+       */
+      sample?: true;
     };
 
 export interface TimedRequest {
@@ -149,7 +155,10 @@ export interface TimedTradeRow {
 
 // --- What a screen is handed --------------------------------------------------
 
-/** `loading` until the first read answers. After that it is whatever the server last said. */
+/**
+ * `loading` until the first read answers. After that it is whatever the server
+ * last said. Signed out it is the labelled sample, which no server said.
+ */
 export type TimedState = { status: 'loading' } | TimedStateView;
 
 /**
@@ -162,7 +171,7 @@ export interface TimedStateRead {
   state: TimedState;
   /** A read is on its way. The last answer stays in `state` until it lands. */
   refreshing: boolean;
-  /** Reads the state again. Does nothing while nobody is signed in. */
+  /** Reads the state again. Does nothing while nobody is signed in: the sample is not read from anywhere. */
   refresh(): void;
 }
 

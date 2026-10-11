@@ -125,17 +125,26 @@ async function mount(signedIn = true) {
 }
 
 describe('useTimedTicket', () => {
-  it('offers nothing and sends nothing while nobody is signed in', async () => {
+  it('shows the labelled sample and sends nothing while nobody is signed in', async () => {
     const t = await mount(false);
-    expect(t.ticket().base).toMatchObject({ status: 'unavailable', hold: 'Sign in to trade.', stakes: [] });
+    // The reel can be seen: the sample's pairs and choices, with nothing read from anywhere.
+    expect(t.ticket().base).toMatchObject({ status: 'ready', sample: true, hold: null, stakes: [10, 25, 50, 100] });
     expect(t.ticket().canRefresh).toBe(false);
-    // No state, so no slides, and nothing a press could ask for.
-    expect(reelSlides(t.ticket().state, NO_FILTER)).toEqual([]);
+    expect(t.ticket().listed).toBe(t.ticket().state);
+    expect(reelSlides(t.ticket().listed, NO_FILTER).length).toBeGreaterThan(0);
+    expect(t.state.calls).toHaveLength(0);
+    // A stake can be tried, as on the real thing. It asks for nothing.
+    t.ticket().chooseStake(50);
+    await settle();
+    expect(t.viewOn('BTC/USD', 60).stakeUsd).toBe(50);
+    // And a press makes no request, so nothing can be sent with the sample's figures.
     expect(t.press('BTC/USD', 60, 'up')).toBeNull();
     t.ticket().open(t.press('BTC/USD', 60, 'up'));
     await settle();
     expect(t.open.calls).toHaveLength(0);
     expect(t.ticket().sending).toBeNull();
+    expect(t.ticket().running).toEqual([]);
+    expect(t.ticket().history).toEqual([]);
     await t.h.unmount();
   });
 

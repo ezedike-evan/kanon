@@ -52,8 +52,9 @@ export function ReelSkeleton({ width, height }: { width: number; height: number 
 }
 
 /**
- * Trading is unavailable: nobody is signed in, trading is not connected in this
- * build, or the venue could not be read. The reason is the one it came with,
+ * Trading is unavailable: trading is not connected in this build, the session
+ * has lapsed, or the venue could not be read. (A visitor who never signed in is
+ * shown the labelled sample reel instead.) The reason is the one it came with,
  * said once and plainly, and the two actions are in their place and off. There
  * are no slides to page through, since the pairs and the times are the server's.
  */

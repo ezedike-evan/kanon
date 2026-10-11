@@ -127,6 +127,45 @@ function demoTape(asset: string): PriceTick[] {
   return ticks;
 }
 
+/** The width the quote's 24-hour move is read at: the demo rule's own bucket, which the chart opens on. */
+const QUOTE_BUCKET_SECONDS = 900;
+const DAY_SECONDS = 86_400;
+
+export interface DemoQuote {
+  /** The tape's newest print: what the forming candle closes on, at every width. */
+  price: Decimal;
+  /** The close the 15m chart reads its 24-hour move against, or null when the tape is shorter than a day. */
+  dayAgo: Decimal | null;
+}
+
+/**
+ * The demo tape's newest price and the one a day before it, read off the tape
+ * without bucketing a series. Every demo pair row and Predict slide quotes from
+ * here (`domain-demo.ts`), so they state the price the demo chart closes on. A
+ * second, separately invented figure is how one screen came to show two prices
+ * for BTC.
+ *
+ * `dayAgo` is the close `changeOver24h` picks on the 15m series: the candle a
+ * day before the forming one closes on the last print before its own end, or
+ * carries that print forward when it has none.
+ */
+export function demoQuote(asset: string): DemoQuote | null {
+  const tape = demoTape(normalize(asset));
+  const last = tape[tape.length - 1];
+  if (!last) return null;
+  const forming = Math.floor(last.timestamp / QUOTE_BUCKET_SECONDS) * QUOTE_BUCKET_SECONDS;
+  const cutoff = forming - DAY_SECONDS + QUOTE_BUCKET_SECONDS;
+  let dayAgo: Decimal | null = null;
+  for (let i = tape.length - 2; i >= 0; i--) {
+    const tick = tape[i]!;
+    if (tick.timestamp < cutoff) {
+      dayAgo = tick.price;
+      break;
+    }
+  }
+  return { price: last.price, dayAgo };
+}
+
 const seriesCache = new Map<string, Series>();
 
 /** Candles of this width the tape can supply as real prints: the tiers at least as fine as the width. */

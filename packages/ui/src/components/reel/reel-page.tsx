@@ -24,7 +24,9 @@ import {
   type SlideMode,
   type TitlePart,
 } from '../../lib/timed-reel';
+import { routes } from '../../lib/routes';
 import {
+  SAMPLE_LEAD,
   choiceFacts,
   countdownText,
   directionAction,
@@ -40,16 +42,18 @@ import {
   type RunningView,
   type TimedView,
 } from '../../lib/timed-trade';
-import type { TimedTrade } from '../../lib/timed-types';
+import type { TimedDirection, TimedTrade } from '../../lib/timed-types';
 import { useCountdownClock, useDue } from '../../lib/use-clock';
 import type { TimedTicket } from '../../lib/use-timed-ticket';
 import { formatUsd } from '../../lib/venue-trade';
+import { useNavigator } from '../../nav';
 import { isWeb, useHaptics } from '../../platform';
 import { useTheme } from '../../theme';
 import { Badge } from '../badge';
 import { Chip } from '../chip';
 import { Icon, type Icon as IconName } from '../icons';
 import { ProgressRing } from '../progress-ring';
+import { SignInLink } from '../sign-in-link';
 import { Label } from '../stat';
 import type { Tone } from '../tone';
 import { Num } from '../ui';
@@ -152,6 +156,8 @@ function useSlideLine(slide: ReelSlide) {
 
 const BADGE_ICON: Record<string, IconName> = {
   OPEN: 'activity',
+  // The mark every other demo label in the app carries.
+  SAMPLE: 'sparkles',
   RUNNING: 'timer',
   CLOSING: 'timer',
   'IN A TRADE': 'timer',
@@ -258,13 +264,21 @@ function FootButton({
   );
 }
 
-/** The foot of a slide whose pair is free: what a press means, the stake, and the two actions. */
+/**
+ * The foot of a slide whose pair is free: what a press means, the stake, and the two actions.
+ *
+ * Signed out it is the sample: the same foot, with the choices live so they can
+ * be tried, and UP and DOWN leading to sign-in. Nothing is sent from it.
+ */
 function ActionsFoot({ slide, view, ticket, compact }: { slide: ReelSlide; view: TimedView; ticket: TimedTicket; compact: boolean }) {
   const { sending, locked } = ticket;
+  const nav = useNavigator();
   // An order is this slide's when it was sent from it. Another slide is locked by it, and says nothing about it.
   const here = sending?.action === 'open' && sending.asset === slide.asset && sending.seconds === slide.seconds ? sending : null;
   const up = directionAction(view, 'up', here, locked);
   const down = directionAction(view, 'down', here, locked);
+  const press = (direction: TimedDirection) =>
+    view.sample ? nav.push(routes.landing) : ticket.open(requestOf(view, direction));
   return (
     <>
       <View className={cx('px-5', compact ? 'gap-2 pt-2' : 'gap-3 pt-3')} aria-busy={here !== null}>
@@ -295,7 +309,7 @@ function ActionsFoot({ slide, view, ticket, compact }: { slide: ReelSlide; view:
             disabled={up.disabled}
             sending={up.sending}
             compact={compact}
-            onPress={() => ticket.open(requestOf(view, 'up'))}
+            onPress={() => press('up')}
           />
           <SideButton
             direction="down"
@@ -305,11 +319,20 @@ function ActionsFoot({ slide, view, ticket, compact }: { slide: ReelSlide; view:
             disabled={down.disabled}
             sending={down.sending}
             compact={compact}
-            onPress={() => ticket.open(requestOf(view, 'down'))}
+            onPress={() => press('down')}
           />
         </View>
         {/* What is on its way is read out as it changes. Whose account this is, is said once and quietly. */}
-        {here ? <NoteLine live strong text={sendingLine(here)} icon="send" /> : <NoteLine text={accountLine(view.network)} />}
+        {here ? (
+          <NoteLine live strong text={sendingLine(here)} icon="send" />
+        ) : view.sample ? (
+          // The one place a slide says to sign in, and the way to: the row a NoteLine would take.
+          <View className="min-h-8 items-center justify-center pt-2.5">
+            <SignInLink lead={SAMPLE_LEAD} />
+          </View>
+        ) : (
+          <NoteLine text={accountLine(view.network)} />
+        )}
       </View>
     </>
   );
@@ -492,7 +515,7 @@ function SlideBody(props: ReelPageProps & { view: TimedView; mode: SlideMode }) 
     [box, closes, entry, price, plotRight],
   );
 
-  const badge = finished ? finished.ended : slideBadge(mode, row?.closing ?? false);
+  const badge = finished ? finished.ended : slideBadge(mode, row?.closing ?? false, view.sample);
   const title: readonly TitlePart[] = running
     ? runningTitle(running)
     : finished
@@ -512,7 +535,8 @@ function SlideBody(props: ReelPageProps & { view: TimedView; mode: SlideMode }) 
         base={slide.base}
         seconds={shown ? shown.seconds : slide.seconds}
         badge={badge}
-        badgeTone={row && !row.closing ? 'signal' : 'neutral'}
+        // `signal` for a trade that is running, and for the sample's label, as every demo label in the app is.
+        badgeTone={(row && !row.closing) || badge === 'SAMPLE' ? 'signal' : 'neutral'}
         trade={shown}
         title={title}
         compact={compact}

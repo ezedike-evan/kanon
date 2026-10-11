@@ -520,6 +520,18 @@ export function blockedRow(trade: LiveTrade, spec: StrategySpec): BlockedRow {
   };
 }
 
+/**
+ * The blocked log's headline figure as a screen states it: the loss the
+ * refusals kept the account out of, as a positive amount. The log holds the sum
+ * of those modelled losses (negative, or zero), and a refusal is a success
+ * state, so it is never shown as a loss with a minus sign. Analytics states the
+ * same figure the same way.
+ */
+export function lossAvoided(log: Pick<BlockedLogData, 'wouldHaveLost'>): Decimal {
+  const atoms = BigInt(log.wouldHaveLost.atoms);
+  return { atoms: (atoms < 0n ? -atoms : 0n).toString(), decimals: log.wouldHaveLost.decimals };
+}
+
 export function blockedLogFromTrades(input: {
   trades: readonly LiveTrade[] | undefined;
   spec: StrategySpec | null;

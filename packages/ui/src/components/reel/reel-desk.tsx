@@ -125,7 +125,7 @@ function SlideRow({
 }) {
   const row = useMemo(() => {
     const view = timedView(ticket.state, { asset: slide.asset, stakeUsd: ticket.stake, seconds: slide.seconds });
-    return slideRowView(slide, slideMode(slide, view, ticket.running, ticket.ended));
+    return slideRowView(slide, slideMode(slide, view, ticket.running, ticket.ended), view.sample);
   }, [slide, ticket.state, ticket.stake, ticket.running, ticket.ended]);
   return (
     <Pressable
@@ -270,6 +270,10 @@ export function ReelLeftPanel({
                 onPress={() => onAsset(filter.asset === choice.base ? null : choice.base)}
               />
             ))}
+            {/* Signed out, the prices beside the pairs are the demo's, and the list says so. */}
+            {ticket.base.sample ? (
+              <Text className="px-4 pb-1 pt-2 font-sans text-11 leading-4 text-ash">Sample prices. Nothing is sent from here.</Text>
+            ) : null}
           </>
         ) : pairs.length === 0 ? (
           <Num className="px-4 pb-2 text-12 leading-[18px] text-ash">{ticket.base.hold ?? 'No pair is listed right now.'}</Num>

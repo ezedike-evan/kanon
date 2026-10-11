@@ -4,7 +4,7 @@ import { Link } from '../../nav';
 import { useAccount } from '../../lib/account';
 import { useKanonSelector } from '../../lib/data';
 import { useSession } from '../../lib/domains';
-import { greetingName, shortAddress } from '../../lib/home-format';
+import { greetingName, walletChip, type WalletChip as WalletChipView } from '../../lib/home-format';
 import { routes } from '../../lib/routes';
 import { Avatar } from '../avatar';
 import { Icon } from '../icons';
@@ -15,9 +15,10 @@ import { cx } from '../../lib/cx';
 import { web } from '../../lib/desktop';
 
 /**
- * Who is looking, and which wallet (if any) is signed in. The avatar and the wallet chip both open
- * Profile, where the account and the connection are managed. The connection is stated
- * plainly: a short address when a signer exists, "Not connected" when it does not.
+ * Who is looking, and which wallet (if any) is signed in. The avatar opens Profile, where the
+ * account and the connection are managed, and so does the chip once someone is signed in: it
+ * states the wallet plainly, a short address when a signer exists. Signed out the chip is the
+ * way to sign in and says so (`walletChip`); it never reports a wallet as failed.
  */
 export const HomeHeader = memo(function HomeHeader() {
   const session = useSession();
@@ -56,33 +57,31 @@ export const HomeHeader = memo(function HomeHeader() {
         </View>
       </Link>
       <WalletChip
-        connected={session.hasWallet}
-        address={account.address}
-        signedIn={session.signedIn}
+        chip={walletChip({
+          pending: session.pending,
+          signedIn: session.signedIn,
+          hasWallet: session.hasWallet,
+          address: account.address,
+        })}
       />
     </View>
   );
 });
 
-function WalletChip({
-  connected,
-  address,
-  signedIn,
-}: {
-  connected: boolean;
-  address: string | null;
-  signedIn: boolean;
-}) {
-  const label = connected ? (address ? shortAddress(address) : 'Wallet ready') : signedIn ? 'No wallet' : 'Not connected';
+function WalletChip({ chip }: { chip: WalletChipView | null }) {
+  // Auth still resolving: the chip's own shape, and no claim about a wallet or a session.
+  if (!chip) return <Skeleton width={96} height={32} />;
+  const signIn = chip.to === 'signin';
   return (
     <Link
-      href={routes.profile}
-      aria-label={connected ? `Wallet ${address ?? 'connected'}` : 'Wallet not connected'}
+      href={signIn ? routes.landing : routes.profile}
+      aria-label={chip.accessibilityLabel}
       className="h-8 shrink-0 flex-row items-center gap-1.5 rounded-xs border border-hairline bg-panel px-2.5 hover:bg-raised active:bg-raised"
     >
-      <Icon name="wallet" size={14} color="ash" />
-      <Num className="text-11 text-bone">{label}</Num>
-      <Dot className={connected ? 'bg-verified' : 'bg-ash'} />
+      <Icon name={signIn ? 'key' : 'wallet'} size={14} color="ash" />
+      <Num className="text-11 text-bone">{chip.label}</Num>
+      {/* A dot is a wallet's state. Signing in is an action, so it takes the chevron every link does. */}
+      {signIn ? <Icon name="chevron-right" size={12} color="ash" /> : <Dot className={chip.connected ? 'bg-verified' : 'bg-ash'} />}
     </Link>
   );
 }

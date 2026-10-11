@@ -18,7 +18,9 @@ import { formatUsd } from './venue-trade';
  * The market is not a price, it is a time. So a slide is a pair and a time:
  * `BTC, next 1 minute`, `BTC, next 5 minutes`, `ETH, next 1 minute`. The pairs
  * are the server's markets and the times are the server's durations; nothing
- * here invents either. A slide offers UP and DOWN, or shows the trade that is
+ * here invents either. (Signed out the state handed in is the labelled sample,
+ * `timed-sample.ts`, and the slides are built from it the same way.)
+ * A slide offers UP and DOWN, or shows the trade that is
  * running on its pair, or the one that just ended there, or why the pair can
  * take no trade right now.
  *
@@ -244,12 +246,14 @@ export function runningNote(
  * The word or two a slide's badge says about where it stands: `OPEN`,
  * `RUNNING`, `CLOSING`, `ENDED`, or why the pair is held (`IN A TRADE`, `HELD`,
  * `CLOSED`). `closing` is the running trade being past the point it can be ended.
+ * On the signed-out sample a slide that would say `OPEN` says `SAMPLE`: nothing
+ * is open to a visitor, and the prices on it are not live.
  */
-export function slideBadge(mode: SlideMode, closing = false): string {
+export function slideBadge(mode: SlideMode, closing = false, sample = false): string {
   if (mode.kind === 'running') return closing ? 'CLOSING' : 'RUNNING';
   if (mode.kind === 'ended') return 'ENDED';
   if (mode.kind === 'held') return mode.tag;
-  return 'OPEN';
+  return sample ? 'SAMPLE' : 'OPEN';
 }
 
 /** One slide as a row of the desktop's list: `BTC · 1m`, and where it stands. */
@@ -259,13 +263,13 @@ export interface SlideRowView {
   base: string;
   /** `1m`. */
   time: string;
-  /** `Open`, `UP running`, `Just ended`, or in a few words why the pair is held. */
+  /** `Open`, `UP running`, `Just ended`, in a few words why the pair is held, or `Sample` signed out. */
   state: string;
   /** `Go to: Which way does BTC move in the next 1 minute?` */
   accessibilityLabel: string;
 }
 
-export function slideRowView(slide: ReelSlide, mode: SlideMode): SlideRowView {
+export function slideRowView(slide: ReelSlide, mode: SlideMode, sample = false): SlideRowView {
   const state =
     mode.kind === 'running'
       ? `${DIRECTION_WORD[mode.trade.direction]} running`
@@ -273,7 +277,9 @@ export function slideRowView(slide: ReelSlide, mode: SlideMode): SlideRowView {
         ? 'Just ended'
         : mode.kind === 'held'
           ? mode.short
-          : 'Open';
+          : sample
+            ? 'Sample'
+            : 'Open';
   return {
     id: slide.id,
     base: slide.base,
