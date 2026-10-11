@@ -3,9 +3,9 @@ import type { VenueTradeActions } from './venue-trade-reads';
 
 /**
  * The order ticket's three calls, made to the gateway's `/trade` routes
- * (`packages/gateway/src/trade.ts`). Orders leave from the gateway and not from
- * the backend because the venue does not serve the region the backend is
- * hosted in.
+ * (`packages/gateway/src/trade.ts`), and Predict's three, made to its
+ * `/predict` routes. Orders leave from the gateway and not from the backend
+ * because the venue does not serve the region the backend is hosted in.
  *
  * Each call carries the caller's own sign-in token and nothing else that names
  * them: the gateway hands the token to the backend, which decides who is
@@ -69,6 +69,17 @@ export function createVenueTradeActions(opts: VenueTradeClientOptions): VenueTra
     },
     placeOrder: (args) => call('/trade/order', ORDER_TIMEOUT_MS, args),
     closePosition: (args) => call('/trade/close', ORDER_TIMEOUT_MS, args),
+    async timedState() {
+      try {
+        return await call('/predict/state', ACCOUNT_TIMEOUT_MS);
+      } catch {
+        return { status: 'unavailable', message: TRADE_UNREACHABLE };
+      }
+    },
+    // Opening waits for the entry fill, as an order does. Only the fields the route takes are sent.
+    openTimed: ({ asset, direction, stakeUsd, seconds }) =>
+      call('/predict/open', ORDER_TIMEOUT_MS, { asset, direction, stakeUsd, seconds }),
+    closeTimed: ({ tradeId }) => call('/predict/close', ORDER_TIMEOUT_MS, { tradeId }),
   };
 }
 
@@ -77,6 +88,9 @@ export const disconnectedVenueTrade: VenueTradeActions = {
   account: async () => ({ status: 'unavailable', message: TRADE_NOT_CONNECTED }),
   placeOrder: async () => ({ status: 'unavailable', message: TRADE_NOT_CONNECTED }),
   closePosition: async () => ({ status: 'unavailable', message: TRADE_NOT_CONNECTED }),
+  timedState: async () => ({ status: 'unavailable', message: TRADE_NOT_CONNECTED }),
+  openTimed: async () => ({ status: 'unavailable', message: TRADE_NOT_CONNECTED }),
+  closeTimed: async () => ({ status: 'unavailable', message: TRADE_NOT_CONNECTED }),
 };
 
 /**

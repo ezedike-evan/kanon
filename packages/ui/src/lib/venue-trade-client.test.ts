@@ -74,6 +74,45 @@ describe('createVenueTradeActions', () => {
   });
 });
 
+const timed = { asset: 'BTC/USD', direction: 'up', stakeUsd: 25, seconds: 60 } as const;
+
+describe('the timed trade calls', () => {
+  it("reads the state, opens and ends a trade on the gateway's predict routes, with the same token", async () => {
+    const ready = { status: 'ready', network: 'testnet' };
+    const { actions, calls } = setup(() => json(ready));
+    expect(await actions.timedState()).toEqual(ready);
+    await actions.openTimed({ ...timed, note: 'ignored' } as never);
+    await actions.closeTimed({ tradeId: 't1' });
+    expect(calls.map((c) => [c.url, c.method, c.body])).toEqual([
+      ['http://localhost:8787/predict/state', 'GET', undefined],
+      ['http://localhost:8787/predict/open', 'POST', timed],
+      ['http://localhost:8787/predict/close', 'POST', { tradeId: 't1' }],
+    ]);
+    expect(calls[0]?.headers).toEqual({ authorization: 'Bearer aaa.bbb.ccc' });
+    expect(calls[1]?.headers).toEqual({ authorization: 'Bearer aaa.bbb.ccc', 'content-type': 'application/json' });
+  });
+
+  it('calls nothing while nobody is signed in', async () => {
+    const { actions, calls } = setup(() => json({}), null);
+    const signIn = { status: 'unavailable', message: 'Sign in to trade.' };
+    expect(await actions.timedState()).toEqual(signIn);
+    expect(await actions.openTimed(timed)).toEqual(signIn);
+    expect(await actions.closeTimed({ tradeId: 't1' })).toEqual(signIn);
+    expect(calls).toEqual([]);
+  });
+
+  it('says the service could not be reached when the state cannot be read', async () => {
+    const unreachable = { status: 'unavailable', message: TRADE_UNREACHABLE };
+    expect(await setup(() => Promise.reject(new TypeError('Failed to fetch'))).actions.timedState()).toEqual(unreachable);
+    expect(await setup(() => json({ error: 'boom' }, 502)).actions.timedState()).toEqual(unreachable);
+  });
+
+  it('throws when an open or an end cannot be read, since it may have gone out', async () => {
+    await expect(setup(() => Promise.reject(new TypeError('Failed to fetch'))).actions.openTimed(timed)).rejects.toThrow();
+    await expect(setup(() => json({ error: 'boom' }, 500)).actions.closeTimed({ tradeId: 't1' })).rejects.toThrow(/500/);
+  });
+});
+
 describe('with no gateway address', () => {
   it('resolves to nothing, and the stand-in says trading is not connected', async () => {
     expect(resolveVenueTrade(undefined, async () => 'aaa.bbb.ccc')).toBeUndefined();
@@ -83,5 +122,8 @@ describe('with no gateway address', () => {
     expect(await disconnectedVenueTrade.account()).toEqual(off);
     expect(await disconnectedVenueTrade.placeOrder(order)).toEqual(off);
     expect(await disconnectedVenueTrade.closePosition({ asset: 'BTC/USD' })).toEqual(off);
+    expect(await disconnectedVenueTrade.timedState()).toEqual(off);
+    expect(await disconnectedVenueTrade.openTimed(timed)).toEqual(off);
+    expect(await disconnectedVenueTrade.closeTimed({ tradeId: 't1' })).toEqual(off);
   });
 });

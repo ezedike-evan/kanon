@@ -51,9 +51,19 @@ describe('chartGeometry', () => {
     const g = chartGeometry([100, 101, 100.5, 101.2], 110, 101.2, box)!;
     expect(g.targetY).toBeGreaterThanOrEqual(box.padTop);
     expect(g.targetY).toBeLessThanOrEqual(box.height - box.padBottom);
-    expect(g.end!.y).toBeGreaterThan(g.targetY); // the price is below a level above it
+    expect(g.end!.y).toBeGreaterThan(g.targetY!); // the price is below a level above it
     const below = chartGeometry([100, 101, 100.5, 101.2], 90, 101.2, box)!;
     expect(below.targetY).toBeGreaterThan(below.end!.y);
+  });
+
+  it('gives the line the whole box when there is no level, and draws none', () => {
+    const g = chartGeometry([10, 20, 15], null, null, box)!;
+    expect(g.targetY).toBeNull();
+    expect(g.min).toBe(10);
+    expect(g.max).toBe(20);
+    expect(g.end).toEqual({ x: box.plotRight, y: (box.padTop + box.height - box.padBottom) / 2 });
+    // Nothing to draw and nothing to place: no geometry at all.
+    expect(chartGeometry([], null, null, box)).toBeNull();
   });
 
   it('draws a higher price higher up, and ends at the right edge of the plot', () => {
@@ -73,7 +83,7 @@ describe('chartGeometry', () => {
   it('centres a flat series instead of dividing by zero', () => {
     const g = chartGeometry([5, 5, 5], 5, 5, box)!;
     expect(Number.isFinite(g.targetY)).toBe(true);
-    expect(g.targetY).toBeCloseTo((box.padTop + box.height - box.padBottom) / 2, 0);
+    expect(g.targetY!).toBeCloseTo((box.padTop + box.height - box.padBottom) / 2, 0);
   });
 
   it('still places the level with fewer than two points, and draws no line', () => {

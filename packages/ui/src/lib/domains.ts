@@ -14,6 +14,7 @@ import { useKanonSelector } from './data';
 import { shallowEqual } from './store';
 import type { CopyLeadsState, SparklineState } from './home-types';
 import type { VaultSource } from './vault-types';
+import type { TimedStateRead, TimedTradesState } from './timed-types';
 import type { VenueAccountRead, VenueOrdersState } from './venue-types';
 
 /**
@@ -102,6 +103,16 @@ export function useVenueAccount(): VenueAccountRead {
 /** The signed-in user's own orders on the venue, newest first. */
 export function useVenueOrders(): VenueOrdersState {
   return useKanonSelector((s) => s.useVenueOrders)();
+}
+
+/** Predict: what can be traded on a timer and which markets are free. Read (a call to the gateway) only while mounted. */
+export function useTimedState(): TimedStateRead {
+  return useKanonSelector((s) => s.useTimedState)();
+}
+
+/** The signed-in user's own timed trades, running and finished, newest first. */
+export function useTimedTrades(): TimedTradesState {
+  return useKanonSelector((s) => s.useTimedTrades)();
 }
 
 /**

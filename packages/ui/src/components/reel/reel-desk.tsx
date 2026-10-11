@@ -1,32 +1,33 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { formatBps, formatDecimal, marketPhase } from '@kanon/spec';
+import { formatBps } from '@kanon/spec';
 import { assetTitle } from '../../lib/chart-assets';
 import { cx } from '../../lib/cx';
 import type { PairTicker } from '../../lib/domain-types';
 import { useTicker } from '../../lib/domains';
-import { formatCountdown, formatAmount, phaseLabel, positionResultLabel, sideLabel } from '../../lib/predict-map';
-import { assetCode, questionText, settleTerms, type ReelFilter } from '../../lib/predict-reel';
-import type { PredictMarket, PredictPosition } from '../../lib/predict-types';
+import { slideMode, slideRowView, type ReelFilter, type ReelSlide } from '../../lib/timed-reel';
+import { durationLabel, formatTimedPrice, timedView, type TimedMarketChoice } from '../../lib/timed-trade';
+import type { TimedTrade } from '../../lib/timed-types';
+import type { TimedTicket } from '../../lib/use-timed-ticket';
+import { formatLeverage } from '../../lib/venue-trade';
 import { useHaptics } from '../../platform';
 import { Avatar } from '../avatar';
-import { Badge } from '../badge';
-import { EmptyState } from '../empty-state';
 import { Icon } from '../icons';
 import { PanelRail, PanelToggle, usePanelOpen } from '../panel-rail';
 import { SectionHeader } from '../section-header';
 import { Delta, Label } from '../stat';
 import { directionOf } from '../tone';
 import { Num } from '../ui';
-import { SETTLE_STEPS } from './reel-sheets';
+import { History, RunningList, TradeRules } from './reel-trades';
+import { FOCUS } from './trade-parts';
 
 /*
  * The two panels either side of the reel on a desktop. The left is `hidden` below
  * `lg` and `flex` from it, the right from `xl` (at 1024 the pane has room for the
- * 440px reel and one panel, not two), by class. The screen renders them on the web only and
- * gives them content only once the window is a desktop's, so a phone pays for none
- * of it. Everything they show is what the reel already holds: the feed's markets,
- * the live tickers, and `settleTerms`. Nothing here decides a result.
+ * 440px reel and one panel, not two), by class. The screen renders them on the web
+ * only and gives the left its rows only once the window is a desktop's, so a phone
+ * pays for none of it. Everything they show is what the reel already holds: the
+ * server's pairs and times, the live tickers, and the caller's trades.
  *
  * Each collapses to a 40px rail (`components/panel-rail.tsx`) and the reel, which
  * keeps its own 440px, re-centres in the width that frees. The choice is
@@ -36,37 +37,35 @@ import { SETTLE_STEPS } from './reel-sheets';
 const PANEL = 'hidden min-h-0 shrink-0 bg-panel lg:flex';
 
 /** What each panel is called, open or collapsed, so the landmark and both toggles agree. */
-const MARKETS_PANEL = { label: 'Markets', name: 'markets' } as const;
-const SETTLE_PANEL = {
-  label: 'How it settles, and your predictions',
-  name: 'how it settles and your predictions',
-} as const;
+const SLIDES_PANEL = { label: 'Pairs and times', name: 'pairs and times' } as const;
+const TRADES_PANEL = { label: 'Your trades', name: 'your trades' } as const;
 
 /* -------------------------------------------------------------------------- */
 /* Left: what to look at                                                       */
 /* -------------------------------------------------------------------------- */
 
-/** One asset in the filter list, with its live price. Its own subscription, so another asset's tick re-renders nothing here. */
+/**
+ * One pair in the filter list, with its live price. Its own subscription, so
+ * another pair's tick re-renders nothing here. A pair that can take no trade
+ * right now says why in the place its name goes.
+ */
 const AssetRow = memo(function AssetRow({
-  code,
-  count,
+  choice,
   selected,
   onPress,
 }: {
-  code: string;
-  count: number;
+  choice: TimedMarketChoice;
   selected: boolean;
   onPress: () => void;
 }) {
-  const symbol = `${code}/USD`;
-  const ticker = useTicker(symbol);
+  const ticker = useTicker(choice.asset);
   const { select } = useHaptics();
   const t: PairTicker | null = ticker.status === 'ready' || ticker.status === 'demo' ? ticker.ticker : null;
   return (
     <Pressable
       role="button"
       aria-pressed={selected}
-      aria-label={`${selected ? 'Showing' : 'Show'} ${code} markets, ${count}`}
+      aria-label={`${selected ? 'Showing' : 'Show'} ${choice.base} slides${choice.busyLine ? `. ${choice.busyLine}` : ''}`}
       onPress={() => {
         select();
         onPress();
@@ -74,23 +73,30 @@ const AssetRow = memo(function AssetRow({
       className={cx(
         'relative min-h-14 flex-row items-center gap-3 px-4 py-2.5',
         selected ? 'bg-raised' : 'hover:bg-raised/60 active:bg-raised',
+        FOCUS,
       )}
     >
       <View className={cx('absolute inset-y-2 left-0 w-0.5 bg-signal', selected ? 'opacity-100' : 'opacity-0')} />
-      <Avatar name={code} size="sm" tone={selected ? 'signal' : 'neutral'} />
+      <Avatar name={choice.base} size="sm" tone={selected ? 'signal' : 'neutral'} />
       <View className="min-w-0 flex-1 gap-0.5">
         <Text numberOfLines={1} className="font-sans text-13 font-medium text-bone">
-          {code}
-          <Text className="font-mono text-11 text-ash">{`  ${count} ${count === 1 ? 'market' : 'markets'}`}</Text>
+          {choice.base}
+          <Text className="font-mono text-11 text-ash" style={{ fontVariant: ['tabular-nums'] }}>
+            {`  ${formatLeverage(choice.leverage)}`}
+          </Text>
         </Text>
-        <Text numberOfLines={1} className="font-sans text-11 text-ash">
-          {assetTitle(symbol).split(' / ')[0]}
-        </Text>
+        {choice.busyLine ? (
+          <Num className="text-10 leading-[14px] text-ash">{choice.busyLine}</Num>
+        ) : (
+          <Text numberOfLines={1} className="font-sans text-11 text-ash">
+            {assetTitle(choice.asset).split(' / ')[0]}
+          </Text>
+        )}
       </View>
       <View className="items-end gap-0.5">
         {t ? (
           <>
-            <Num className="font-mono-medium text-13 tracking-t20">{formatDecimal(t.price)}</Num>
+            <Num className="font-mono-medium text-13 tracking-t20">{formatTimedPrice(t.price)}</Num>
             {t.changeBps === null ? (
               <Num className="text-11 text-ash">{'—'}</Num>
             ) : (
@@ -105,81 +111,79 @@ const AssetRow = memo(function AssetRow({
   );
 });
 
-/** A market in the list: its asset and window, how long it has, and the question. The one on screen is lit. */
-function MarketRow({
-  market,
-  now,
+/** A slide in the list: its pair and its time, and where it stands. The one on screen is lit. */
+function SlideRow({
+  slide,
+  ticket,
   current,
   onPress,
 }: {
-  market: PredictMarket;
-  now: number;
+  slide: ReelSlide;
+  ticket: TimedTicket;
   current: boolean;
   onPress: () => void;
 }) {
-  const phase = marketPhase(market, now);
-  const live = phase === 'open' || phase === 'upcoming';
-  const clock = phase === 'upcoming' ? market.windowStart - now : market.windowEnd - now;
+  const row = useMemo(() => {
+    const view = timedView(ticket.state, { asset: slide.asset, stakeUsd: ticket.stake, seconds: slide.seconds });
+    return slideRowView(slide, slideMode(slide, view, ticket.running, ticket.ended));
+  }, [slide, ticket.state, ticket.stake, ticket.running, ticket.ended]);
   return (
     <Pressable
       role="button"
       aria-current={current ? 'true' : undefined}
-      aria-label={`Go to: ${questionText(market)}`}
+      aria-label={row.accessibilityLabel}
       onPress={onPress}
-      className={cx('relative gap-1 px-4 py-3', current ? 'bg-raised' : 'hover:bg-raised/60 active:bg-raised')}
+      className={cx('relative gap-0.5 px-4 py-2.5', current ? 'bg-raised' : 'hover:bg-raised/60 active:bg-raised', FOCUS)}
     >
       <View className={cx('absolute inset-y-2 left-0 w-0.5 bg-signal', current ? 'opacity-100' : 'opacity-0')} />
-      <View className="flex-row items-center justify-between gap-2">
-        <View className="flex-row items-center gap-2">
-          <Text className="font-mono-bold text-12 tracking-w08 text-bone">{assetCode(market.asset)}</Text>
-          <Text className="font-mono text-11 text-ash">{market.timeframe}</Text>
-        </View>
-        {live ? (
-          <Num className="text-11 text-ash">{formatCountdown(clock)}</Num>
-        ) : (
-          <Text className="font-mono text-9 tracking-w14 text-ash">{phaseLabel(phase)}</Text>
-        )}
+      <View className="flex-row items-center gap-2">
+        <Text className="font-mono-bold text-12 tracking-w08 text-bone">{row.base}</Text>
+        <Num className="text-11 text-ash">{row.time}</Num>
       </View>
-      <Text numberOfLines={2} className="font-sans text-13 leading-[18px] text-bone">
-        {questionText(market)}
-      </Text>
+      <Num className="text-11 leading-4 text-ash">{row.state}</Num>
     </Pressable>
   );
 }
 
-/** Timeframe as a strip: any window, or one of those the feed has. */
-function WindowStrip({
+/** Time as a strip: any time, or one of those the server offers. */
+function TimeStrip({
   value,
   options,
   onChange,
 }: {
-  value: string | null;
-  options: readonly string[];
-  onChange: (timeframe: string | null) => void;
+  value: number | null;
+  options: readonly number[];
+  onChange: (seconds: number | null) => void;
 }) {
   const { select } = useHaptics();
-  const all: ReadonlyArray<string | null> = [null, ...options];
+  const all: ReadonlyArray<number | null> = [null, ...options];
   return (
-    <View role="tablist" aria-label="Window" className="flex-row rounded-sm border border-hairline bg-sunken p-0.5">
-      {all.map((tf) => {
-        const on = tf === value;
+    <View role="tablist" aria-label="Time" className="flex-row rounded-sm border border-hairline bg-sunken p-0.5">
+      {all.map((seconds) => {
+        const on = seconds === value;
         return (
           <Pressable
-            key={tf ?? 'any'}
+            key={seconds ?? 'any'}
             role="tab"
             aria-selected={on}
-            aria-label={tf === null ? 'Any window' : `Window ${tf}`}
+            aria-label={seconds === null ? 'Any time' : `Time ${durationLabel(seconds)}`}
             onPress={() => {
               if (on) return;
               select();
-              onChange(tf);
+              onChange(seconds);
             }}
             className={cx(
               'h-7 flex-1 items-center justify-center rounded-xs border',
               on ? 'border-hairline bg-lift' : 'border-transparent hover:bg-raised',
+              FOCUS,
             )}
           >
-            <Text className={cx('text-11', on ? 'font-mono-bold text-bone' : 'font-mono text-ash')}>{tf ?? 'Any'}</Text>
+            <Text
+              className={cx('text-11', on ? 'font-mono-bold text-bone' : 'font-mono text-ash')}
+              style={{ fontVariant: ['tabular-nums'] }}
+            >
+              {seconds === null ? 'Any' : durationLabel(seconds)}
+            </Text>
           </Pressable>
         );
       })}
@@ -188,312 +192,177 @@ function WindowStrip({
 }
 
 /**
- * Left of the reel: the assets that have markets, with live prices, as a filter;
- * the window; and the markets in view as a list with the current one lit. Every row
- * moves the reel, so the feed is navigable without swiping.
+ * Left of the reel: the pairs the server lists, with live prices, as a filter;
+ * the time; and the slides in view as a list with the current one lit. Every row
+ * moves the reel, so it is navigable without swiping.
  */
 export function ReelLeftPanel({
   live,
-  assets,
-  counts,
-  total,
-  windows,
+  ticket,
+  times,
   filter,
   onAsset,
-  onTimeframe,
-  markets,
+  onTime,
+  slides,
   activeId,
-  now,
   onPick,
 }: {
   /** The window is a desktop's: mount the rows (they subscribe to prices). */
   live: boolean;
-  assets: readonly string[];
-  counts: Readonly<Record<string, number>>;
-  total: number;
-  windows: readonly string[];
+  ticket: TimedTicket;
+  times: readonly number[];
   filter: ReelFilter;
   onAsset: (asset: string | null) => void;
-  onTimeframe: (timeframe: string | null) => void;
-  markets: readonly PredictMarket[];
+  onTime: (seconds: number | null) => void;
+  /** The slides the filter leaves, in reel order. */
+  slides: readonly ReelSlide[];
   activeId: string | null;
-  now: number;
-  onPick: (marketId: string) => void;
+  onPick: (slideId: string) => void;
 }) {
   const [open, setOpen] = usePanelOpen('predictMarketsPanelOpen');
+  const pairs = ticket.base.markets;
   if (!open) {
-    return <PanelRail side="left" {...MARKETS_PANEL} caption="Markets" onOpen={() => setOpen(true)} />;
+    return <PanelRail side="left" {...SLIDES_PANEL} caption="Pairs · Times" onOpen={() => setOpen(true)} />;
   }
   return (
     <View
       role="complementary"
-      aria-label={MARKETS_PANEL.label}
+      aria-label={SLIDES_PANEL.label}
       className={cx(PANEL, 'w-[264px] border-r border-hairline xl:w-[296px]')}
     >
       <ScrollView className="min-h-0 flex-1" showsVerticalScrollIndicator={false}>
         {/* The toggle shares the first heading's row, so collapsing costs the panel no height. */}
         <View className="flex-row items-center pr-1">
           <SectionHeader
-            title="Assets"
-            {...(assets.length > 0 ? { count: assets.length } : {})}
+            title="Pairs"
+            {...(pairs.length > 0 ? { count: pairs.length } : {})}
             className="min-w-0 flex-1 pb-2.5 pl-4 pt-4"
           />
-          <PanelToggle side="left" open name={MARKETS_PANEL.name} onToggle={() => setOpen(false)} className="mt-1.5" />
+          <PanelToggle side="left" open name={SLIDES_PANEL.name} onToggle={() => setOpen(false)} className="mt-1.5" />
         </View>
-        {live ? (
+        {live && pairs.length > 0 ? (
           <>
             <Pressable
               role="button"
               aria-pressed={filter.asset === null}
-              aria-label={`Show all markets, ${total}`}
+              aria-label={`Show every pair, ${pairs.length}`}
               onPress={() => onAsset(null)}
               className={cx(
                 'relative min-h-12 flex-row items-center gap-3 px-4 py-2.5',
                 filter.asset === null ? 'bg-raised' : 'hover:bg-raised/60 active:bg-raised',
+                FOCUS,
               )}
             >
               <View
-                className={cx(
-                  'absolute inset-y-2 left-0 w-0.5 bg-signal',
-                  filter.asset === null ? 'opacity-100' : 'opacity-0',
-                )}
+                className={cx('absolute inset-y-2 left-0 w-0.5 bg-signal', filter.asset === null ? 'opacity-100' : 'opacity-0')}
               />
               <View className="size-8 items-center justify-center rounded-sm border border-hairline bg-raised">
                 <Icon name="layers" size={16} color="ash" />
               </View>
-              <Text className="min-w-0 flex-1 font-sans text-13 font-medium text-bone">All markets</Text>
-              <Num className="text-12 text-ash">{total}</Num>
+              <Text className="min-w-0 flex-1 font-sans text-13 font-medium text-bone">Every pair</Text>
+              <Num className="text-12 text-ash">{pairs.length}</Num>
             </Pressable>
-            {assets.map((code) => (
+            {pairs.map((choice) => (
               <AssetRow
-                key={code}
-                code={code}
-                count={counts[code] ?? 0}
-                selected={filter.asset === code}
-                onPress={() => onAsset(filter.asset === code ? null : code)}
+                key={choice.asset}
+                choice={choice}
+                selected={filter.asset === choice.base}
+                onPress={() => onAsset(filter.asset === choice.base ? null : choice.base)}
               />
             ))}
           </>
+        ) : pairs.length === 0 ? (
+          <Num className="px-4 pb-2 text-12 leading-[18px] text-ash">{ticket.base.hold ?? 'No pair is listed right now.'}</Num>
         ) : null}
 
-        {windows.length > 1 ? (
+        {times.length > 1 ? (
           <View className="gap-2 px-4 pb-1 pt-4">
-            <Label>Window</Label>
-            <WindowStrip value={filter.timeframe} options={windows} onChange={onTimeframe} />
+            <Label>Time</Label>
+            <TimeStrip value={filter.seconds} options={times} onChange={onTime} />
           </View>
         ) : null}
 
-        <View className="mt-3 border-t border-hairline">
-          <SectionHeader title="In view" count={markets.length} className="px-4 pb-1.5 pt-4" />
-          {markets.length === 0 ? (
-            <Text className="px-4 pb-4 pt-1 font-sans text-12 leading-[18px] text-ash">
-              No market matches this filter right now.
-            </Text>
-          ) : (
-            markets.map((m) => (
-              <MarketRow key={m.id} market={m} now={now} current={m.id === activeId} onPress={() => onPick(m.id)} />
-            ))
-          )}
-        </View>
+        {/* Nothing to list while there is nothing to trade: the reel itself says why. */}
+        {slides.length > 0 || filter.asset !== null || filter.seconds !== null ? (
+          <View className="mt-3 border-t border-hairline">
+            <SectionHeader title="In view" count={slides.length} className="px-4 pb-1.5 pt-4" />
+            {slides.length === 0 ? (
+              <Text className="px-4 pb-4 pt-1 font-sans text-12 leading-[18px] text-ash">No slide matches this filter.</Text>
+            ) : (
+              slides.map((slide) => (
+                <SlideRow
+                  key={slide.id}
+                  slide={slide}
+                  ticket={ticket}
+                  current={slide.id === activeId}
+                  onPress={() => onPick(slide.id)}
+                />
+              ))
+            )}
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
 }
 
 /* -------------------------------------------------------------------------- */
-/* Right: how it settles, and what you hold                                    */
+/* Right: what is running, and what has finished                               */
 /* -------------------------------------------------------------------------- */
 
-interface Held {
-  key: string;
-  market: PredictMarket;
-  position: PredictPosition;
-}
-
-function HeldRow({ held, symbol, onPress }: { held: Held; symbol: string; onPress: () => void }) {
-  const { market, position } = held;
-  const up = position.side === 'above';
-  return (
-    <Pressable
-      role="button"
-      aria-label={`${sideLabel(position.side)} on ${assetCode(market.asset)}, ${positionResultLabel(position.result)}. Go to the market.`}
-      onPress={onPress}
-      className="gap-1.5 border-b border-hairline px-4 py-3 hover:bg-raised/60 active:bg-raised"
-    >
-      <View className="flex-row items-center justify-between gap-2">
-        <View className="flex-row items-center gap-2">
-          <Icon name={up ? 'arrow-up' : 'arrow-down'} size={14} color={up ? 'long' : 'short'} strokeWidth={2} />
-          <Text className="font-mono-bold text-12 tracking-w08 text-bone">
-            {sideLabel(position.side)} {assetCode(market.asset)}
-          </Text>
-          <Text className="font-mono text-11 text-ash">{market.timeframe}</Text>
-        </View>
-        <Badge label={positionResultLabel(position.result)} />
-      </View>
-      <Text numberOfLines={1} className="font-sans text-12 text-ash">
-        {questionText(market)}
-      </Text>
-      {position.stake ? (
-        <Num className="text-11 text-bone">
-          {formatAmount(position.stake)} {symbol}
-        </Num>
-      ) : null}
-    </Pressable>
-  );
-}
-
 /**
- * Right of the reel: how a market settles (the same three lines as the sheet, then
- * this market's own terms and the evidence one tap away), and what the person
- * holds, open and settled, each row taking the reel to its market.
+ * Right of the reel, from `xl`: the caller's trades. What is running, the
+ * soonest to end first, each with its countdown and its own "End now"; then
+ * every finished trade. A press on a running row takes the reel to its slide; a
+ * press on a finished one opens its details.
+ *
+ * Collapsed, the rail still says how many trades are running, so one is never
+ * out of sight behind it.
  */
-export function ReelRightPanel({
-  market,
-  markets,
-  nativeSymbol,
-  onEvidence,
-  onPick,
+export function ReelTradesPanel({
+  ticket,
+  onGo,
+  onDetails,
 }: {
-  /** The market on screen, if any. */
-  market: PredictMarket | undefined;
-  /** Every market in the feed, for the predictions list. */
-  markets: readonly PredictMarket[];
-  nativeSymbol: string;
-  onEvidence: (market: PredictMarket) => void;
-  onPick: (marketId: string) => void;
+  ticket: TimedTicket;
+  onGo: (trade: TimedTrade) => void;
+  onDetails: (tradeId: string) => void;
 }) {
-  const [tab, setTab] = useState<'open' | 'settled'>('open');
-  const held = useMemo<Held[]>(
-    () => markets.flatMap((m) => m.positions.map((position, i): Held => ({ key: `${m.id}:${i}`, market: m, position }))),
-    [markets],
-  );
-  const open = useMemo(() => held.filter((h) => h.position.result === null), [held]);
-  const settled = useMemo(() => held.filter((h) => h.position.result !== null), [held]);
-  const shown = tab === 'open' ? open : settled;
-  const { select } = useHaptics();
-  const [expanded, setExpanded] = usePanelOpen('predictSettlePanelOpen');
+  const [open, setOpen] = usePanelOpen('predictTradesPanelOpen');
+  const running = ticket.running.length;
 
-  if (!expanded) {
+  if (!open) {
     return (
-      <PanelRail
-        side="right"
-        from="xl"
-        {...SETTLE_PANEL}
-        caption="How it settles · Predictions"
-        onOpen={() => setExpanded(true)}
-      />
+      <PanelRail side="right" from="xl" {...TRADES_PANEL} caption="Running · History" onOpen={() => setOpen(true)}>
+        {running > 0 ? (
+          <View
+            aria-label={`${running} running`}
+            className="h-5 min-w-5 items-center justify-center rounded-xs bg-signal px-1"
+          >
+            <Num className="font-mono-bold text-10 text-void">{running}</Num>
+          </View>
+        ) : null}
+      </PanelRail>
     );
   }
   return (
     <View
       role="complementary"
-      aria-label={SETTLE_PANEL.label}
+      aria-label={TRADES_PANEL.label}
       className="hidden min-h-0 w-[320px] shrink-0 border-l border-hairline bg-panel xl:flex"
     >
       <ScrollView className="min-h-0 flex-1" showsVerticalScrollIndicator={false}>
         <View className="flex-row items-center pr-1">
-          <SectionHeader title="How it settles" className="min-w-0 flex-1 pb-3 pl-4 pt-4" />
-          <PanelToggle
-            side="right"
-            open
-            name={SETTLE_PANEL.name}
-            onToggle={() => setExpanded(false)}
-            className="mt-1"
+          <SectionHeader
+            title="Running"
+            {...(running > 0 ? { count: running } : {})}
+            className="min-w-0 flex-1 pb-3 pl-4 pt-4"
           />
+          <PanelToggle side="right" open name={TRADES_PANEL.name} onToggle={() => setOpen(false)} className="mt-1" />
         </View>
-        <View className="gap-3 px-4">
-          {SETTLE_STEPS.map((step, i) => (
-            <View key={i} className="flex-row items-start gap-3">
-              <View className="size-5 items-center justify-center rounded-xs border border-hairline bg-raised">
-                <Num className="text-10 text-ash">{i + 1}</Num>
-              </View>
-              <Text className="min-w-0 flex-1 font-sans text-12 leading-[18px] text-ash">{step}</Text>
-            </View>
-          ))}
-        </View>
-
-        {market ? (
-          <View className="gap-2 px-4 pt-5">
-            <Label>{`This market · ${assetCode(market.asset)} ${market.timeframe}`}</Label>
-            <View className="border border-hairline bg-void">
-              {settleTerms(market).map(([name, value], i, all) => (
-                <View
-                  key={name}
-                  className={cx(
-                    'flex-row items-center justify-between gap-3 px-3 py-2',
-                    i < all.length - 1 && 'border-b border-hairline',
-                  )}
-                >
-                  <Text className="font-mono text-11 text-ash">{name}</Text>
-                  <Num className="shrink text-11">{value}</Num>
-                </View>
-              ))}
-            </View>
-            <Pressable
-              role="button"
-              aria-label="See the evidence"
-              onPress={() => onEvidence(market)}
-              className="h-10 flex-row items-center justify-center gap-2 rounded-sm border border-verified/50 bg-verified/10 hover:bg-verified/15 active:opacity-80"
-            >
-              <Icon name="shield-check" size={16} color="verified" />
-              <Text className="font-mono-medium text-12 text-verified">See the evidence</Text>
-            </Pressable>
-          </View>
-        ) : null}
-
-        <View className="mt-6 border-t border-hairline">
-          <SectionHeader title="Your predictions" count={held.length} className="px-4 pb-3 pt-4" />
-          <View className="px-4 pb-3">
-            <View
-              role="tablist"
-              aria-label="Predictions"
-              className="flex-row rounded-sm border border-hairline bg-sunken p-0.5"
-            >
-              {(
-                [
-                  ['open', 'Open', open.length],
-                  ['settled', 'Settled', settled.length],
-                ] as const
-              ).map(([key, label, n]) => {
-                const on = tab === key;
-                return (
-                  <Pressable
-                    key={key}
-                    role="tab"
-                    aria-selected={on}
-                    aria-label={`${label}, ${n}`}
-                    onPress={() => {
-                      if (on) return;
-                      select();
-                      setTab(key);
-                    }}
-                    className={cx(
-                      'h-7 flex-1 flex-row items-center justify-center gap-1.5 rounded-xs border',
-                      on ? 'border-hairline bg-lift' : 'border-transparent hover:bg-raised',
-                    )}
-                  >
-                    <Text className={cx('text-11', on ? 'font-mono-bold text-bone' : 'font-mono text-ash')}>{label}</Text>
-                    <Num className="text-10 text-ash">{n}</Num>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-          {shown.length === 0 ? (
-            <EmptyState
-              icon={tab === 'open' ? 'target' : 'check-circle'}
-              title={tab === 'open' ? 'No open predictions' : 'Nothing settled yet'}
-              body={
-                tab === 'open'
-                  ? 'Take UP or DOWN on a market and it is listed here until it settles.'
-                  : 'A market you took a side on lands here with its evidence once it settles.'
-              }
-              className="py-8"
-            />
-          ) : (
-            shown.map((h) => <HeldRow key={h.key} held={h} symbol={nativeSymbol} onPress={() => onPick(h.market.id)} />)
-          )}
-        </View>
+        <RunningList ticket={ticket} onGo={onGo} bare className="px-4" />
+        <History trades={ticket.history} status={ticket.tradesStatus} onOpen={onDetails} className="px-4 pt-6" />
+        <TradeRules ticket={ticket} className="px-4 pb-6 pt-5" />
       </ScrollView>
     </View>
   );

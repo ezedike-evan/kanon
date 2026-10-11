@@ -1,10 +1,10 @@
 /**
- * Geometry for the big price line on a reel page.
+ * Geometry for the big price line on a reel slide.
  *
- * Display only. The line is drawn from recorded candle closes and nothing here
- * is fed back into settlement: the result of a market is `settleThreshold` in
- * `@kanon/spec` and never a number this file produced. The float boundary is
- * the same one `chart-series.ts` draws.
+ * Display only. The line is drawn from candle closes and the price now, and
+ * nothing here is fed back into a trade: a timed trade's entry, exit and result
+ * are the venue's own fills, never a number this file produced. The float
+ * boundary is the same one `chart-series.ts` draws.
  */
 
 import type { Series } from '@kanon/spec';
@@ -14,9 +14,9 @@ import { decimalToNumber } from './chart-series';
 export const MAX_POINTS = 90;
 
 /**
- * Candles a page shows: about three windows of history, so a market's level is
- * read against a stretch several times its own length. Bounded so a 15-minute
- * market is not a two-hour blip and a one-day market is not a month.
+ * Candles a slide shows: about three windows of history, so the time a slide is
+ * for is read against a stretch several times its own length. Bounded so a
+ * one-minute slide is not three points and a long one is not a month.
  */
 export function candleCountFor(windowSeconds: number, bucketSeconds: number): number {
   const wanted = Math.round((windowSeconds * 3) / Math.max(1, bucketSeconds));
@@ -43,8 +43,8 @@ export interface ChartGeometry {
   line: string;
   /** The same path closed down to the floor, for the wash beneath. */
   area: string;
-  /** Height of the level's line, in px from the top. */
-  targetY: number;
+  /** Height of the level's line, in px from the top. Null when there is no level to draw. */
+  targetY: number | null;
   /** Where the line ends, and the live price's dot goes. */
   end: { x: number; y: number } | null;
   /** The price range the box maps to. */
@@ -65,24 +65,27 @@ export interface ChartBox {
 const r = (n: number) => Math.round(n * 10) / 10;
 
 /**
- * Fits the closes, the level and the live price into one box, so the dashed
- * level is always on screen and the distance to it is honest: both use the same
- * scale. A flat series draws a centred line, not a divide-by-zero.
+ * Fits the closes, the live price and, when there is one, a level into one box.
+ * The level is a running trade's entry: it is always on screen, and the
+ * distance from the line to it is honest, since both use the same scale. With
+ * no level (`null`) the line has the box to itself. A flat series draws a
+ * centred line, not a divide-by-zero.
  */
 export function chartGeometry(
   closes: readonly number[],
-  target: number,
+  target: number | null,
   price: number | null,
   box: ChartBox,
 ): ChartGeometry | null {
   const { width, height, plotRight } = box;
   const padTop = box.padTop ?? 24;
   const padBottom = box.padBottom ?? 24;
-  if (!(width > 0) || !(height > 0) || !Number.isFinite(target)) return null;
+  if (!(width > 0) || !(height > 0) || (target !== null && !Number.isFinite(target))) return null;
 
   const series = price !== null && Number.isFinite(price) ? [...closes, price] : [...closes];
   const values = downsample(series);
-  const all = [...values, target];
+  const all = target === null ? values : [...values, target];
+  if (all.length === 0) return null;
   let lo = Math.min(...all);
   let hi = Math.max(...all);
   if (hi === lo) {
@@ -93,7 +96,7 @@ export function chartGeometry(
   }
   const inner = height - padTop - padBottom;
   const yOf = (v: number) => r(padTop + (1 - (v - lo) / (hi - lo)) * inner);
-  const targetY = yOf(target);
+  const targetY = target === null ? null : yOf(target);
 
   if (values.length < 2) return { line: '', area: '', targetY, end: null, min: lo, max: hi };
 

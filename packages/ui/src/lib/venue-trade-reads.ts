@@ -9,6 +9,7 @@ import {
   ordersFromRows,
   thrownMessage,
 } from './venue-trade';
+import type { TimedRequest } from './timed-types';
 import type {
   VenueAccountRead,
   VenueAccountState,
@@ -51,11 +52,22 @@ export interface VenueTradeSession {
   signedIn: boolean;
 }
 
-/** The three calls to the gateway, bound by the app. Loosely typed on purpose: the answers are read by shape. */
+/**
+ * The calls to the gateway, bound by the app. Loosely typed on purpose: the
+ * answers are read by shape. The first three are the order ticket's (`/trade`);
+ * the last three are Predict's timed trades (`/predict`), read in
+ * `timed-trade-reads.ts`. One object carries both because both go to the same
+ * address with the same sign-in token.
+ */
 export interface VenueTradeActions {
   account(): Promise<unknown>;
   placeOrder(args: VenueOrderRequest): Promise<unknown>;
   closePosition(args: { asset: string }): Promise<unknown>;
+  /** What can be traded on a timer, and whether each market is free. */
+  timedState(): Promise<unknown>;
+  openTimed(args: TimedRequest): Promise<unknown>;
+  /** Ends the caller's own running trade before its time. */
+  closeTimed(args: { tradeId: string }): Promise<unknown>;
 }
 
 export interface VenueTradeReadsDeps {
@@ -63,7 +75,8 @@ export interface VenueTradeReadsDeps {
   // are stale until codegen runs, and this package must not import Convex.
   useQuery: (ref: any, args: any) => unknown;
   listMyOrders: unknown;
-  actions: VenueTradeActions;
+  /** The order ticket's three calls. Predict's are no concern of these reads. */
+  actions: Pick<VenueTradeActions, 'account' | 'placeOrder' | 'closePosition'>;
   session: VenueTradeSession;
   /** Milliseconds between reads of the account while a ticket is mounted. Defaults to `ACCOUNT_REFRESH_MS`. */
   refreshMs?: number | undefined;

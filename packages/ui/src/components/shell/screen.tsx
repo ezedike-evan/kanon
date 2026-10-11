@@ -120,8 +120,10 @@ export interface ScreenProps {
  *  - Native: unchanged. The screen is the viewport; the safe-area inset is the frame.
  *  - Phone (< 640): full-bleed, bottom `TabBar`.
  *  - Tablet (640–1023): the same, in a centred column, with its edges drawn.
- *  - Desktop (>= 1024): a 232px `SideNav` rail on the left, the pane beside it,
- *    the bottom `TabBar` hidden. The pane's width is `size`.
+ *  - Desktop (>= 1024): the `SideNav` on the left, 232px open or a 56px icon rail
+ *    when the visitor has collapsed it, the pane beside it, the bottom `TabBar`
+ *    hidden. The pane's width is `size`; it is `flex-1`, so it takes whatever
+ *    the navigation leaves without being told which state that is.
  *
  * Every breakpoint is a class, so the server-rendered markup is correct at any
  * width and there is nothing to flash on hydration. The pane is a fixed-height

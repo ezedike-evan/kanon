@@ -67,6 +67,14 @@ import type {
   VenueOrdersState,
 } from './venue-types';
 export type * from './venue-types';
+import type {
+  TimedCloseResult,
+  TimedOpenResult,
+  TimedRequest,
+  TimedStateRead,
+  TimedTradesState,
+} from './timed-types';
+export type * from './timed-types';
 
 /**
  * The data a screen needs, factored by domain rather than by screen — several
@@ -452,6 +460,28 @@ export interface KanonDataSource {
    * `useSeries`. Signed out it is `empty`: no fill is ever a fixture.
    */
   useVenueOrders(): VenueOrdersState;
+  /**
+   * Predict: what can be traded on a timer (the pairs, stakes, durations and
+   * leverage the server offers) and whether each market is free. A hook: it is
+   * read (a call to the gateway) only while the Predict screen is mounted, then
+   * again after an open or a close, on `refresh()` and on a slow interval.
+   * Signed out it is `unavailable`.
+   */
+  useTimedState(): TimedStateRead;
+  /**
+   * Opens a timed trade on the shared account: a long for up, a short for down,
+   * at market, which the server closes when the time is up. No wallet prompt.
+   * Resolves with the answer, a refusal included; it never rejects.
+   */
+  openTimedTrade(request: TimedRequest): Promise<TimedOpenResult>;
+  /** Ends the caller's own running trade before its time. The result arrives on the trade's row. Never rejects. */
+  closeTimedTrade(tradeId: string): Promise<TimedCloseResult>;
+  /**
+   * The signed-in user's own timed trades, running and finished, newest first.
+   * Hook, for the same reason as `useSeries`. Signed out it is `empty`: no
+   * trade is ever a fixture.
+   */
+  useTimedTrades(): TimedTradesState;
 }
 
 const dec = (n: string, decimals = 2): Decimal => parseDecimal(n, decimals);
@@ -530,6 +560,16 @@ const DEMO_VENUE_ACCOUNT: VenueAccountRead = {
 };
 const DEMO_VENUE_ORDERS: VenueOrdersState = { status: 'empty' };
 const demoVenueOrder = async (): Promise<VenueOrderResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
+
+/** The demo opens no timed trade either: Predict says to sign in, and shows no made-up countdown or result. */
+const DEMO_TIMED_STATE: TimedStateRead = {
+  state: { status: 'unavailable', message: SIGN_IN_TO_TRADE },
+  refreshing: false,
+  refresh() {},
+};
+const DEMO_TIMED_TRADES: TimedTradesState = { status: 'empty' };
+const demoTimedOpen = async (): Promise<TimedOpenResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
+const demoTimedClose = async (): Promise<TimedCloseResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 
 /**
  * The default source. Every figure comes straight from `lib/demo.ts`, so a
@@ -714,6 +754,10 @@ export const demoDataSource: KanonDataSource = {
   placeVenueOrder: demoVenueOrder,
   closeVenuePosition: demoVenueOrder,
   useVenueOrders: () => DEMO_VENUE_ORDERS,
+  useTimedState: () => DEMO_TIMED_STATE,
+  openTimedTrade: demoTimedOpen,
+  closeTimedTrade: demoTimedClose,
+  useTimedTrades: () => DEMO_TIMED_TRADES,
 };
 
 /** Re-exported so a real provider can fall back to the demo trade id. */

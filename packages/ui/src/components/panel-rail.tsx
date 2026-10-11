@@ -26,7 +26,8 @@ export type PanelSide = 'left' | 'right';
 /**
  * Whether a side panel is open, and the setter that remembers the answer on
  * this device. Open until the stored choice has been read, which is also the
- * default, so the common case paints once and stays.
+ * default, so the common case paints once and stays. The desktop navigation
+ * keeps its own open-or-rail choice through this too (`sideNavOpen`).
  */
 export function usePanelOpen(key: PanelPreference): [open: boolean, setOpen: (open: boolean) => void] {
   const open = usePreference(key);

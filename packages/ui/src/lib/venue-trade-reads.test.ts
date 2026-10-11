@@ -483,6 +483,10 @@ describe('useConvexKanonSource and the order ticket', () => {
       account: count('account'),
       placeOrder: count('placeOrder'),
       closePosition: count('closePosition'),
+      // Predict's calls ride on the same object. A ticket makes none of them.
+      timedState: count('timedState'),
+      openTimed: count('openTimed'),
+      closeTimed: count('closeTimed'),
     };
 
     function Ticket(): null {

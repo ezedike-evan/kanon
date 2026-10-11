@@ -24,6 +24,7 @@ import { createVenueChartReads } from './venue-chart-reads';
 import { createVenueTickerReads } from './venue-ticker-reads';
 import { disconnectedVenueTrade } from './venue-trade-client';
 import { createVenueTradeReads, type VenueTradeActions } from './venue-trade-reads';
+import { createTimedTradeReads } from './timed-trade-reads';
 
 /**
  * Convex, wired to the live data source, once for both clients.
@@ -38,7 +39,7 @@ import { createVenueTradeReads, type VenueTradeActions } from './venue-trade-rea
  * that is small and rarely changes: the caller's `users` row, their strategies
  * and the active strategy's trades. Everything else is a screen-scoped hook on
  * the source (`useSeries`, `usePredict`, `useAnalytics`, `useMarkets`,
- * `useActivity`, `useVaults`, `useBlockedLog`, `useVenueAccount`, ...): it
+ * `useActivity`, `useVaults`, `useBlockedLog`, `useVenueAccount`, `useTimedState`, ...): it
  * subscribes, and reads the chain or the venue, only while the component that
  * shows it is mounted. The returned source is memoised, so it changes only
  * when something it exposes changed.
@@ -88,9 +89,10 @@ export function useConvexKanonSource(input: {
    */
   marketFeed?: MarketFeed | undefined;
   /**
-   * The order ticket's calls to the gateway's `/trade` routes. Orders go out
-   * from the gateway, not from Convex; Convex keeps the list of them. Absent,
-   * the ticket says trading is not connected. Only the value at first render is used.
+   * The order ticket's calls to the gateway's `/trade` routes, and Predict's to
+   * its `/predict` routes. Orders go out from the gateway, not from Convex;
+   * Convex keeps the list of them. Absent, the ticket and Predict say trading
+   * is not connected. Only the value at first render is used.
    */
   venueTrade?: VenueTradeActions | undefined;
 }): KanonDataSource {
@@ -291,6 +293,22 @@ export function useConvexKanonSource(input: {
     [hooks.useQuery, venueTrade, session.pending, session.signedIn],
   );
 
+  // Predict's timed trades: what can be traded and the open and the early end go through the
+  // gateway (the same `venueTrade` calls object); the caller's trades are a Convex query.
+  // Nothing here runs at the root: the state is read only while the Predict screen is mounted.
+  const timedTradeReads = useMemo(
+    () =>
+      createTimedTradeReads({
+        useQuery: hooks.useQuery,
+        listMine: api.timedData.listMine,
+        actions: venueTrade,
+        session: { pending: session.pending, signedIn: session.signedIn },
+      }),
+    // `hooks` and `api` are module-level in both apps; the session is what changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hooks.useQuery, venueTrade, session.pending, session.signedIn],
+  );
+
   // Guarded vaults and copy trading: the chain for what is true on-chain, Convex for finding it again.
   // Read only while a vault or copy screen is mounted (`useVaults`), never at the root.
   const vaultStrategy = useMemo(() => {
@@ -358,10 +376,23 @@ export function useConvexKanonSource(input: {
       ...homeReads,
       ...vaultReads,
       ...venueTradeReads,
+      ...timedTradeReads,
       session: kanonSession,
       settings: userId ? settings : live.settings,
       ruleHistory: userId ? history : live.ruleHistory,
     }),
-    [live, analyticsReads, domainReads, homeReads, vaultReads, venueTradeReads, kanonSession, settings, history, userId],
+    [
+      live,
+      analyticsReads,
+      domainReads,
+      homeReads,
+      vaultReads,
+      venueTradeReads,
+      timedTradeReads,
+      kanonSession,
+      settings,
+      history,
+      userId,
+    ],
   );
 }

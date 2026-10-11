@@ -43,9 +43,10 @@ describe('parsePreferences', () => {
     const p = {
       haptics: false,
       chartBucketSeconds: 14_400,
+      sideNavOpen: false,
       chartPanelOpen: false,
       predictMarketsPanelOpen: true,
-      predictSettlePanelOpen: false,
+      predictTradesPanelOpen: false,
     };
     expect(parsePreferences(serializePreferences(p))).toEqual(p);
   });
@@ -54,7 +55,7 @@ describe('parsePreferences', () => {
     expect(DEFAULT_PREFERENCES).toMatchObject({
       chartPanelOpen: true,
       predictMarketsPanelOpen: true,
-      predictSettlePanelOpen: true,
+      predictTradesPanelOpen: true,
     });
     // Stored before the panels could collapse: the keys are absent, and the panels stay open.
     expect(parsePreferences('{"haptics":false,"chartBucketSeconds":900}')).toEqual({
@@ -70,15 +71,37 @@ describe('parsePreferences', () => {
       ...DEFAULT_PREFERENCES,
       predictMarketsPanelOpen: false,
     });
-    expect(parsePreferences('{"predictSettlePanelOpen":false}')).toEqual({
+    expect(parsePreferences('{"predictTradesPanelOpen":false}')).toEqual({
       ...DEFAULT_PREFERENCES,
-      predictSettlePanelOpen: false,
+      predictTradesPanelOpen: false,
     });
+    // The panel that said how a market settles is gone. A choice stored for it is not carried through.
+    expect(parsePreferences('{"predictSettlePanelOpen":false}')).toEqual(DEFAULT_PREFERENCES);
   });
 
   it('keeps a panel open when its stored value is not a yes or a no', () => {
-    const junk = '{"chartPanelOpen":"false","predictMarketsPanelOpen":0,"predictSettlePanelOpen":null}';
+    const junk = '{"chartPanelOpen":"false","predictMarketsPanelOpen":0,"predictTradesPanelOpen":null}';
     expect(parsePreferences(junk)).toEqual(DEFAULT_PREFERENCES);
+  });
+
+  it('opens the navigation until it has been collapsed', () => {
+    expect(DEFAULT_PREFERENCES.sideNavOpen).toBe(true);
+    // Stored before the navigation could collapse: the key is absent, and it stays open.
+    expect(parsePreferences('{"haptics":false,"chartPanelOpen":false}').sideNavOpen).toBe(true);
+  });
+
+  it('reads a collapsed navigation, and leaves the side panels as they were', () => {
+    expect(parsePreferences('{"sideNavOpen":false}')).toEqual({ ...DEFAULT_PREFERENCES, sideNavOpen: false });
+    expect(parsePreferences('{"sideNavOpen":true,"chartPanelOpen":false}')).toEqual({
+      ...DEFAULT_PREFERENCES,
+      chartPanelOpen: false,
+    });
+  });
+
+  it('keeps the navigation open when its stored value is not a yes or a no', () => {
+    for (const junk of ['"false"', '0', 'null', '[]', '56']) {
+      expect(parsePreferences(`{"sideNavOpen":${junk}}`)).toEqual(DEFAULT_PREFERENCES);
+    }
   });
 
   it('carries nothing through that the app does not offer', () => {
@@ -106,6 +129,22 @@ describe('the store', () => {
     expect(getPreferences().chartPanelOpen).toBe(true);
     await hydratePreferences(storage);
     expect(getPreferences()).toEqual({ ...DEFAULT_PREFERENCES, chartPanelOpen: false });
+  });
+
+  it('remembers a collapsed navigation across a reload, and expands it again when asked', async () => {
+    const storage = memoryStorage();
+    updatePreferences({ sideNavOpen: false }, storage);
+    expect(getPreferences()).toMatchObject({ sideNavOpen: false, chartPanelOpen: true });
+    await Promise.resolve();
+
+    resetPreferences(); // a new page load: the first paint is the open navigation
+    expect(getPreferences().sideNavOpen).toBe(true);
+    await hydratePreferences(storage);
+    expect(getPreferences()).toEqual({ ...DEFAULT_PREFERENCES, sideNavOpen: false });
+
+    updatePreferences({ sideNavOpen: true }, storage);
+    await Promise.resolve();
+    expect(parsePreferences(storage.map.get(PREFERENCES_STORAGE_KEY))).toEqual(DEFAULT_PREFERENCES);
   });
 
   it('writes a change through to storage and applies it at once', async () => {

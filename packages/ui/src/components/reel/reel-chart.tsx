@@ -4,17 +4,17 @@ import Svg, { Circle, Defs, Line, LinearGradient as SvgGradient, Path, Stop } fr
 import type { ColorToken } from '@kanon/tokens';
 import type { ChartGeometry } from '../../lib/predict-chart';
 import { useTheme } from '../../theme';
-import { Icon } from '../icons';
 import { Num } from '../ui';
 
 /**
- * The big line under a market's question: the asset's recent closes as an area,
- * the level as a dashed line across it, and the live price as a dot.
+ * The big line on a slide: the pair's recent closes as an area and the live
+ * price as a dot. While a trade is running on the pair its entry is a dashed
+ * line across it, tagged with the price.
  *
  * Drawn once per geometry (memoised), no animation frame ever runs on it. The
- * line's colour is the asset's own direction over the day and is always beside
- * a signed figure that says so. The level is `signal`: it is the rule of this
- * market, not a direction.
+ * line's colour is a direction (the pair's over the day, or the price against
+ * the entry while a trade runs) and is always beside a signed figure that says
+ * so. The entry is neutral: it is where the trade began, not a direction.
  */
 export const ReelChart = memo(function ReelChart({
   geometry,
@@ -23,7 +23,7 @@ export const ReelChart = memo(function ReelChart({
   plotRight,
   tone,
   uid,
-  targetText,
+  levelText,
 }: {
   geometry: ChartGeometry | null;
   width: number;
@@ -33,14 +33,16 @@ export const ReelChart = memo(function ReelChart({
   tone: ColorToken;
   /** Unique per page: SVG gradient ids share one document on the web. */
   uid: string;
-  targetText: string;
+  /** What the dashed line is: `ENTRY 61,234.5`. Drawn only when the geometry has a level. */
+  levelText?: string | undefined;
 }) {
   const { colors } = useTheme();
   if (!geometry) return <View style={{ width, height }} />;
   const stroke = colors[tone];
   const fillId = `reel-fill-${uid}`;
+  const level = geometry.targetY;
   // The tag rides above the dashed line, and drops under it when there is no room above.
-  const tagAbove = geometry.targetY > 30;
+  const tagAbove = level !== null && level > 30;
   return (
     <View style={{ width, height }}>
       <Svg width={width} height={height} aria-hidden>
@@ -51,15 +53,9 @@ export const ReelChart = memo(function ReelChart({
           </SvgGradient>
         </Defs>
         {geometry.area ? <Path d={geometry.area} fill={`url(#${fillId})`} /> : null}
-        <Line
-          x1={0}
-          x2={plotRight}
-          y1={geometry.targetY}
-          y2={geometry.targetY}
-          stroke={colors.signal}
-          strokeWidth={1.5}
-          strokeDasharray="6 5"
-        />
+        {level !== null ? (
+          <Line x1={0} x2={plotRight} y1={level} y2={level} stroke={colors.ash} strokeWidth={1.5} strokeDasharray="6 5" />
+        ) : null}
         {geometry.line ? (
           <Path d={geometry.line} stroke={stroke} strokeWidth={2.25} strokeLinejoin="round" strokeLinecap="round" fill="none" />
         ) : null}
@@ -70,13 +66,14 @@ export const ReelChart = memo(function ReelChart({
           </>
         ) : null}
       </Svg>
-      <View
-        className="absolute left-5 h-6 flex-row items-center gap-1 rounded-xs border border-signal/50 bg-void/85 px-1.5"
-        style={{ top: tagAbove ? geometry.targetY - 28 : geometry.targetY + 6 }}
-      >
-        <Icon name="target" size={12} color="signal" />
-        <Num className="font-mono-medium text-11 text-signal">{targetText}</Num>
-      </View>
+      {level !== null && levelText ? (
+        <View
+          className="absolute left-5 h-6 flex-row items-center rounded-xs border border-hairline bg-void/85 px-1.5"
+          style={{ top: tagAbove ? level - 28 : level + 6 }}
+        >
+          <Num className="font-mono-medium text-11 tracking-w04">{levelText}</Num>
+        </View>
+      ) : null}
     </View>
   );
 });

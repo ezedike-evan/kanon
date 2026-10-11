@@ -5,7 +5,9 @@
  *   - `haptics`: gates every pattern `useHaptics()` plays.
  *   - `chartBucketSeconds`: the timeframe the Chart tab opens on. `null` means
  *     "the rule's own timeframe", which is what the chart did before this.
- *   - `chartPanelOpen`, `predictMarketsPanelOpen`, `predictSettlePanelOpen`:
+ *   - `sideNavOpen`: whether the desktop navigation is open or collapsed to its
+ *     icon rail. Open is the default.
+ *   - `chartPanelOpen`, `predictMarketsPanelOpen`, `predictTradesPanelOpen`:
  *     whether each desktop side panel is open or shrunk to its rail. Open is the
  *     default, so the layout a first visit paints is the one that stays.
  *
@@ -26,23 +28,26 @@ export interface Preferences {
   haptics: boolean;
   /** Seconds per candle, one of the chart's timeframes, or null for the rule's own. */
   chartBucketSeconds: number | null;
+  /** Desktop: the main navigation on the left. False is its icon rail, every destination still one press away. */
+  sideNavOpen: boolean;
   /** Desktop, Chart: the panel with the markets, the rule and the order ticket. False is its rail. */
   chartPanelOpen: boolean;
-  /** Desktop, Predict: the panel left of the reel (assets, window, markets in view). */
+  /** Desktop, Predict: the panel left of the reel (pairs with live prices, the time, the slides in view). */
   predictMarketsPanelOpen: boolean;
-  /** Desktop, Predict: the panel right of the reel (how it settles, your predictions). */
-  predictSettlePanelOpen: boolean;
+  /** Desktop, Predict: the panel right of the reel (the caller's trades, running and finished). */
+  predictTradesPanelOpen: boolean;
 }
 
-/** The preferences that say whether a desktop side panel is open. */
-export type PanelPreference = 'chartPanelOpen' | 'predictMarketsPanelOpen' | 'predictSettlePanelOpen';
+/** The preferences that say whether the desktop navigation, or a desktop side panel, is open. */
+export type PanelPreference = 'sideNavOpen' | 'chartPanelOpen' | 'predictMarketsPanelOpen' | 'predictTradesPanelOpen';
 
 export const DEFAULT_PREFERENCES: Preferences = {
   haptics: true,
   chartBucketSeconds: null,
+  sideNavOpen: true,
   chartPanelOpen: true,
   predictMarketsPanelOpen: true,
-  predictSettlePanelOpen: true,
+  predictTradesPanelOpen: true,
 };
 
 export const PREFERENCES_STORAGE_KEY = 'kanon.preferences.v1';
@@ -71,9 +76,10 @@ export function parsePreferences(raw: string | null | undefined): Preferences {
     haptics: flag('haptics'),
     chartBucketSeconds:
       typeof bucket === 'number' && timeframeByBucket(bucket) ? bucket : DEFAULT_PREFERENCES.chartBucketSeconds,
+    sideNavOpen: flag('sideNavOpen'),
     chartPanelOpen: flag('chartPanelOpen'),
     predictMarketsPanelOpen: flag('predictMarketsPanelOpen'),
-    predictSettlePanelOpen: flag('predictSettlePanelOpen'),
+    predictTradesPanelOpen: flag('predictTradesPanelOpen'),
   };
 }
 
@@ -81,9 +87,10 @@ export function serializePreferences(p: Preferences): string {
   return JSON.stringify({
     haptics: p.haptics,
     chartBucketSeconds: p.chartBucketSeconds,
+    sideNavOpen: p.sideNavOpen,
     chartPanelOpen: p.chartPanelOpen,
     predictMarketsPanelOpen: p.predictMarketsPanelOpen,
-    predictSettlePanelOpen: p.predictSettlePanelOpen,
+    predictTradesPanelOpen: p.predictTradesPanelOpen,
   });
 }
 
