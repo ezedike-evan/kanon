@@ -90,7 +90,7 @@ Five tabs, bottom-anchored on a phone or tablet and a left rail on desktop (see 
 | HOME | `/home` | The rule card and what the rule has done: the pinned rule, adherence, recent activity, small price line |
 | CHART | `/chart` | Full-height chart, drawing tools, the rule overlaid on price |
 | AI | `/create` | The strategy builder: talk to the model, watch the spec form. The raised centre button |
-| PREDICT | `/predict` | Threshold markets |
+| PREDICT | `/predict` | Timed trades, as a reel |
 | PROFILE | `/profile` | Trading records, previous rules, copy trading, vault, security, theme |
 
 This replaces the earlier "rule card is home, refuse a hero chart" position.
@@ -127,7 +127,7 @@ on the web: a screen fills its window.
 |---|---|---|---|
 | Phone | under 640 | Bottom `TabBar` | Full-bleed |
 | Tablet | 640 to 1023 | Bottom `TabBar` | Centred column, 720 max, edges drawn in `hairline` |
-| Desktop | 1024 and up | 232px `SideNav` on the left, no `TabBar` | The pane beside it, `column` 720, `wide` 1280 or `full` |
+| Desktop | 1024 and up | `SideNav` on the left (232px, or a 56px icon rail when collapsed), no `TabBar` | The pane beside it, `column` 720, `wide` 1280 or `full` |
 
 Native is unchanged: the screen is the viewport, the safe-area inset is the frame,
 the bottom bar stays. Every rule below is web-only and gated on `isWeb`.
@@ -176,7 +176,7 @@ number monospaced.
 
 **Chart, Predict and AI on desktop.** Each keeps its phone composition and adds a
 desktop one by class (`hidden lg:flex` for what only desktop draws, `lg:hidden` for
-what only a phone draws), so there is one tree and one chart or reel instance.
+what only a phone draws), so there is one tree and one chart instance.
 Chart: a fixed 40px tool rail left of the canvas, a 44px toolbar (symbol, timeframe
 strip, history, magnet, full screen), and a 264 to 300px panel with the symbol, the
 list area, the pinned rule with its structure toggle, and the order ticket pinned
@@ -195,16 +195,35 @@ secondary action. On the chart itself an open position draws a labelled line at
 its entry price, and the caller's fills are marked on their candles: an open as
 an arrow on its side, a close as a neutral square. Neither shows a result.
 
+**The navigation collapses.** One button at the top of `SideNav` shrinks it to a
+56px rail: each destination is its icon alone, still one press away, with its
+name read out and shown on hover. The current destination keeps its mark, the
+brand keeps its rod mark and the account its monogram. The choice is
+remembered, and the pane beside it takes the width.
+
 **Side panels collapse.** The chart's panel and both Predict panels shrink to a
 40px rail with one button that opens them again, and the choice is remembered.
 The chart's rail says what it hides and shows the side of any open position, so
 a position is never out of sight. There is no slide: a moving width would resize
 the chart on every frame.
 
-Predict: the reel stays a 440px centred column, paged by
-wheel, arrow and page keys, between a left panel (asset filter with live prices,
-window, the markets in view) and, from 1280, a right panel (how it settles, this market's
-terms, open and settled predictions). AI: `SplitPane` with the conversation held to
+Predict: a reel of timed trades. Full-screen slides paged vertically (swipe on a
+phone; wheel, arrow and page keys on desktop, in a 440px centred column). A
+slide is a pair and a time, not a price to reach: "Which way does BTC move in
+the next 1 minute?". On it are the live price and its line filling the slide,
+four facts taken from the server (size, that it closes itself after the slide's
+time, the most it can lose, the slippage bound), the stake as chips, and UP and
+DOWN at the foot. One press sends. While a trade runs on a pair, every slide of
+that pair shows it instead of the two actions: the countdown is the largest
+figure, the entry is a dashed line on the chart, and the move from entry is a
+direction and a price distance, never money. A trade that has just ended leads
+with the call and what the price did. Running trades on other pairs and the
+caller's history open from a rail on every slide; a finished trade's money
+result is one neutral row inside its bottom sheet, beside the two transaction
+links. On desktop a left panel filters by pair and time and, from 1280, a right
+panel lists what is running and the history. There is no "how it settles"
+panel: the result is the venue's two fills.
+AI: `SplitPane` with the conversation held to
 720 and the spec draft as an always-visible 360px panel instead of the dock. A bottom
 sheet is a 560px panel centred at the foot of the pane from `lg`.
 
@@ -222,8 +241,25 @@ section inline on the right. Each route selects its section, so `/profile/record
 opens Trading records and the browser's back button retraces sections; the four
 sections with no route (Overview, Copy trading, Appearance, About) switch in place on
 `/profile`, and `/profile?section=appearance` opens one. Trading records is a table
-(day, asset, side glyph, size, entry from `xl`, result or the predicate that refused
-it, proof link) with the filter chips above it. A phone keeps the push navigation.
+(day, asset with its source under it, side glyph, size, entry from `xl`, result or the
+predicate that refused it, proof link) with the filter chips above it. A phone keeps
+the push navigation.
+
+**One record for three ways of trading.** Trading records lists every trade the person
+took, newest first by the day it was opened: a position from the chart's ticket, a
+timed trade from Predict, and a setup put to their rule (executed or refused). Each row
+names its source (`Chart`, `Predict`, `Rule`) and the chips filter by it (All, Chart,
+Predict, By rule, Refused); the four tiles above are counts of the same. The server
+records orders, not trades, so a chart trade is paired from the person's own orders:
+every filled open and add on a market, up to the close that followed, with the entry
+weighted by size. The orders a timed trade placed are left out of that pairing, since
+the timed trade is already a row. A row carries a direction, a state and prices and
+never money. Pressing a chart trade or a finished timed trade opens a bottom sheet with
+its figures, the result among them, and each order's transaction on the explorer; a
+rule's trade opens its evidence screen; a running timed trade goes to Predict.
+`/profile/records?open=<id>` opens the screen on one record. The Profile tab shows the
+newest five under "Your trades", each linking to that address, and its Trades tile
+counts all three kinds.
 
 ## Density and rhythm
 

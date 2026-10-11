@@ -137,7 +137,11 @@ the same candles from the same samples, but it does not prevent it.
    regions (HTTP 451): the gateway has to run where Perpl serves, and a user
    in a region Perpl does not serve could still reach the shared account
    through it. That is acceptable for a testnet demonstration and is not for
-   real funds.
+   real funds. Predict's timed trades go through the same path and the same
+   account. Their closing order is sent by the gateway on its own authority
+   when the time is up, and nothing closes a timed trade while no gateway is
+   running: the position stays open until one starts and reads the running
+   trades back.
 10. **Audit findings fixed in contracts:** `ThresholdMarket` now settles on the exact
     window (per-sample publish times from `CanonicalSeries`, inclusive at both ends;
     `settle` waits `maxPriceAgeSeconds` past `windowEnd`; `takeSide` also refuses a

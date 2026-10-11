@@ -14,7 +14,7 @@ against.
 
 ## Status
 
-Stated plainly, as of 10 October 2026. This section is updated as each piece goes
+Stated plainly, as of 11 October 2026. This section is updated as each piece goes
 live.
 
 | Piece | State |
@@ -23,11 +23,13 @@ live.
 | Contracts: threshold market (Predict), guarded vault, copy vault, margin account, insurance fund | Deployed on Monad testnet. Covered by the same test suite. |
 | Strategy spec, evaluators, hashing, on-chain encoding (`packages/spec`) | Built, 285 tests pass. |
 | Compiler (plain language to spec, Qwen 3.8 Max) | Built in the Convex backend. Rejects anything it cannot express as arithmetic. |
-| Web and mobile clients | Built from one shared UI package. Not yet hosted publicly. |
+| Web and mobile clients | Built from one shared UI package. The web client is public at https://kanon-three.vercel.app, deployed to Vercel on 11 October (`pnpm deploy:web`) on Next 15.5.27. Its pages answer; it has not yet been opened and used in a browser there. It has no gateway address yet, so the chart ticket and Predict cannot trade there, and the Privy app must be told the address before sign-in works on it. The mobile client is not distributed. |
 | Pinning from the app | Wired to the registry. Not yet exercised against the current deployment. |
 | Refusal in the app | Decided off-chain by the backend today. Calling the on-chain gate from the app is in progress. |
 | Order execution (Perpl perps, Kuru spot) | Clients written and unit-tested. A script (`perpl:order`) has opened and closed a real market order on Perpl testnet through the signed API; the two transactions are in `packages/execution/README.md`. The chart's order ticket (desktop panel and phone sheet) places a market order through the gateway's `/trade` routes with the same order code: one shared testnet account, $10 to $100 per order, up to 5x, no rule check. The backend checks who is asking and records each order; it cannot send one itself, because Perpl refuses its trading API (HTTP 451) to the region the backend is hosted in. On 10 October a signed-in user opened and closed a position from the ticket in a browser, on a developer's machine. In that run the close filled on the venue but the ticket reported it as not filled, and the open took about sixteen seconds. The order code now reads the result from the account's position instead of waiting on Perpl's fill history; that change is tested and has not yet been re-run against Perpl. Trades proposed by a rule are still paper fills and labelled so. |
-| Market data gateway (`packages/gateway`) | Built and run against Perpl testnet: live candles, trades, order book and tickers over one venue connection, history from a cache. 116 tests pass. The app's charts and pair prices read from it when a gateway address is set (off by default); checked against a local gateway from Node, not yet in a browser. Not yet hosted. |
+| Predict (timed trades) | Being rebuilt on 10 October. It was a price-threshold market on the `ThresholdMarket` contract, taken through wallet prompts. It is now a timed trade: a pair called up or down for 1, 5, 15 or 60 minutes is a position the gateway opens at market and closes when the time is up, through the same order code as the chart's ticket, on the shared testnet account. The server side is written and tested against a fake venue; the screen is being rebuilt. No timed trade has yet been opened against Perpl. The contract is still deployed and is no longer used by the Predict screen. |
+| Trading records (Profile) | Built on 11 October. Profile lists every trade a signed-in person took in one record: positions from the chart's ticket (paired from their own orders, entry weighted by size), timed trades from Predict, and setups put to their rule. A press opens the trade's figures and its transactions. The pairing and the result arithmetic are unit-tested. The table, the phone list and the detail sheet were checked in a browser with sample data while signed out; they have not yet been checked signed in against real orders. All orders still go to one shared account, so a position another person closed shows as ended elsewhere, with no exit. |
+| Market data gateway (`packages/gateway`) | Built and run against Perpl testnet: live candles, trades, order book and tickers over one venue connection, history from a cache. 131 tests pass. The app's charts and pair prices read from it when a gateway address is set (off by default); checked against a local gateway from Node, not yet in a browser. Not yet hosted. |
 | Price series keeper | Not running continuously. The testnet series is stale between runs. |
 | Indexer (Envio HyperIndex) | Written, not deployed. Does not index the strategy retire events yet. |
 
@@ -118,6 +120,12 @@ pnpm lint
 The web client reads its configuration from `apps/web/.env`; see
 `apps/web/.env.example` for the variables. All of them are public values. The
 backend needs a Convex deployment (`npx convex dev` in `packages/backend`).
+
+To deploy the web client to Vercel, use `pnpm deploy:web` (add `-- --prod` for
+production) and not `vercel deploy`. Run in the working tree, `vercel deploy`
+uploads files that `.gitignore` lists, `.env` files among them. The script
+deploys a clean copy of what git would commit and then reads the upload back to
+check it. The gateway is deployed separately from `render.yaml`.
 
 To check the contracts on their own:
 
