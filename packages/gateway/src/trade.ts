@@ -28,7 +28,15 @@
 import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { z } from 'zod';
-import { createEd25519Signer, createPerplRest, normalizeEd25519Secret } from '@kanon/execution/perpl-trade';
+import {
+  createEd25519Signer,
+  createPerplRest,
+  loadPerplMarkets,
+  normalizeEd25519Secret,
+  readPerplMarkPrice,
+  type PerplMarketInfo,
+} from '@kanon/execution/perpl-trade';
+import { createTimedRunner, type TimedRunner } from '@kanon/execution/timed-runner';
 import {
   VENUE_MESSAGES,
   createVenueService,
@@ -41,6 +49,8 @@ import { createConvexRecorder, type Admission, type ConvexRecorder } from './con
 import type { Logger } from './log';
 
 export const TRADE_PREFIX = '/trade/';
+/** Predict's timed trades, served by the same routes object as the ticket's orders. */
+export const PREDICT_PREFIX = '/predict/';
 export const TRADE_NOT_CONNECTED = 'Trading is not connected on this gateway.';
 const SIGN_IN_UNCHECKED = 'Your sign-in could not be checked. Try again.';
 /** An order is four short fields; anything larger is not one. */
@@ -63,6 +73,10 @@ const ROUTES: Record<string, 'GET' | 'POST'> = {
   '/trade/account': 'GET',
   '/trade/order': 'POST',
   '/trade/close': 'POST',
+  // Predict: a timed trade is a position the server closes when its time is up.
+  '/predict/state': 'GET',
+  '/predict/open': 'POST',
+  '/predict/close': 'POST',
 };
 
 const asset = z.string().trim().min(1).max(32);
@@ -74,6 +88,14 @@ const OrderBody = z.strictObject({
   leverage: z.number(),
 });
 const CloseBody = z.strictObject({ asset });
+const TimedOpenBody = z.strictObject({
+  asset,
+  direction: z.enum(['up', 'down']),
+  // What is on offer is the policy's to state, with a reason. Here these only have to be numbers.
+  stakeUsd: z.number(),
+  seconds: z.number(),
+});
+const TimedCloseBody = z.strictObject({ tradeId: z.string().min(1).max(64) });
 
 export interface TradeAnswer {
   status: number;
@@ -84,6 +106,10 @@ export interface TradeAnswer {
 
 export interface TradeRoutes {
   handle(req: IncomingMessage, path: string): Promise<TradeAnswer>;
+  /** Picks up the timed trades an earlier process left running. Does nothing when none are served. */
+  resume(): Promise<void>;
+  /** Stops the timers of running timed trades. They stay in the backend for the next process. */
+  stop(): void;
 }
 
 const unavailable = (message: string): { status: 'unavailable'; message: string } => ({ status: 'unavailable', message });
@@ -124,6 +150,8 @@ export const disconnectedTrade: TradeRoutes = {
   async handle(req, path) {
     return routeOf(req, path) ?? { status: 200, body: unavailable(TRADE_NOT_CONNECTED) };
   },
+  async resume() {},
+  stop() {},
 };
 
 export function createTradeRoutes(deps: {
@@ -131,8 +159,10 @@ export function createTradeRoutes(deps: {
   recorder: ConvexRecorder;
   log: Logger;
   now?: () => number;
+  /** Runs Predict's timed trades. Without it the `/predict` routes say trading is not connected. */
+  timed?: TimedRunner;
 }): TradeRoutes {
-  const { service, recorder, log } = deps;
+  const { service, recorder, log, timed } = deps;
   const now = deps.now ?? Date.now;
   const answer = (body: VenueAccountView | VenueOrderResult): TradeAnswer => ({ status: 200, body });
 
@@ -168,11 +198,75 @@ export function createTradeRoutes(deps: {
     return view;
   }
 
+  /** The Predict state now in hand, shared the same way the account is. */
+  let stateHeld: { at: number; view: ReturnType<TimedRunner['state']> } | null = null;
+  function readState(runner: TimedRunner): ReturnType<TimedRunner['state']> {
+    const at = now();
+    if (stateHeld && at >= stateHeld.at && at - stateHeld.at < ACCOUNT_TTL_MS) return stateHeld.view;
+    const view = runner.state();
+    const mine = { at, view };
+    stateHeld = mine;
+    const drop = (): void => {
+      if (stateHeld === mine) stateHeld = null;
+    };
+    view.then((v) => (v.status === 'ready' ? undefined : drop()), drop);
+    return view;
+  }
+
+  /** The three `/predict` paths. The caller is put to the backend as for the ticket: by their own token. */
+  async function predict(req: IncomingMessage, path: string, token: string | null): Promise<TradeAnswer> {
+    const say = (body: unknown): TradeAnswer => ({ status: 200, body });
+    if (!timed) return say(unavailable(TRADE_NOT_CONNECTED));
+
+    if (path === '/predict/state') {
+      if (!token) return say(unavailable(VENUE_MESSAGES.signIn));
+      const admission = await admit(token);
+      if (!admission.ok) {
+        if (admission.code === 'unauthenticated') return say(unavailable(VENUE_MESSAGES.signIn));
+        return say(unavailable(admission.code === 'rate_limited' ? admission.message : SIGN_IN_UNCHECKED));
+      }
+      return say(await readState(timed));
+    }
+
+    const text = await readBody(req);
+    if (text === null) return { status: 413, body: { error: 'body too large' } };
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      return { status: 400, body: { error: 'body is not JSON' } };
+    }
+
+    if (path === '/predict/open') {
+      const body = TimedOpenBody.safeParse(json);
+      if (!body.success) return { status: 400, body: { error: 'not a timed trade: { asset, direction, stakeUsd, seconds }' } };
+      if (!token) return say(unavailable(VENUE_MESSAGES.signIn));
+      const result = await timed.open(body.data, token);
+      held = null;
+      stateHeld = null;
+      log({ level: 'info', event: 'timed_open', ...body.data, result: result.status });
+      return say(result);
+    }
+
+    const body = TimedCloseBody.safeParse(json);
+    if (!body.success) return { status: 400, body: { error: 'not a close: { tradeId }' } };
+    if (!token) return say(unavailable(VENUE_MESSAGES.signIn));
+    const result = await timed.close(body.data.tradeId, token);
+    held = null;
+    stateHeld = null;
+    log({ level: 'info', event: 'timed_close', result: result.status });
+    return say(result);
+  }
+
   return {
+    resume: () => timed?.resume() ?? Promise.resolve(),
+    stop: () => timed?.stop(),
+
     async handle(req, path) {
       const wrong = routeOf(req, path);
       if (wrong) return wrong;
       const token = bearer(req);
+      if (path.startsWith(PREDICT_PREFIX)) return predict(req, path, token);
 
       if (path === '/trade/account') {
         if (!token) return answer(unavailable(VENUE_MESSAGES.signIn));
@@ -244,5 +338,30 @@ export async function connectTrade(config: TradeConfig, log: Logger, fetchImpl?:
     log,
     ...withFetch,
   });
-  return createTradeRoutes({ service, recorder, log });
+
+  // The market list changes rarely: one read serves a minute of checks on running trades.
+  const publicOpts = { network: config.network, ...withFetch };
+  let listed: { at: number; markets: Promise<PerplMarketInfo[]> } | null = null;
+  const loadMarkets = (): Promise<PerplMarketInfo[]> => {
+    const at = Date.now();
+    if (listed && at - listed.at < 60_000) return listed.markets;
+    const markets = loadPerplMarkets(publicOpts);
+    const mine = { at, markets };
+    listed = mine;
+    markets.catch(() => {
+      if (listed === mine) listed = null;
+    });
+    return markets;
+  };
+  const timed = createTimedRunner({
+    network: config.network,
+    service,
+    recorderFor: (token) => recorder.forCaller(token),
+    store: recorder.timed,
+    loadMarkets,
+    readMarkPrice: (marketId) => readPerplMarkPrice(publicOpts, marketId),
+    onError: (scope, err) =>
+      log({ level: 'error', event: 'timed_error', scope, error: err instanceof Error ? err.message : String(err) }),
+  });
+  return createTradeRoutes({ service, recorder, log, timed });
 }

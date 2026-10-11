@@ -126,6 +126,42 @@ the gateway at start, naming what is missing.
   its time went (`trade_timing`: the backend, the reads, the wait), never a
   token or a key.
 
+## Timed trades (`/predict`)
+
+Predict in the app is a timed trade: somebody calls a pair up or down for a set
+time, and that is a position opened at market now and closed at market when the
+time is up. Up is a long, down is a short. The gateway does the closing. On with
+the same four trading variables as `/trade`.
+
+| Path | |
+|---|---|
+| `GET /predict/state` | the markets a trade can be opened on, which are taken and until when, and every limit |
+| `POST /predict/open` | `{ asset, direction, stakeUsd, seconds }`: open a timed trade |
+| `POST /predict/close` | `{ tradeId }`: end the caller's own trade before its time |
+
+- **Limits** are in `@kanon/execution` (`timed-policy.ts`): a stake of $10, $25,
+  $50 or $100, which is the trade's collateral; 1, 5, 15 or 60 minutes; size is
+  the stake times the market's leverage (5x, or the market's own if lower);
+  1% slippage on both orders; testnet only.
+- **One per market.** A market holds one position per account and there is one
+  account, so a market takes one timed trade at a time, and none while it holds
+  a position opened from the chart's ticket.
+- **Ending.** A trade ends when its time is up, when its loss at the mark price
+  reaches its stake (checked every five seconds), or when its owner asks. The
+  result is worked out from the two fills, in integers, when the venue lists
+  the exit fill, which can be seconds after the close.
+- **Restarts.** Every running trade is a row in the backend. A gateway that
+  starts reads them back and closes any whose time has passed, so a restart
+  does not leave a position open with nobody timing it. While no gateway is
+  running, nothing closes a trade: the position stays open until one starts.
+- **Who sends the closing order.** The gateway, on the recorder key and the
+  trade's id, not on a sign-in token: the person may have left by then.
+
+The runner and its rules are tested against a fake venue (`timed-runner.test.ts`,
+`timed-policy.test.ts`). Checked on 2026-10-10 with the real key: the state
+reads the real markets and marks a market the account already holds as taken.
+No timed trade has yet been opened against Perpl.
+
 Checked on 2026-10-10 on a developer's machine with the real key and the
 development backend: with no token and with a made-up one the account is not
 read and an order is not sent ("Sign in to trade."), an order over the limit is

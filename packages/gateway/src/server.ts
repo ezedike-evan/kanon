@@ -20,7 +20,7 @@ import { Hub, type HubClient } from './hub';
 import type { Logger } from './log';
 import { RestProxy } from './rest';
 import { MT } from './streams';
-import { TRADE_PREFIX, disconnectedTrade, type TradeRoutes } from './trade';
+import { PREDICT_PREFIX, TRADE_PREFIX, disconnectedTrade, type TradeRoutes } from './trade';
 import { UpstreamPool, type SocketFactory } from './upstream';
 import { wsSocketFactory } from './ws-socket';
 
@@ -116,7 +116,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
       return;
     }
     const url = new URL(req.url ?? '/', 'http://gateway');
-    const isTrade = url.pathname.startsWith(TRADE_PREFIX);
+    const isTrade = url.pathname.startsWith(TRADE_PREFIX) || url.pathname.startsWith(PREDICT_PREFIX);
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
         ...corsHeaders(origin),
@@ -244,6 +244,10 @@ export function createGateway(deps: GatewayDeps): Gateway {
       });
       pool.start();
       void keepMarketsFresh();
+      // Timed trades an earlier process opened still have to be closed by somebody.
+      void trade.resume().catch((err: unknown) =>
+        log({ level: 'error', event: 'timed_resume_failed', error: err instanceof Error ? err.message : String(err) }),
+      );
       pinger = setInterval(() => {
         for (const ws of wss.clients) {
           if (alive.get(ws) === false) {
@@ -258,6 +262,7 @@ export function createGateway(deps: GatewayDeps): Gateway {
     },
     async close() {
       closing = true;
+      trade.stop();
       if (pinger) clearInterval(pinger);
       if (refresher) clearTimeout(refresher);
       for (const ws of wss.clients) ws.terminate();

@@ -1,3 +1,4 @@
+import type { TimedOpenResult, TimedRunner, TimedStateView } from '@kanon/execution/timed-runner';
 import type { VenueAccountView, VenueOrderResult, VenueRecorder, VenueService } from '@kanon/execution/venue-service';
 import { loadConfig } from './config';
 import type { Admission, ConvexRecorder } from './convex-recorder';
@@ -24,16 +25,30 @@ let admission: Admission;
 /** The routes' clock, moved by a test. */
 let clock: number;
 let seen: { admitted: string[]; callers: string[]; accounts: number; orders: unknown[]; closes: string[] };
+/** What the timed runner was asked, in order. */
+let timedCalls: unknown[];
+const STATE = { status: 'ready', venue: 'perpl', network: 'testnet', markets: [] } as unknown as TimedStateView;
+const OPENED = { status: 'opened', trade: { id: 'trade-1' } } as unknown as TimedOpenResult;
 
-async function start(withTrade: boolean): Promise<void> {
+async function start(withTrade: boolean, withTimed = false): Promise<void> {
   const venue = new FakeVenue();
   seen = { admitted: [], callers: [], accounts: 0, orders: [], closes: [] };
   admission = { ok: true };
   clock = 1_000_000;
+  timedCalls = [];
+  const timed: TimedRunner = {
+    state: async () => (timedCalls.push('state'), STATE),
+    open: async (request, token) => (timedCalls.push(['open', request, token]), OPENED),
+    close: async (tradeId, token) => (timedCalls.push(['close', tradeId, token]), { status: 'closing', tradeId }),
+    resume: async () => void timedCalls.push('resume'),
+    stop: () => void timedCalls.push('stop'),
+  };
   const callerRecorder = {} as VenueRecorder;
   const recorder: ConvexRecorder = {
     admit: async (token) => (seen.admitted.push(token), admission),
     forCaller: (token) => (seen.callers.push(token), callerRecorder),
+    // The ticket's routes never touch the timed store.
+    timed: {} as ConvexRecorder['timed'],
   };
   const service: VenueService = {
     account: async () => (seen.accounts++, READY),
@@ -45,7 +60,9 @@ async function start(withTrade: boolean): Promise<void> {
     log: silentLogger,
     socketFactory: venue.factory,
     fetchImpl: (async () => new Response(JSON.stringify({ markets: [{ id: 16 }] }))) as typeof fetch,
-    ...(withTrade ? { trade: createTradeRoutes({ service, recorder, log: silentLogger, now: () => clock }) } : {}),
+    ...(withTrade
+      ? { trade: createTradeRoutes({ service, recorder, log: silentLogger, now: () => clock, ...(withTimed ? { timed } : {}) }) }
+      : {}),
   });
   port = await gateway.listen();
   venue.last.open();
@@ -207,5 +224,83 @@ describe('with a key configured', () => {
     expect((await post('/trade/account', {})).status).toBe(405);
     expect((await call('/trade/withdraw', { headers: auth })).status).toBe(404);
     expect(seen.orders).toEqual([]);
+  });
+});
+
+describe('predict: timed trades', () => {
+  const timedOrder = { asset: 'BTC/USD', direction: 'up', stakeUsd: 25, seconds: 60 };
+
+  it('says trading is not connected when no key is configured, or no runner is', async () => {
+    for (const withTrade of [false, true]) {
+      await start(withTrade);
+      for (const res of [await call('/predict/state', { headers: auth }), await post('/predict/open', timedOrder), await post('/predict/close', { tradeId: 'trade-1' })]) {
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ status: 'unavailable', message: TRADE_NOT_CONNECTED });
+      }
+      await gateway.close();
+    }
+    await start(false);
+  });
+
+  describe('with a runner', () => {
+    beforeEach(() => start(true, true));
+
+    it('picks up running trades when it starts, and stops their timers when it closes', async () => {
+      expect(timedCalls).toEqual(['resume']);
+      await gateway.close();
+      expect(timedCalls).toEqual(['resume', 'stop']);
+      await start(true, true);
+    });
+
+    it('answers a browser that asks before it posts', async () => {
+      const res = await call('/predict/open', { method: 'OPTIONS' });
+      expect(res.status).toBe(204);
+      expect(res.headers.get('access-control-allow-methods')).toBe('GET, POST');
+      expect(res.headers.get('access-control-allow-headers')).toBe('authorization, content-type');
+    });
+
+    it('reads the state for a caller the backend admits, once for everyone within two seconds', async () => {
+      const res = await call('/predict/state', { headers: auth });
+      expect(res.headers.get('cache-control')).toBe('no-store');
+      expect(await res.json()).toEqual(STATE);
+      await call('/predict/state', { headers: auth });
+      expect(timedCalls.filter((c) => c === 'state')).toHaveLength(1);
+      expect(seen.admitted).toEqual([TOKEN]);
+    });
+
+    it('reads and opens nothing without a token, or for a caller the backend turns away', async () => {
+      const signIn = { status: 'unavailable', message: 'Sign in to trade.' };
+      expect(await (await call('/predict/state')).json()).toEqual(signIn);
+      expect(await (await post('/predict/open', timedOrder, {})).json()).toEqual(signIn);
+      expect(await (await post('/predict/close', { tradeId: 'trade-1' }, {})).json()).toEqual(signIn);
+      admission = { ok: false, code: 'unauthenticated' };
+      expect(await (await call('/predict/state', { headers: auth })).json()).toEqual(signIn);
+      expect(timedCalls).toEqual(['resume']);
+    });
+
+    it("opens a timed trade on the caller's own token, and reads the state afresh after it", async () => {
+      await call('/predict/state', { headers: auth });
+      const res = await post('/predict/open', timedOrder);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual(OPENED);
+      await call('/predict/state', { headers: auth });
+      expect(timedCalls).toEqual(['resume', 'state', ['open', timedOrder, TOKEN], 'state']);
+    });
+
+    it("ends the caller's trade when asked", async () => {
+      const res = await post('/predict/close', { tradeId: 'trade-1' });
+      expect(await res.json()).toEqual({ status: 'closing', tradeId: 'trade-1' });
+      expect(timedCalls).toEqual(['resume', ['close', 'trade-1', TOKEN]]);
+    });
+
+    it('turns away a body that is not a timed trade', async () => {
+      for (const body of [{ ...timedOrder, direction: 'sideways' }, { ...timedOrder, stakeUsd: '25' }, { ...timedOrder, userId: 'x' }, { asset: 'BTC/USD' }, 'not json']) {
+        expect((await post('/predict/open', body)).status, JSON.stringify(body)).toBe(400);
+      }
+      expect((await post('/predict/close', { tradeId: '' })).status).toBe(400);
+      expect((await call('/predict/open', { headers: auth })).status).toBe(405);
+      expect((await call('/predict/settle', { headers: auth })).status).toBe(404);
+      expect(timedCalls).toEqual(['resume']);
+    });
   });
 });
