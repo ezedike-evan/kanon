@@ -171,11 +171,19 @@ export interface VenueServiceDeps {
   background?: (task: Promise<void>) => void;
 }
 
+/** What a caller other than the ticket may change about one order. */
+export interface PlaceOptions {
+  /** The limits this order is held to, in place of the service's own. Whoever passes them shows them. */
+  limits?: VenueLimits;
+  /** Refuse when the market already holds a position, instead of adding to it. */
+  freshOnly?: boolean;
+}
+
 export interface VenueService {
   /** The trading account: its balance, what it holds open, its markets and every limit. No profit or loss. */
   account(): Promise<VenueAccountView>;
   /** Opens a position at market, or adds to the one held on the same side. A refusal comes back as a value, with its reason. */
-  placeOrder(request: OrderRequest, recorder: VenueRecorder): Promise<VenueOrderResult>;
+  placeOrder(request: OrderRequest, recorder: VenueRecorder, options?: PlaceOptions): Promise<VenueOrderResult>;
   /** Closes the whole of the account's position on a market, at market. */
   closePosition(asset: string, recorder: VenueRecorder): Promise<VenueOrderResult>;
 }
@@ -184,7 +192,7 @@ export interface VenueService {
 const MARKETS_TTL_MS = 60_000;
 /** How often, and how many times, the venue's history is asked for a fill it had not listed when the order was answered. */
 const FILL_RECORD_EVERY_MS = 3_000;
-const FILL_RECORD_TRIES = 15;
+const FILL_RECORD_TRIES = 30;
 /** How far back the fill history is read before an order. Matches what the wait for a fill reads after it. */
 const HISTORY_DEPTH = 20;
 
@@ -209,7 +217,7 @@ function positionView(position: PerplPosition, market: PerplMarketInfo): VenuePo
 
 export function createVenueService(deps: VenueServiceDeps): VenueService {
   const { network, rest } = deps;
-  const limits = deps.limits ?? VENUE_LIMITS;
+  const defaults = deps.limits ?? VENUE_LIMITS;
   const now = deps.now ?? Date.now;
   const sleep = deps.trade?.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const publicOpts = { network, ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}) };
@@ -439,8 +447,8 @@ export function createVenueService(deps: VenueServiceDeps): VenueService {
           accountId: state.account.id,
           balance: scaled(state.account.b, PERPL_COLLATERAL_DECIMALS),
           canTrade: state.account.fw === true && state.account.fr !== true,
-          limits: { ...limits },
-          markets: list.map((m) => ({ asset: assetOf(m), maxLeverage: leverageCeiling(m, limits), open: m.open })),
+          limits: { ...defaults },
+          markets: list.map((m) => ({ asset: assetOf(m), maxLeverage: leverageCeiling(m, defaults), open: m.open })),
           positions: state.positions.flatMap((p) => {
             const market = byId.get(p.mkt);
             return market ? [positionView(p, market)] : [];
@@ -461,8 +469,10 @@ export function createVenueService(deps: VenueServiceDeps): VenueService {
       }
     },
 
-    async placeOrder(request, recorder) {
+    async placeOrder(request, recorder, options = {}) {
       if (network !== 'testnet') return { status: 'unavailable', message: VENUE_MESSAGES.testnetOnly };
+      // Shadows the service's own limits for this one order.
+      const limits = options.limits ?? defaults;
 
       let market: PerplMarketInfo | null;
       try {
@@ -506,6 +516,9 @@ export function createVenueService(deps: VenueServiceDeps): VenueService {
           if (!state.account.fw) return await refuse('One-click trading is off for the trading account.');
 
           const held = state.positions.find((p) => p.mkt === market.id) ?? null;
+          if (held && options.freshOnly) {
+            return await refuse(`The shared account already holds a ${market.symbol} position.`);
+          }
           const room = checkAgainstPosition(
             request,
             market.symbol,
@@ -581,7 +594,7 @@ export function createVenueService(deps: VenueServiceDeps): VenueService {
           const outcome = await closeAtMarket(venue.deps, {
             account: state.account,
             position,
-            slippageBps: limits.slippageBps,
+            slippageBps: defaults.slippageBps,
             history,
           });
           return await record(recorder, orderId, outcome, {

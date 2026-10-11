@@ -80,7 +80,7 @@ Exchange addresses (Perpl README, 2026-09-20): mainnet
 `0x1964c32f0be608e7d29302aff5e61268e72080cc`. Read the live address from the
 API rather than trusting this copy.
 
-## What is verified by test (`pnpm --filter @kanon/execution test`, 229 tests)
+## What is verified by test (`pnpm --filter @kanon/execution test`, 256 tests)
 
 Every network boundary is mocked; the logic on this side of it is real.
 
@@ -157,6 +157,13 @@ An order on the side of a position already held adds to it, at the position's
 leverage and up to `maxPositionUsd` at entry. One on the other side is refused.
 That adds path is covered by tests against a fake venue and has not yet been
 run against Perpl.
+
+Predict's timed trades run on the same service (`src/timed-policy.ts`,
+`src/timed-runner.ts`): a call of up or down for a set time is a position
+opened at market and closed by the server when the time is up, or sooner if its
+loss at the mark price reaches its stake. The result is the price change
+between the two fills times the size, less the fees reported, in integers.
+Tested against a fake venue; not yet run against Perpl.
 
 The service is framework-free because of where it has to run: Perpl answers
 its trading API with HTTP 451 from regions it does not serve, and that is what
