@@ -1,4 +1,5 @@
-import { internalMutation, query } from "./_generated/server";
+import { internalMutation, query, type MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { userBySubject, viewerUser } from "./authz";
 import { decimal } from "./schema";
@@ -15,6 +16,51 @@ const side = v.union(v.literal("long"), v.literal("short"));
 
 /** How many of a user's orders a list shows. */
 export const MAX_ORDERS = 50;
+
+/** An order as it is recorded before it goes out. */
+export interface OrderToRecord {
+  network: "testnet" | "mainnet";
+  asset: string;
+  action: "open" | "close";
+  side?: "long" | "short";
+  notionalUsd?: number;
+  leverage?: number;
+}
+
+/**
+ * The lock and the row, for a user already known. One order is on its way to
+ * the shared account at a time: a row still `submitting` keeps the next one
+ * out until it is settled or has gone unanswered for `ORDER_LOCK_MS`.
+ */
+export async function takeLock(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  order: OrderToRecord,
+): Promise<{ ok: true; orderId: string } | { ok: false; code: "busy" }> {
+  const now = Date.now();
+  const pending = await ctx.db
+    .query("venueOrders")
+    .withIndex("by_status", (q) => q.eq("status", "submitting"))
+    .order("desc")
+    .first();
+  if (isLocked(pending?.createdAt ?? null, now)) return { ok: false, code: "busy" };
+  // An order whose sender never reported back is closed out here, so it stops reading as on its way.
+  if (pending) {
+    await ctx.db.patch(pending._id, {
+      status: "failed",
+      settledAt: now,
+      reason: "No answer was recorded for this order. Check the position on the venue.",
+    });
+  }
+  const orderId = await ctx.db.insert("venueOrders", {
+    ...order,
+    userId,
+    venue: "perpl",
+    status: "submitting",
+    createdAt: now,
+  });
+  return { ok: true, orderId };
+}
 
 /**
  * Records an order that is about to be sent and takes the lock for it. Refuses
@@ -37,32 +83,8 @@ export const begin = internalMutation({
   ): Promise<{ ok: true; orderId: string } | { ok: false; code: "no_user" | "busy" }> => {
     const user = await userBySubject(ctx.db, args.subject);
     if (!user) return { ok: false, code: "no_user" };
-
-    const now = Date.now();
-    const pending = await ctx.db
-      .query("venueOrders")
-      .withIndex("by_status", (q) => q.eq("status", "submitting"))
-      .order("desc")
-      .first();
-    if (isLocked(pending?.createdAt ?? null, now)) return { ok: false, code: "busy" };
-    // An order whose action never reported back is closed out here, so it stops reading as on its way.
-    if (pending) {
-      await ctx.db.patch(pending._id, {
-        status: "failed",
-        settledAt: now,
-        reason: "No answer was recorded for this order. Check the position on the venue.",
-      });
-    }
-
     const { subject: _subject, ...order } = args;
-    const orderId = await ctx.db.insert("venueOrders", {
-      ...order,
-      userId: user._id,
-      venue: "perpl",
-      status: "submitting",
-      createdAt: now,
-    });
-    return { ok: true, orderId };
+    return await takeLock(ctx, user._id, order);
   },
 });
 

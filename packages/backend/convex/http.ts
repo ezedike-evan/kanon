@@ -12,6 +12,20 @@
  *   POST /venue/settle  what became of that order. Releases the lock.
  *   POST /venue/amend   a fill's price, fee and transaction, once the venue lists them.
  *
+ * `/timed/*` is the same arrangement for Predict's timed trades: the gateway
+ * opens a position when somebody calls a direction and closes it when the time
+ * is up, and this backend keeps whose trade it is and what became of it.
+ *
+ *   POST /timed/start        a trade has opened: write its row (caller's token)
+ *   POST /timed/begin-close  the lock and the order row for its closing order
+ *   POST /timed/update       how it ended, and the figures that follow
+ *   POST /timed/running      every trade that has not ended (read on gateway start)
+ *   POST /timed/owns         is this running trade the caller's? (caller's token)
+ *
+ * The closing order is sent by the gateway when the time is up, so
+ * `begin-close` is vouched for by the trade's id and the recorder key, not by a
+ * sign-in token: the person may have left by then.
+ *
  * Anyone on the internet can reach these addresses, so each is held by two
  * things. `X-Kanon-Recorder` must carry `VENUE_RECORDER_KEY`, which only the
  * gateway has: without it a signed-in user could write fills into their own
@@ -29,6 +43,7 @@ import type { Decimal } from "@kanon/spec";
 import { requireSubject, type AuthCtx } from "./authz";
 import { checkRateLimit } from "./rateLimit";
 import { describeEnvProblem, parseVenueRecorderEnv } from "./serverEnv";
+import { BeginCloseBody, OwnsBody, StartBody, UpdateBody } from "./timedLogic";
 import { AmendBody, BeginBody, RECORDER_HEADER, SettleBody, recorderKeyMatches } from "./venueLogic";
 
 type Side = "long" | "short";
@@ -190,10 +205,109 @@ const amend = httpAction(async (ctx, request) => {
   return json(200, { ok: true });
 });
 
+// ---------------------------------------------------------------------------
+// Timed trades
+// ---------------------------------------------------------------------------
+
+const timedStartRef = makeFunctionReference<
+  "mutation",
+  StartBody & { subject: string },
+  { ok: true; tradeId: string } | { ok: false; code: "no_user" }
+>("timedData:start");
+
+const timedBeginCloseRef = makeFunctionReference<
+  "mutation",
+  { tradeId: Id<"timedTrades">; network: "testnet" | "mainnet"; asset: string },
+  { ok: true; orderId: string } | { ok: false; code: "no_user" | "busy" }
+>("timedData:beginClose");
+
+const timedUpdateRef = makeFunctionReference<"mutation", Omit<UpdateBody, "tradeId"> & { tradeId: Id<"timedTrades"> }, null>(
+  "timedData:update",
+);
+
+const timedRunningRef = makeFunctionReference<"query", Record<string, never>, unknown[]>("timedData:running");
+
+const timedOwnsRef = makeFunctionReference<"query", { subject: string; tradeId: Id<"timedTrades"> }, boolean>(
+  "timedData:owns",
+);
+
+/** A body as the mutation takes it: every field the gateway left out is left out, not passed as undefined. */
+function present<T extends Record<string, unknown>>(body: T): { [K in keyof T]: Exclude<T[K], undefined> } {
+  return Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined)) as {
+    [K in keyof T]: Exclude<T[K], undefined>;
+  };
+}
+
+const timedStart = httpAction(async (ctx, request) => {
+  const refused = gate(request, "timed.start");
+  if (refused) return refused;
+  const subject = await subjectOf(ctx);
+  if (!subject) return json(401, { ok: false, code: "unauthenticated" });
+  const body = StartBody.safeParse(await bodyOf(request));
+  if (!body.success) return json(400, { ok: false, code: "bad_request" });
+  return json(200, await ctx.runMutation(timedStartRef, { subject, ...present(body.data) }));
+});
+
+const timedBeginClose = httpAction(async (ctx, request) => {
+  const refused = gate(request, "timed.beginClose");
+  if (refused) return refused;
+  const body = BeginCloseBody.safeParse(await bodyOf(request));
+  if (!body.success) return json(400, { ok: false, code: "bad_request" });
+  try {
+    const { tradeId, network, asset } = body.data;
+    return json(200, await ctx.runMutation(timedBeginCloseRef, { tradeId: tradeId as Id<"timedTrades">, network, asset }));
+  } catch (err) {
+    console.error("timed.beginClose: the closing order could not be recorded", err);
+    return json(500, { ok: false, code: "failed" });
+  }
+});
+
+const timedUpdate = httpAction(async (ctx, request) => {
+  const refused = gate(request, "timed.update");
+  if (refused) return refused;
+  const body = UpdateBody.safeParse(await bodyOf(request));
+  if (!body.success) return json(400, { ok: false, code: "bad_request" });
+  try {
+    const { tradeId, ...rest } = present(body.data);
+    await ctx.runMutation(timedUpdateRef, { tradeId: tradeId as Id<"timedTrades">, ...rest });
+  } catch (err) {
+    console.error("timed.update: the trade could not be written", err);
+    return json(500, { ok: false, code: "failed" });
+  }
+  return json(200, { ok: true });
+});
+
+const timedRunning = httpAction(async (ctx, request) => {
+  const refused = gate(request, "timed.running");
+  if (refused) return refused;
+  return json(200, { ok: true, trades: await ctx.runQuery(timedRunningRef, {}) });
+});
+
+const timedOwns = httpAction(async (ctx, request) => {
+  const refused = gate(request, "timed.owns");
+  if (refused) return refused;
+  const subject = await subjectOf(ctx);
+  if (!subject) return json(401, { ok: false, code: "unauthenticated" });
+  const body = OwnsBody.safeParse(await bodyOf(request));
+  if (!body.success) return json(400, { ok: false, code: "bad_request" });
+  try {
+    const owns = await ctx.runQuery(timedOwnsRef, { subject, tradeId: body.data.tradeId as Id<"timedTrades"> });
+    return json(200, { ok: true, owns });
+  } catch {
+    // An id that is not a trade's is nobody's trade.
+    return json(200, { ok: true, owns: false });
+  }
+});
+
 const http = httpRouter();
 http.route({ path: "/venue/admit", method: "POST", handler: admit });
 http.route({ path: "/venue/begin", method: "POST", handler: begin });
 http.route({ path: "/venue/settle", method: "POST", handler: settle });
 http.route({ path: "/venue/amend", method: "POST", handler: amend });
+http.route({ path: "/timed/start", method: "POST", handler: timedStart });
+http.route({ path: "/timed/begin-close", method: "POST", handler: timedBeginClose });
+http.route({ path: "/timed/update", method: "POST", handler: timedUpdate });
+http.route({ path: "/timed/running", method: "POST", handler: timedRunning });
+http.route({ path: "/timed/owns", method: "POST", handler: timedOwns });
 
 export default http;

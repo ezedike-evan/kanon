@@ -460,4 +460,53 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_status", ["status"]),
+
+  /**
+   * Predict, as a timed trade (`http.ts`, `/timed/*`; the rules are in
+   * `@kanon/execution`, `timed-policy.ts`). Somebody calls a pair up or down
+   * for a set time. The gateway opens a position for it and closes it when the
+   * time is up. A row is written once the position has opened, by the gateway,
+   * and is the record a restarted gateway reads to know what it still has to
+   * close. All of them trade one shared exchange account; the row records who
+   * asked.
+   */
+  timedTrades: defineTable({
+    userId: v.id("users"),
+    venue: v.literal("perpl"),
+    network: v.union(v.literal("testnet"), v.literal("mainnet")),
+    asset: v.string(),
+    direction: v.union(v.literal("up"), v.literal("down")),
+    /** Whole dollars of collateral: the most the trade can lose. */
+    stakeUsd: v.number(),
+    /** Whole multiple. The position's size is the stake times this. */
+    leverage: v.number(),
+    seconds: v.number(),
+    status: v.union(
+      /** The position is open and its time is running. */
+      v.literal("live"),
+      /** The closing order is on its way, or is being tried again; see `reason`. */
+      v.literal("closing"),
+      v.literal("closed"),
+    ),
+    /** Milliseconds. The trade runs from its entry fill. */
+    openedAt: v.number(),
+    expiresAt: v.number(),
+    closedAt: v.optional(v.number()),
+    /** Time up, lost its stake at the mark price, ended by its owner, or the position was already gone. */
+    endedBy: v.optional(v.union(v.literal("time"), v.literal("cut"), v.literal("owner"), v.literal("venue"))),
+    size: decimal,
+    entryPrice: decimal,
+    /** Arrives after `closed`: the venue lists a fill seconds after the position moves. */
+    exitPrice: v.optional(decimal),
+    /** In the venue's collateral, signed, net of the fees that were reported. Arrives with `exitPrice`. */
+    result: v.optional(decimal),
+    fees: v.optional(decimal),
+    openFee: v.optional(decimal),
+    /** The settling transactions: the evidence for the entry and the exit. */
+    openTx: v.optional(v.string()),
+    closeTx: v.optional(v.string()),
+    reason: v.optional(v.string()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_status", ["status"]),
 });

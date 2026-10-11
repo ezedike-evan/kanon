@@ -38,6 +38,8 @@ import type * as seriesLogic from "../seriesLogic.js";
 import type * as serverEnv from "../serverEnv.js";
 import type * as strategies from "../strategies.js";
 import type * as ticks from "../ticks.js";
+import type * as timedData from "../timedData.js";
+import type * as timedLogic from "../timedLogic.js";
 import type * as trades from "../trades.js";
 import type * as users from "../users.js";
 import type * as usersLogic from "../usersLogic.js";
@@ -83,6 +85,8 @@ declare const fullApi: ApiFromModules<{
   serverEnv: typeof serverEnv;
   strategies: typeof strategies;
   ticks: typeof ticks;
+  timedData: typeof timedData;
+  timedLogic: typeof timedLogic;
   trades: typeof trades;
   users: typeof users;
   usersLogic: typeof usersLogic;

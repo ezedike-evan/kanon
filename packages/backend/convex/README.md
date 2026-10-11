@@ -145,6 +145,15 @@ The order logic and its limits are in `@kanon/execution` (`venue-service.ts`,
 notional per order, up to 5x, a position of at most $300 at entry, market
 orders only. The pinned rule is not consulted.
 
+Predict's timed trades use the same arrangement (`timedData.ts`, `/timed/*` in
+`http.ts`). The gateway opens a position when somebody calls a direction and
+closes it when the time is up; this backend keeps whose trade it is
+(`timedTrades`), hands a restarted gateway the trades still running, and takes
+the order lock for a closing order on the trade's own id, since that order is
+sent by the server after the person may have left. `timedData:listMine` is the
+caller's own list. A row can be added to as a trade ends, never reopened, and
+never moved to another user.
+
 Checked on 2026-10-10 against the development deployment: a call with no key or
 a wrong key is answered 403, a call with the key and no valid token 401, and a
 body that is not an outcome 400. The same day a signed-in user's orders were
