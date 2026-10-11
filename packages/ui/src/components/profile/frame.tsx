@@ -15,7 +15,7 @@ import { useSession } from '../../lib/domains';
 import { APP_VERSION } from '../../lib/app-info';
 import { routes } from '../../lib/routes';
 import { isWeb } from '../../platform';
-import { AppearanceCard, BehaviourSection, CopyCard, IdentitySection } from './sections';
+import { AppearanceCard, BehaviourSection, CopyCard, IdentitySection, RecentTradesSection } from './sections';
 
 /**
  * The Profile tab's frame. Every Profile route mounts it, and it is two things at
@@ -65,14 +65,14 @@ const SECTIONS: Record<ProfileSection, SectionDef> = {
     label: 'Overview',
     icon: 'user',
     href: routes.profile,
-    blurb: 'Who you are here, and what your rule has done.',
+    blurb: 'Who you are here, what you have traded, and what your rule has done.',
   },
   records: {
     key: 'records',
     label: 'Trading records',
     icon: 'history',
     href: routes.profileRecords,
-    blurb: 'Every setup put to your rule and every prediction you took. A refusal is the rule doing its job.',
+    blurb: 'Every trade you took: by hand on the chart, on a timer in Predict, or through your rule. A refusal is the rule doing its job.',
   },
   rules: {
     key: 'rules',
@@ -197,6 +197,7 @@ function InlinePane({ section }: { section: InlineSection }) {
         <View className="gap-6">
           <IdentitySection />
           <BehaviourSection />
+          <RecentTradesSection />
           <View className="gap-2.5">
             <SectionHeader title="Evidence" />
             <Card pad="none">

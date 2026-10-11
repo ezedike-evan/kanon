@@ -4,8 +4,13 @@ import { APP_VERSION } from './app-info';
 import { parseDecimal } from '@kanon/spec';
 import type { ActivityItem } from './domain-types';
 import type { PredictMarket } from './predict-types';
+import type { TimedTrade } from './timed-types';
+import { chartTrades } from './trade-records';
+import type { VenueOrder } from './venue-types';
 import {
+  RECORD_FILTERS,
   allocationLabel,
+  chartRecords,
   compactDecimal,
   dayKey,
   dayLabel,
@@ -27,6 +32,7 @@ import {
   stakeRecords,
   tableDayLabel,
   timeLabel,
+  timedRecords,
   tradeRecords,
   withDayHeaders,
 } from './profile-logic';
@@ -92,7 +98,76 @@ describe('records', () => {
     expect(filterRecords(all, 'refused').map((r) => r.id)).toEqual(['b']);
     expect(filterRecords(all, 'predictions')).toHaveLength(1);
     expect(filterRecords(all, 'all')).toHaveLength(6);
-    expect(recordTotals(all)).toEqual({ all: 6, executed: 2, refused: 1, predictions: 1 });
+    expect(recordTotals(all)).toEqual({ all: 6, chart: 0, predictions: 1, executed: 2, refused: 1 });
+  });
+
+  describe('with trades taken by hand', () => {
+    const order = (id: string, at: string, over: Partial<VenueOrder> = {}): VenueOrder => ({
+      id,
+      network: 'testnet',
+      asset: 'BTC/USD',
+      action: 'open',
+      side: 'long',
+      status: 'filled',
+      createdAt: Date.parse(at),
+      settledAt: Date.parse(at) + 2_000,
+      notionalUsd: 50,
+      leverage: 5,
+      requestId: 1,
+      size: parseDecimal('0.00100', 5),
+      fillPrice: parseDecimal('50000.0', 1),
+      fee: null,
+      block: null,
+      txHash: null,
+      reason: null,
+      ...over,
+    });
+    const timed: TimedTrade = {
+      id: 't1',
+      network: 'testnet',
+      asset: 'ETH/USD',
+      direction: 'down',
+      stakeUsd: 10,
+      leverage: 5,
+      seconds: 60,
+      status: 'closed',
+      openedAt: Date.parse('2026-09-02T16:00:00Z'),
+      expiresAt: Date.parse('2026-09-02T16:01:00Z'),
+      closedAt: Date.parse('2026-09-02T16:01:02Z'),
+      endedBy: 'time',
+      size: parseDecimal('0.01500', 5),
+      entryPrice: parseDecimal('3400.0', 1),
+      exitPrice: parseDecimal('3398.5', 1),
+      result: null,
+      fees: null,
+      openTx: null,
+      closeTx: null,
+      reason: null,
+    };
+    const chart = chartTrades([
+      order('o', '2026-09-02T12:00:00Z'),
+      order('c', '2026-09-02T12:30:00Z', { action: 'close' }),
+    ]);
+    const all = mergeRecords(chartRecords(chart), timedRecords([timed]), tradeRecords(items), stakeRecords([market({})]));
+
+    it('lists every kind in one record, newest first, dated by when each was opened', () => {
+      expect(all.map((r) => r.id)).toEqual(['timed:t1', 'b', 'chart:o', 'a', 'm1:above:0', 'c', 'd', 'e']);
+      expect(all.find((r) => r.id === 'chart:o')?.at).toBe(Date.parse('2026-09-02T12:00:00Z'));
+    });
+
+    it('gives each way of trading its own filter, and a count that is the rows it shows', () => {
+      expect(filterRecords(all, 'chart').map((r) => r.id)).toEqual(['chart:o']);
+      // A timed trade and a stake from the earlier markets are both Predict's.
+      expect(filterRecords(all, 'predictions').map((r) => r.id)).toEqual(['timed:t1', 'm1:above:0']);
+      const totals = recordTotals(all);
+      expect(totals).toEqual({ all: 8, chart: 1, predictions: 2, executed: 2, refused: 1 });
+      for (const f of RECORD_FILTERS) expect(filterRecords(all, f.value)).toHaveLength(totals[f.value]);
+    });
+
+    it('keeps a record id from colliding with a rule trade that has the same id', () => {
+      const clash = mergeRecords(chartRecords(chart), tradeRecords([trade('o', 'executed', '2026-09-02T09:00:00Z')]));
+      expect(new Set(clash.map((r) => r.id)).size).toBe(2);
+    });
   });
 
   it('groups by UTC day with a header before each and the day\'s count on it', () => {

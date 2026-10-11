@@ -1,12 +1,13 @@
 import { memo, useMemo } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { Badge } from '../badge';
 import { Card } from '../card';
 import { FilterChip } from '../chip';
-import { EmptyState } from '../empty-state';
+import { EmptyState, type EmptyStateProps } from '../empty-state';
 import { Icon } from '../icons';
+import { FOCUS, MoveMark } from '../reel/trade-parts';
 import { SkeletonRow } from '../skeleton';
-import { Label, StatRow } from '../stat';
+import { Label, StatRow, type StatTileProps } from '../stat';
 import { Num } from '../ui';
 import { Link } from '../../nav';
 import { cx } from '../../lib/cx';
@@ -22,17 +23,26 @@ import {
   timeLabel,
   type LedgerRecord,
   type RecordFilter,
+  type RecordTotals,
 } from '../../lib/profile-logic';
 import { routes, tradeRoute } from '../../lib/routes';
+import { chartTradeView, timedRowView, type ChartTrade } from '../../lib/trade-records';
+import type { PriceMove } from '../../lib/timed-trade';
+import type { TimedTrade } from '../../lib/timed-types';
 import { useHaptics } from '../../platform';
 import type { ActivityItem } from '../../lib/domain-types';
 
 /**
- * Trading records as a table, for the desktop pane: when, what, which way, how
- * much, what came of it, and the way to the evidence. Executed and refused sit in
- * the same rows. A refusal carries its own mark and the predicate that stopped it,
- * and no error styling: it is the product working. The whole row opens the trade,
- * where the timestamps and attestations are.
+ * Trading records as a table, for the desktop pane: when, what and where from,
+ * which way, how much, what came of it, and the way to the evidence. Trades from
+ * the chart, from Predict and through the rule sit in the same rows, each naming
+ * its source under its asset. A refusal carries its own mark and the predicate
+ * that stopped it, and no error styling: it is the product working.
+ *
+ * No row carries money. What came of a trade is its state and what the price did
+ * between entry and exit. The whole row opens the trade: a rule's trade goes to
+ * its evidence screen, a chart trade and a finished timed trade open their
+ * details over the table.
  */
 
 /** Column widths, shared by the header and every row so they line up. `Entry` needs room, so it waits for `xl`. */
@@ -55,13 +65,26 @@ const KIND: Record<ActivityItem['kind'], { label: string; tone: 'neutral' | 'ref
 
 const STAKE_RESULT = { won: 'Won', lost: 'Lost', refunded: 'Refunded' } as const;
 
-const ROW = 'min-h-14 flex-row items-center gap-2 border-b border-hairline px-4 py-2.5 hover:bg-raised active:bg-raised';
+const ROW = cx(
+  'min-h-14 flex-row items-center gap-2 border-b border-hairline px-4 py-2.5 hover:bg-raised active:bg-raised',
+  FOCUS,
+);
 
 function When({ at, now }: { at: number; now: number }) {
   return (
     <View className={cx('gap-0.5', COL.when)}>
       <Num className="text-11 text-bone">{tableDayLabel(at, now)}</Num>
       <Num className="text-11 text-ash">{timeLabel(at)}</Num>
+    </View>
+  );
+}
+
+/** The asset, and under it where the trade came from: `CHART`, `PREDICT`, `RULE`, `MARKET`. */
+function Asset({ asset, source }: { asset: string; source: string }) {
+  return (
+    <View className={cx('gap-0.5', COL.asset)}>
+      <Num className="font-mono-medium text-12">{asset}</Num>
+      <Text className="font-mono text-10 uppercase tracking-w08 text-ash">{source}</Text>
     </View>
   );
 }
@@ -76,11 +99,29 @@ function Side({ up, label }: { up: boolean; label: string }) {
   );
 }
 
-function EvidenceCell() {
+function EvidenceCell({ label = 'Evidence' }: { label?: string }) {
   return (
     <View className={cx('flex-row items-center justify-end gap-1', COL.evidence)}>
-      <Text className="font-mono-medium text-11 uppercase tracking-w08 text-verified">Evidence</Text>
+      <Text className="font-mono-medium text-11 uppercase tracking-w08 text-verified">{label}</Text>
       <Icon name="arrow-right" size={12} color="verified" strokeWidth={2} />
+    </View>
+  );
+}
+
+/** What came of a trade: its state, and under it the exit with how far the price moved. */
+function Outcome({ state, exit, move }: { state: string; exit: string | null; move: PriceMove | null }) {
+  return (
+    <View className={cx('items-start gap-1', COL.result)}>
+      <Badge label={state} />
+      {exit ? (
+        <View className="flex-row flex-wrap items-center gap-x-2 gap-y-0.5">
+          <View className="flex-row items-center gap-1">
+            <Icon name="arrow-right" size={12} color="ash" />
+            <Num className={cx('text-11', !move && 'text-ash')}>{exit}</Num>
+          </View>
+          {move ? <MoveMark move={move} /> : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -98,7 +139,7 @@ const TradeLine = memo(function TradeLine({ item, now }: { item: ActivityItem; n
       className={ROW}
     >
       <When at={item.at} now={now} />
-      <Num className={cx('text-12 font-mono-medium', COL.asset)}>{item.asset}</Num>
+      <Asset asset={item.asset} source="Rule" />
       <Side up={long} label={long ? 'Long' : 'Short'} />
       <View className={cx('gap-0.5', COL.size)}>
         <Num className="text-12">{compactDecimal(item.size)}</Num>
@@ -132,7 +173,7 @@ const StakeLine = memo(function StakeLine({ record, now }: { record: Extract<Led
       className={ROW}
     >
       <When at={record.at} now={now} />
-      <Num className={cx('text-12 font-mono-medium', COL.asset)}>{stake.asset}</Num>
+      <Asset asset={stake.asset} source="Market" />
       <Side up={up} label={up ? 'Up' : 'Down'} />
       <View className={cx('gap-0.5', COL.size)}>
         <Num className="text-12">{stake.stake ? compactDecimal(stake.stake) : '—'}</Num>
@@ -155,6 +196,84 @@ const StakeLine = memo(function StakeLine({ record, now }: { record: Extract<Led
   );
 });
 
+const ChartLine = memo(function ChartLine({
+  id,
+  trade,
+  now,
+  onOpen,
+}: {
+  id: string;
+  trade: ChartTrade;
+  now: number;
+  onOpen: (id: string) => void;
+}) {
+  const { tap } = useHaptics();
+  const view = chartTradeView(trade);
+  const [amount = '—', unit = ''] = (view.size ?? '').split(' ');
+  return (
+    <Pressable role="button" aria-label={view.accessibilityLabel} onPressIn={tap} onPress={() => onOpen(id)} className={ROW}>
+      <When at={view.at} now={now} />
+      <Asset asset={view.asset} source="Chart" />
+      {view.side ? (
+        <Side up={view.side === 'long'} label={view.sideWord} />
+      ) : (
+        <Text className={cx('font-sans text-12 text-ash', COL.side)}>{view.sideWord}</Text>
+      )}
+      <View className={cx('gap-0.5', COL.size)}>
+        <Num className="text-12">{amount}</Num>
+        <Num className="text-11 text-ash">{unit}</Num>
+      </View>
+      <View className={COL.entry}>
+        <Num className="text-12">{view.entry ?? '—'}</Num>
+      </View>
+      <Outcome state={view.state} exit={view.exit} move={view.move} />
+      <EvidenceCell label="Details" />
+    </Pressable>
+  );
+});
+
+const TimedLine = memo(function TimedLine({
+  id,
+  trade,
+  now,
+  onOpen,
+}: {
+  id: string;
+  trade: TimedTrade;
+  now: number;
+  onOpen: (id: string) => void;
+}) {
+  const { tap } = useHaptics();
+  const view = timedRowView(trade);
+  const [stake = '', ...terms] = view.terms.split(' · ');
+  const cells = (
+    <>
+      <When at={view.at} now={now} />
+      <Asset asset={view.asset} source="Predict" />
+      <Side up={view.direction === 'up'} label={view.word} />
+      <View className={cx('gap-0.5', COL.size)}>
+        <Num className="text-12">{stake}</Num>
+        <Num className="text-11 text-ash">{terms.join(' · ')}</Num>
+      </View>
+      <View className={COL.entry}>
+        <Num className="text-12">{view.entry}</Num>
+      </View>
+      <Outcome state={view.state} exit={view.exit} move={view.move} />
+      <EvidenceCell label={view.running ? 'Predict' : 'Details'} />
+    </>
+  );
+  // A running trade is watched where its countdown is; a finished one has details.
+  return view.running ? (
+    <Link href={routes.predict} onPressIn={tap} aria-label={view.accessibilityLabel} className={ROW}>
+      {cells}
+    </Link>
+  ) : (
+    <Pressable role="button" aria-label={view.accessibilityLabel} onPressIn={tap} onPress={() => onOpen(id)} className={ROW}>
+      {cells}
+    </Pressable>
+  );
+});
+
 function Head() {
   const cell = (label: string, cls: string) => (
     <View className={cls}>
@@ -174,12 +293,47 @@ function Head() {
   );
 }
 
-const FILTER_EMPTY: Record<RecordFilter, { icon: 'history' | 'check-circle' | 'ban' | 'target'; title: string; body: string }> = {
-  all: { icon: 'history', title: 'Nothing recorded yet', body: 'Setups put to your rule and predictions you take collect here.' },
-  executed: { icon: 'check-circle', title: 'No executed trades', body: 'A trade that satisfies your rule is executed and lands here.' },
+/** What an empty list says under each filter, and the way to fill it. Shared with the phone's list. */
+export const RECORD_EMPTY: Record<
+  RecordFilter,
+  Pick<EmptyStateProps, 'icon' | 'title' | 'body'> & { action?: NonNullable<EmptyStateProps['action']> }
+> = {
+  all: {
+    icon: 'history',
+    title: 'Nothing recorded yet',
+    body: 'Trades you take on the chart, on Predict and through your rule collect here, each with its transactions.',
+    action: { label: 'Open the chart', href: routes.chart, primary: true },
+  },
+  chart: {
+    icon: 'trending-up',
+    title: 'No chart trades',
+    body: 'A position you open from the chart is listed here, with its entry, its exit and every transaction.',
+    action: { label: 'Open the chart', href: routes.chart },
+  },
+  predictions: {
+    icon: 'target',
+    title: 'No Predict trades',
+    body: 'A pair called up or down for a set time is listed here, running or finished.',
+    action: { label: 'Open Predict', href: routes.predict },
+  },
+  executed: {
+    icon: 'check-circle',
+    title: 'No trades through your rule',
+    body: 'A setup that satisfies your pinned rule is executed and lands here.',
+    action: { label: 'Build a rule', href: routes.create },
+  },
   refused: { icon: 'ban', title: 'No blocked trades', body: 'A good day: nothing broke your rule.' },
-  predictions: { icon: 'target', title: 'No predictions taken', body: 'Stakes you take on the Predict tab are recorded here.' },
 };
+
+/** The four counts above the record: everything, then one per way of trading. Counts, never money. */
+export function recordStats(totals: RecordTotals): StatTileProps[] {
+  return [
+    { label: 'Total', value: String(totals.all) },
+    { label: 'Chart', value: String(totals.chart) },
+    { label: 'Predict', value: String(totals.predictions) },
+    { label: 'Rule', value: String(totals.executed + totals.refused) },
+  ];
+}
 
 /**
  * The records pane: totals, the filter chips, the table. The chips sit above the
@@ -189,11 +343,14 @@ export function RecordsPane({
   state,
   filter,
   onFilter,
+  onOpen,
   now,
 }: {
   state: RecordsState;
   filter: RecordFilter;
   onFilter: (next: RecordFilter) => void;
+  /** Opens a record's details: the screen holds the sheet. */
+  onOpen: (id: string) => void;
   now: number;
 }) {
   const all = state.status === 'ready' || state.status === 'demo' ? state.records : NO_RECORDS;
@@ -201,18 +358,11 @@ export function RecordsPane({
   const rows = useMemo(() => filterRecords(all, filter), [all, filter]);
   const setups = totals.executed + totals.refused;
   const truncated = state.status === 'ready' && state.truncated;
-  const empty = FILTER_EMPTY[state.status === 'empty' ? 'all' : filter];
+  const empty = RECORD_EMPTY[state.status === 'empty' ? 'all' : filter];
 
   return (
     <View className="gap-4">
-      <StatRow
-        stats={[
-          { label: 'Total', value: String(totals.all) },
-          { label: 'Taken', value: String(totals.executed) },
-          { label: 'Refused', value: String(totals.refused) },
-          { label: 'Stakes', value: String(totals.predictions) },
-        ]}
-      />
+      <StatRow stats={recordStats(totals)} />
 
       <View className="flex-row flex-wrap items-center gap-2" role="radiogroup" aria-label="Filter records">
         {RECORD_FILTERS.map((f) => (
@@ -220,7 +370,7 @@ export function RecordsPane({
             key={f.value}
             label={f.label}
             selected={filter === f.value}
-            count={f.value === 'all' ? totals.all : totals[f.value === 'predictions' ? 'predictions' : f.value]}
+            count={totals[f.value]}
             onPress={() => onFilter(f.value)}
           />
         ))}
@@ -231,33 +381,29 @@ export function RecordsPane({
         {state.status === 'loading' ? (
           [0, 1, 2, 3, 4, 5].map((i) => <SkeletonRow key={i} />)
         ) : rows.length === 0 ? (
-          <EmptyState
-            icon={empty.icon}
-            title={empty.title}
-            body={empty.body}
-            {...(state.status === 'empty'
-              ? { action: { label: 'Build a rule', href: routes.create, primary: true } }
-              : filter === 'predictions'
-                ? { action: { label: 'Open Predict', href: routes.predict } }
-                : {})}
-          />
+          <EmptyState icon={empty.icon} title={empty.title} body={empty.body} {...(empty.action ? { action: empty.action } : {})} />
         ) : (
           <>
             <Head />
-            {rows.map((r) =>
-              r.type === 'trade' ? (
-                <TradeLine key={r.id} item={r.item} now={now} />
-              ) : (
-                <StakeLine key={r.id} record={r} now={now} />
-              ),
-            )}
+            {rows.map((r) => {
+              switch (r.type) {
+                case 'trade':
+                  return <TradeLine key={r.id} item={r.item} now={now} />;
+                case 'stake':
+                  return <StakeLine key={r.id} record={r} now={now} />;
+                case 'chart':
+                  return <ChartLine key={r.id} id={r.id} trade={r.trade} now={now} onOpen={onOpen} />;
+                case 'timed':
+                  return <TimedLine key={r.id} id={r.id} trade={r.trade} now={now} onOpen={onOpen} />;
+              }
+            })}
           </>
         )}
       </Card>
 
       {truncated ? (
         <Text className="font-sans text-12 text-ash">
-          Showing your newest {RECORDS_LIMIT} trades. Older ones are still on-chain.
+          Showing the newest {RECORDS_LIMIT} of each kind. Older ones are still on-chain.
         </Text>
       ) : null}
     </View>

@@ -3,7 +3,7 @@ import { Text, View } from 'react-native';
 import { Body } from '../components/chrome';
 import { ListRow } from '../components/list-row';
 import { ProfileFrame } from '../components/profile/frame';
-import { AppearanceCard, BehaviourSection, CopyCard, IdentitySection } from '../components/profile/sections';
+import { AppearanceCard, BehaviourSection, CopyCard, IdentitySection, RecentTradesSection } from '../components/profile/sections';
 import { ContractSheet, SignOutSheet } from '../components/profile-parts';
 import { Card } from '../components/card';
 import { SectionHeader } from '../components/section-header';
@@ -21,7 +21,7 @@ import { routes } from '../lib/routes';
  * Who you are here, what you have done, and the way into everything that is not
  * a tab: trading records, previous rules, copy trading, security, appearance,
  * settings, about, sign out. It leads with behaviour (rules pinned, trades taken,
- * setups refused) and never with profit.
+ * setups refused), then the newest trades of every kind, and never with profit.
  *
  * Every section reads its own slice and is memoised, so a change to one (a new
  * follow, a settled trade) does not repaint the rest. Signed out, each shows the
@@ -44,6 +44,7 @@ export function ProfileScreen() {
       <Body contentClassName="gap-6 pb-8 pt-5">
         <IdentitySection />
         <BehaviourSection />
+        <RecentTradesSection />
         <RecordsSection />
         <RulesSection />
         <CopySection />
@@ -65,8 +66,8 @@ const RecordsSection = memo(function RecordsSection() {
   const profile = useProfile();
   const counts =
     profile.status === 'ready' || profile.status === 'demo'
-      ? `${profile.records.taken} executed · ${profile.records.blocked} refused`
-      : 'Executed, refused and predictions';
+      ? `Chart, Predict and rule · ${profile.records.blocked} refused`
+      : 'Chart, Predict and rule';
   return (
     <View className="gap-2.5">
       <SectionHeader title="Trading records" />

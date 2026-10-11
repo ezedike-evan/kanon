@@ -8,18 +8,26 @@
 import { abbreviateHash, formatDecimal, type Decimal } from '@kanon/spec';
 import type { ActivityItem, RuleHistoryItem } from './domain-types';
 import type { PredictMarket } from './predict-types';
+import type { TimedTrade } from './timed-types';
+import type { ChartTrade } from './trade-records';
 
 // ---------------------------------------------------------------------------
 // Records
 // ---------------------------------------------------------------------------
 
-export type RecordFilter = 'all' | 'executed' | 'refused' | 'predictions';
+export type RecordFilter = 'all' | 'chart' | 'predictions' | 'executed' | 'refused';
 
+/**
+ * A person trades three ways and the record holds all three: by hand from the
+ * chart's ticket, on a timer from Predict, and through a pinned rule, which
+ * either executes a setup or refuses it.
+ */
 export const RECORD_FILTERS: ReadonlyArray<{ value: RecordFilter; label: string }> = [
   { value: 'all', label: 'All' },
-  { value: 'executed', label: 'Executed' },
+  { value: 'chart', label: 'Chart' },
+  { value: 'predictions', label: 'Predict' },
+  { value: 'executed', label: 'By rule' },
   { value: 'refused', label: 'Refused' },
-  { value: 'predictions', label: 'Predictions' },
 ];
 
 /** A stake the person took on a threshold market. */
@@ -42,11 +50,27 @@ export interface StakeRecord {
 }
 
 export type LedgerRecord =
+  /** A setup put to the person's rule: executed, refused, proposed or undone. */
   | { type: 'trade'; id: string; at: number; item: ActivityItem }
-  | { type: 'stake'; id: string; at: number; stake: StakeRecord };
+  /** A stake on a threshold market, from before Predict became timed trades. */
+  | { type: 'stake'; id: string; at: number; stake: StakeRecord }
+  /** A position taken by hand from the chart's ticket. */
+  | { type: 'chart'; id: string; at: number; trade: ChartTrade }
+  /** A timed trade from Predict. */
+  | { type: 'timed'; id: string; at: number; trade: TimedTrade };
 
 export function tradeRecords(items: readonly ActivityItem[]): LedgerRecord[] {
   return items.map((item) => ({ type: 'trade' as const, id: item.id, at: item.at, item }));
+}
+
+/** Chart trades as records, dated by when each was opened. */
+export function chartRecords(trades: readonly ChartTrade[]): LedgerRecord[] {
+  return trades.map((trade) => ({ type: 'chart' as const, id: `chart:${trade.id}`, at: trade.openedAt, trade }));
+}
+
+/** Timed trades as records, dated by when each was opened, so a row does not move when its trade ends. */
+export function timedRecords(trades: readonly TimedTrade[]): LedgerRecord[] {
+  return trades.map((trade) => ({ type: 'timed' as const, id: `timed:${trade.id}`, at: trade.openedAt, trade }));
 }
 
 /** The person's own stakes across the markets they appear in. A fixture market is not a stake. */
@@ -83,27 +107,32 @@ export function mergeRecords(...lists: ReadonlyArray<readonly LedgerRecord[]>): 
 }
 
 export function matchesFilter(record: LedgerRecord, filter: RecordFilter): boolean {
-  if (filter === 'all') return true;
-  if (filter === 'predictions') return record.type === 'stake';
-  if (record.type !== 'trade') return false;
-  return filter === 'executed' ? record.item.kind === 'executed' : record.item.kind === 'refused';
+  switch (filter) {
+    case 'all':
+      return true;
+    case 'chart':
+      return record.type === 'chart';
+    case 'predictions':
+      return record.type === 'timed' || record.type === 'stake';
+    case 'executed':
+      return record.type === 'trade' && record.item.kind === 'executed';
+    case 'refused':
+      return record.type === 'trade' && record.item.kind === 'refused';
+  }
 }
 
 export function filterRecords(records: readonly LedgerRecord[], filter: RecordFilter): LedgerRecord[] {
   return filter === 'all' ? [...records] : records.filter((r) => matchesFilter(r, filter));
 }
 
-export interface RecordTotals {
-  all: number;
-  executed: number;
-  refused: number;
-  predictions: number;
-}
+/** One count per filter, so a chip's count is the number of rows it shows. */
+export type RecordTotals = Record<RecordFilter, number>;
 
 export function recordTotals(records: readonly LedgerRecord[]): RecordTotals {
-  const totals: RecordTotals = { all: records.length, executed: 0, refused: 0, predictions: 0 };
+  const totals: RecordTotals = { all: records.length, chart: 0, predictions: 0, executed: 0, refused: 0 };
   for (const r of records) {
-    if (r.type === 'stake') totals.predictions += 1;
+    if (r.type === 'chart') totals.chart += 1;
+    else if (r.type === 'timed' || r.type === 'stake') totals.predictions += 1;
     else if (r.item.kind === 'executed') totals.executed += 1;
     else if (r.item.kind === 'refused') totals.refused += 1;
   }

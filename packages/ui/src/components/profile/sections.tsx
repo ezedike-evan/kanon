@@ -9,18 +9,21 @@ import { EmptyState } from '../empty-state';
 import { Icon } from '../icons';
 import { ListRow } from '../list-row';
 import { CopyButton } from '../profile-parts';
+import { SectionHeader } from '../section-header';
 import { SegmentedControl } from '../segmented-control';
 import { Skeleton, SkeletonRow } from '../skeleton';
 import { Label, StatRow } from '../stat';
 import { Num } from '../ui';
 import { useAccount } from '../../lib/account';
 import { useProfile } from '../../lib/domains';
+import { useOwnTrades, useRecentRecords } from '../../lib/profile-hooks';
 import { DEMO_FOLLOWING, DEMO_JOINED_AT, DEMO_PROFILE, DEMO_RULES } from '../../lib/profile-demo';
 import { allocationLabel, handleOf, loginLabel, memberSince, pinnedCount, shortAddress, shortId } from '../../lib/profile-logic';
 import { routes } from '../../lib/routes';
 import { THEME_MODES } from '../../lib/theme-logic';
 import { useTheme } from '../../theme';
 import type { Icon as IconName } from '../icons';
+import { RecordRow } from './record-rows';
 
 /**
  * The parts of Profile that the phone lists as sections and the desktop shows as
@@ -123,11 +126,14 @@ export const IdentitySection = memo(function IdentitySection() {
 
 export const BehaviourSection = memo(function BehaviourSection() {
   const profile = useProfile();
+  const own = useOwnTrades();
   if (profile.status === 'loading') return <Skeleton height={84} />;
   if (profile.status === 'empty') return null;
 
   const rules = profile.status === 'demo' ? DEMO_RULES : profile.rules;
-  const { taken, blocked, attempts, adherenceBps } = profile.records;
+  const { blocked, attempts, adherenceBps } = profile.records;
+  // Every trade taken, however it was: through the rule, by hand on the chart, on a timer in Predict.
+  const taken = profile.records.taken + (own.status === 'ready' ? own.records.length : 0);
   return (
     <View className="gap-2.5">
       <StatRow
@@ -154,6 +160,43 @@ export const BehaviourSection = memo(function BehaviourSection() {
   );
 });
 
+// ---------------------------------------------------------------------------
+// The newest trades, of every kind
+// ---------------------------------------------------------------------------
+
+/** How many of the newest trades the Profile tab shows before sending the person to the full record. */
+const RECENT_TRADES = 5;
+
+/**
+ * The newest trades, whichever way each was taken: chart, Predict and rule in
+ * one list, each row naming its source. A row never carries money; a press
+ * opens the trade in the full record, where its figures and transactions are.
+ */
+export const RecentTradesSection = memo(function RecentTradesSection() {
+  const recent = useRecentRecords(RECENT_TRADES);
+  const any = recent.status !== 'loading' && recent.records.length > 0;
+  return (
+    <View className="gap-2.5">
+      <SectionHeader title="Your trades" {...(any ? { action: { label: 'See all', href: routes.profileRecords } } : {})} />
+      <Card pad="none">
+        {recent.status === 'loading' ? (
+          [0, 1, 2].map((i) => <SkeletonRow key={i} />)
+        ) : recent.records.length === 0 ? (
+          <EmptyState
+            icon="history"
+            title="No trades yet"
+            body="A trade you take on the chart, on Predict or through your rule is listed here, with its transactions."
+            action={{ label: 'Open the chart', href: routes.chart, primary: true }}
+          />
+        ) : (
+          recent.records.map((record, i) => (
+            <RecordRow key={record.id} record={record} divider={i < recent.records.length - 1} />
+          ))
+        )}
+      </Card>
+    </View>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Copy trading and appearance
