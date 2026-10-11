@@ -98,8 +98,13 @@ export function AuthModal({
   };
 
   return (
-    <View 
-      className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-scrim/70" 
+    // Pinned to the window on the web: the landing page is several screens tall, and a panel centred
+    // on the whole page opens far below the fold. A device has one screen, so it fills that.
+    <View
+      className={cx(
+        Platform.OS === 'web' ? 'fixed' : 'absolute',
+        'inset-0 z-50 flex items-center justify-center p-4 bg-scrim/70',
+      )}
       style={Platform.OS === 'web' ? { backdropFilter: 'blur(12px)' } as any : undefined}
     >
       <Pressable className="absolute inset-0" onPress={onClose} />
@@ -127,7 +132,7 @@ export function AuthModal({
               <PrimaryButton onPress={handleEmailContinue} disabled={!email || isSendingCode}>
                 {isSendingCode ? 'Sending Code...' : 'Continue with Email'}
               </PrimaryButton>
-              {emailError ? <Text className="text-red-500 text-12 text-center mt-2">{emailError}</Text> : null}
+              {emailError ? <Text className="text-short text-12 text-center mt-2">{emailError}</Text> : null}
             </View>
 
             <View className="flex-row items-center justify-center gap-4 my-8">
@@ -168,7 +173,7 @@ export function AuthModal({
               <PrimaryButton onPress={handleOtpSubmit} disabled={otp.length !== 6 || isVerifyingCode}>
                 {isVerifyingCode ? 'Verifying...' : 'Verify Code'}
               </PrimaryButton>
-              {emailError ? <Text className="text-red-500 text-12 text-center mt-2">{emailError}</Text> : null}
+              {emailError ? <Text className="text-short text-12 text-center mt-2">{emailError}</Text> : null}
             </View>
           </View>
         )}
@@ -184,7 +189,7 @@ export function AuthModal({
                 <TextInput 
                   value={name}
                   onChangeText={setName}
-                  placeholder="John Doe" 
+                  placeholder="Your name" 
                   placeholderTextColor={colors.ash}
                   className="w-full bg-void border border-hairline text-bone px-4 py-3 text-14 focus:border-signal outline-none" 
                 />

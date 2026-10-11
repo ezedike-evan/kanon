@@ -8,6 +8,7 @@ import {
   useLoginWithEmail,
   usePrivy
 } from '@privy-io/react-auth';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useConvexAuth, useQuery, useMutation } from 'convex/react';
 import { api } from '@kanon/backend';
@@ -15,11 +16,36 @@ import { api } from '@kanon/backend';
 /**
  * The longest the page stays empty while it works out who the visitor is.
  * Privy's script can be blocked and Convex can be unreachable, and neither
- * says so: without a limit a signed-out visitor would wait on an empty page
- * for an answer that never comes. Past it the landing is shown, as it always
- * was before the page learned to wait.
+ * says so: without a limit a returning user would wait on an empty page for an
+ * answer that never comes. Past it the landing is shown.
  */
 const UNDECIDED_LIMIT_MS = 6_000;
+
+/**
+ * Set once this browser has been sent on to /home as a signed-in user, and
+ * cleared when a visit finds nobody signed in. It is the only reason to hold
+ * the page back: a first-time visitor has no session to wait for, so the
+ * landing is painted for them at once instead of after Privy has answered.
+ * It is a hint about what to draw first, never a claim about who is signed in.
+ */
+const SIGNED_IN_HINT = 'kanon.landing.signed-in';
+
+function readSignedInHint(): boolean {
+  try {
+    return window.localStorage.getItem(SIGNED_IN_HINT) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeSignedInHint(signedIn: boolean): void {
+  try {
+    if (signedIn) window.localStorage.setItem(SIGNED_IN_HINT, '1');
+    else window.localStorage.removeItem(SIGNED_IN_HINT);
+  } catch {
+    // Storage is off: every visit paints the landing first, which is the safe way round.
+  }
+}
 
 const CheckIcon = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
@@ -61,14 +87,23 @@ export function MarketingContent() {
   // step; `handleCompleteProfile` creates the row, closes the sheet and routes.)
   useEffect(() => {
     if (!isExistingUser) return;
+    writeSignedInHint(true);
     setIsAuthModalOpen(false);
     router.replace('/home');
   }, [isExistingUser, router]);
 
-  // Until it is known which of the three this visitor is, none of the landing
-  // is painted: Privy has not answered yet, or there is a session and its
-  // `users` row is still on its way. If Convex turns the session down there is
-  // no row to wait for, and the landing is shown.
+  // Read once, when the page mounts (it mounts on the client only).
+  const [expectUser] = useState(readSignedInHint);
+  // Privy has answered and nobody is signed in: the next visit has nothing to wait for.
+  useEffect(() => {
+    if (ready && !authenticated) writeSignedInHint(false);
+  }, [ready, authenticated]);
+
+  // For a browser that was signed in last time, none of the landing is painted
+  // until it is known which of the three this visitor is: Privy has not
+  // answered yet, or there is a session and its `users` row is still on its
+  // way. If Convex turns the session down there is no row to wait for, and the
+  // landing is shown. Anyone else sees the landing at once.
   const rowPending = authenticated && (convexLoading || (convexAuthed && dbUser === undefined));
   const undecided = !ready || rowPending;
 
@@ -90,7 +125,7 @@ export function MarketingContent() {
   // An existing user holds with no limit: the answer is known and /home is on
   // its way. The open sheet is the exception throughout: a sign-in in progress
   // keeps the page it started on.
-  const holding = !isAuthModalOpen && ((undecided && !waitedOut) || isExistingUser);
+  const holding = !isAuthModalOpen && ((expectUser && undecided && !waitedOut) || isExistingUser);
 
   // Whitelabel Hooks
   const { initOAuth } = useLoginWithOAuth();
@@ -189,6 +224,7 @@ export function MarketingContent() {
         <nav className="hidden md:flex gap-8 text-ash text-sm uppercase tracking-widest">
           <a href="#features" className="hover:text-bone transition-colors">Features</a>
           <a href="#thesis" className="hover:text-bone transition-colors">Thesis</a>
+          <Link href="/home" className="hover:text-bone transition-colors">Demo</Link>
         </nav>
         {authenticated && dbUser ? (
           <SpecularButton onClick={() => router.push('/home')} size="sm" className="uppercase tracking-widest font-bold text-xs" tint="#D4A017" tintOpacity={0.2} lineColor="#D4A017">
@@ -223,12 +259,20 @@ export function MarketingContent() {
             <SpecularButton onClick={() => setIsAuthModalOpen(true)} size="lg" className="uppercase tracking-widest font-bold text-sm" tint="#D4A017" tintOpacity={0.15} lineColor="#D4A017">
               Compile Strategy
             </SpecularButton>
-            <a href="#thesis">
-              <button className="border border-hairline text-bone hover:bg-panel px-8 py-[18px] uppercase tracking-wider text-sm transition-colors h-[56px]">
-                Read the Thesis
-              </button>
-            </a>
+            {/* No account needed: the app opens on its demo account, labelled as one. */}
+            <Link
+              href="/home"
+              className="flex h-[56px] items-center border border-hairline px-8 text-sm uppercase tracking-wider text-bone transition-colors hover:bg-panel focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal"
+            >
+              Explore the Demo
+            </Link>
           </div>
+          <a
+            href="#thesis"
+            className="mt-6 inline-block text-xs uppercase tracking-widest text-ash underline-offset-4 transition-colors hover:text-bone hover:underline"
+          >
+            Read the thesis
+          </a>
         </div>
       </section>
 
