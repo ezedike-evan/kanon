@@ -19,6 +19,7 @@ import type * as compiler from "../compiler.js";
 import type * as compilerLogic from "../compilerLogic.js";
 import type * as copyRelationships from "../copyRelationships.js";
 import type * as crons from "../crons.js";
+import type * as gateway from "../gateway.js";
 import type * as homeFeed from "../homeFeed.js";
 import type * as homeFeedLogic from "../homeFeedLogic.js";
 import type * as http from "../http.js";
@@ -66,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   compilerLogic: typeof compilerLogic;
   copyRelationships: typeof copyRelationships;
   crons: typeof crons;
+  gateway: typeof gateway;
   homeFeed: typeof homeFeed;
   homeFeedLogic: typeof homeFeedLogic;
   http: typeof http;

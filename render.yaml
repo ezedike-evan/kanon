@@ -5,9 +5,13 @@ services:
   - type: web
     name: kanon-gateway
     runtime: node
-    # The free plan stops a service after 15 idle minutes. The gateway is only
-    # useful while it holds the venue connection, so it needs a plan that stays up.
-    plan: starter
+    # The free plan stops a service after 15 idle minutes, and the gateway has
+    # timed trades to close whether or not anybody is on the app. The backend
+    # asks it for /livez every five minutes once GATEWAY_URL is set there
+    # (packages/backend/convex/gateway.ts), which keeps it awake. For the weeks
+    # the app is being judged, `starter` is the dependable choice: change this
+    # line, or the plan on the service's own page.
+    plan: free
     region: frankfurt
     # One instance on purpose: each instance holds its own venue connections and
     # cache, so a second one doubles the load on the venue instead of sharing it.
@@ -36,7 +40,8 @@ services:
       # Trading (/trade). Off until all four are filled in on the dashboard; they
       # are secrets and are never written here. The region above matters for
       # these: Perpl answers its trading API with HTTP 451 from regions it does
-      # not serve.
+      # not serve. Its own list (`geo_block` in /v1/pub/context, read 12 October
+      # 2026) is BY, CU, GB, IR, KP, RU, SY, UA and US, so Frankfurt is served.
       - key: PERPL_API_KEY
         sync: false
       - key: PERPL_API_KEY_SECRET

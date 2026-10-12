@@ -96,7 +96,9 @@ contracts:
       - event: "SampleRecorded(uint256 indexed bucketIndex, int64 price, int32 expo, uint256 publishTime, address indexed caller)"
 
 chains:
-  - id: 143
+  # Monad mainnet unless ENVIO_CHAIN_ID says otherwise. The contracts are on
+  # Monad testnet (10143) today: `testnet.env` holds that deployment's values.
+  - id: ${ENVIO_CHAIN_ID:-143}
     start_block: ${ENVIO_START_BLOCK:-0}
     contracts:
       - name: StrategyRegistry

@@ -99,6 +99,7 @@ missing value fails closed (the action refuses) and logs the variable name only.
 | `PRIVY_APP_ID` | `auth.config.ts` | required |
 | `DASHSCOPE_API_KEY` | `compiler:compileStrategy` | required to compile |
 | `NANSEN_API_KEY`, `NANSEN_BASE_URL` | `nansen:smartMoneyFlow` | optional; unset means "not connected" |
+| `GATEWAY_URL` | `gateway:ping` | optional; the gateway's public address. Set, it is asked for `/livez` every five minutes, which keeps a host from putting it to sleep while it has timed trades to close |
 | `MONAD_RPC_URL`, `MONAD_CHAIN_ID` | `predictions:recordPosition`, `vaults:recordVault`, `vaults:recordBalance` | required; the RPC must report this chain id |
 | `THRESHOLD_MARKET_ADDRESS` | `predictions:recordPosition` | required; must equal the market's linked address |
 | `VAULT_FACTORY_ADDRESS` | `vaults:recordVault` | required |

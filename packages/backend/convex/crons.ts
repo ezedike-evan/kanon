@@ -29,4 +29,9 @@ crons.interval("sweep predict markets", { minutes: sweepMinutes }, sweepMarkets,
 const pruneTicks = makeFunctionReference<"mutation", Record<string, never>>("ticks:pruneTicks");
 crons.daily("prune old ticks", { hourUTC: 3, minuteUTC: 17 }, pruneTicks, {});
 
+// The gateway has timed trades to close whether or not anybody is on the app, and a host may
+// put an idle service to sleep. Does nothing unless GATEWAY_URL is set (`gateway.ts`).
+const pingGateway = makeFunctionReference<"action", Record<string, never>>("gateway:ping");
+crons.interval("keep the gateway awake", { minutes: 5 }, pingGateway, {});
+
 export default crons;
