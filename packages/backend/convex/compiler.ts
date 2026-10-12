@@ -39,7 +39,7 @@ import OpenAI from 'openai';
 import { specHash, diffSpec, parseSpec, type StrategySpec, type SpecDiff } from '@kanon/spec';
 import { requireSubject } from './authz';
 import { checkRateLimit, type RateLimited } from './rateLimit';
-import { describeEnvProblem, parseDashscopeEnv } from './serverEnv';
+import { describeEnvProblem, parseCompilerEnv } from './serverEnv';
 import { buildCompilerPrompt, parseCompilerResponse, type CompilerTurn } from './compilerLogic';
 
 /**
@@ -121,19 +121,22 @@ export const compileStrategy = action({
       }
     }
 
-    const env = parseDashscopeEnv(process.env);
+    const env = parseCompilerEnv(process.env);
     if (!env.ok) {
       console.error(describeEnvProblem('compileStrategy', env.invalid));
       return { status: 'failed', error: 'The compiler is unavailable right now.' };
     }
-    const apiKey = env.value.apiKey;
+    // DashScope and the pinned model unless the deployment names another host of the same model.
+    const { apiKey } = env.value;
+    const baseURL = env.value.baseUrl ?? DASHSCOPE_BASE_URL;
+    const model = env.value.model ?? COMPILER_MODEL;
 
     // Spent after the cheap checks, before the paid call.
     const limited = await checkRateLimit(ctx, subject, 'compile');
     if (limited) return limited;
     const client = new OpenAI({
       apiKey,
-      baseURL: DASHSCOPE_BASE_URL,
+      baseURL,
       timeout: REQUEST_TIMEOUT_MS,
       maxRetries: 1,
     });
@@ -171,7 +174,7 @@ export const compileStrategy = action({
       let response: OpenAI.ChatCompletion;
       try {
         response = await client.chat.completions.create({
-          model: COMPILER_MODEL,
+          model,
           max_tokens: 8192,
           messages,
           tools: [tool],

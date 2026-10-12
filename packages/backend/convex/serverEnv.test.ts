@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { describeEnvProblem, parseChainEnv, parseDashscopeEnv, parseNansenEnv, parseVenueRecorderEnv } from "./serverEnv";
+import {
+  describeEnvProblem,
+  parseChainEnv,
+  parseCompilerEnv,
+  parseDashscopeEnv,
+  parseNansenEnv,
+  parseVenueRecorderEnv,
+} from "./serverEnv";
 
 const good = {
   MONAD_RPC_URL: "https://rpc.example/secret-key",
@@ -38,6 +45,37 @@ describe("other keys", () => {
   it("requires a DashScope key", () => {
     expect(parseDashscopeEnv({})).toEqual({ ok: false, invalid: ["DASHSCOPE_API_KEY"] });
     expect(parseDashscopeEnv({ DASHSCOPE_API_KEY: "sk-12345678" })).toEqual({ ok: true, value: { apiKey: "sk-12345678" } });
+  });
+  it("sends the compiler to DashScope with its own key unless another host is named", () => {
+    expect(parseCompilerEnv({})).toEqual({ ok: false, invalid: ["DASHSCOPE_API_KEY"] });
+    expect(parseCompilerEnv({ DASHSCOPE_API_KEY: "sk-12345678" })).toEqual({
+      ok: true,
+      value: { apiKey: "sk-12345678", baseUrl: undefined, model: undefined },
+    });
+    expect(
+      parseCompilerEnv({
+        DASHSCOPE_API_KEY: "sk-12345678",
+        COMPILER_API_KEY: "or-87654321",
+        COMPILER_BASE_URL: "https://openrouter.ai/api/v1",
+        COMPILER_MODEL: "qwen/qwen3.8-max-0902",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { apiKey: "or-87654321", baseUrl: "https://openrouter.ai/api/v1", model: "qwen/qwen3.8-max-0902" },
+    });
+  });
+  it("never sends one provider's key to the other's address", () => {
+    // Another host named, but only the DashScope key in hand: a fault, not a silent reuse of that key.
+    expect(parseCompilerEnv({ DASHSCOPE_API_KEY: "sk-12345678", COMPILER_BASE_URL: "https://openrouter.ai/api/v1" })).toEqual({
+      ok: false,
+      invalid: ["COMPILER_API_KEY"],
+    });
+    // A second key with nowhere of its own to go would otherwise be sent to DashScope.
+    expect(parseCompilerEnv({ COMPILER_API_KEY: "or-87654321" })).toEqual({ ok: false, invalid: ["COMPILER_BASE_URL"] });
+    expect(parseCompilerEnv({ COMPILER_API_KEY: "or-87654321", COMPILER_BASE_URL: "nope" })).toEqual({
+      ok: false,
+      invalid: ["COMPILER_BASE_URL"],
+    });
   });
   it("Nansen unset is fine, a bad base URL is not", () => {
     expect(parseNansenEnv({})).toEqual({ ok: true, value: { apiKey: undefined, baseUrl: undefined } });

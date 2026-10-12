@@ -98,6 +98,7 @@ missing value fails closed (the action refuses) and logs the variable name only.
 | --- | --- | --- |
 | `PRIVY_APP_ID` | `auth.config.ts` | required |
 | `DASHSCOPE_API_KEY` | `compiler:compileStrategy` | required to compile |
+| `COMPILER_BASE_URL`, `COMPILER_API_KEY`, `COMPILER_MODEL` | `compiler:compileStrategy` | optional; send the compiler to another OpenAI-compatible host of the same model (for example OpenRouter, model `qwen/qwen3.8-max-0902`). The base URL and its key go together, and the DashScope key is never sent to that host |
 | `NANSEN_API_KEY`, `NANSEN_BASE_URL` | `nansen:smartMoneyFlow` | optional; unset means "not connected" |
 | `GATEWAY_URL` | `gateway:ping` | optional; the gateway's public address. Set, it is asked for `/livez` every five minutes, which keeps a host from putting it to sleep while it has timed trades to close |
 | `MONAD_RPC_URL`, `MONAD_CHAIN_ID` | `predictions:recordPosition`, `vaults:recordVault`, `vaults:recordBalance` | required; the RPC must report this chain id |
