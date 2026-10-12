@@ -18,8 +18,12 @@ describe('demo tape', () => {
 
   it('holds 2000+ candles at a fine timeframe', () => {
     const s = buildFixtureSeries('BTC/USD', 60, 2400);
-    expect(s.candles.length).toBe(2400);
-    expect(seriesToCandle5(s)).toHaveLength(2400);
+    // Not exactly 2400 on every minute of the day. The tape has quiet minutes with no print, and a
+    // gap is filled only between two prints, so a quiet minute at either edge of the window leaves
+    // no candle there. Asking for exactly 2400 failed on about one run in twelve, by the clock.
+    expect(s.candles.length).toBeGreaterThanOrEqual(2390);
+    expect(s.candles.length).toBeLessThanOrEqual(2400);
+    expect(seriesToCandle5(s)).toHaveLength(s.candles.length);
   });
 
   it('never pads a timeframe with flat candles the tape has no prints for', () => {
