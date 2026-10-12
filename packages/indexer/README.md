@@ -123,7 +123,12 @@ Envio Cloud deploys from GitHub on push.
 4. Push to the deployment branch. Envio builds and syncs; a later push re-indexes
    from the start block while the previous deployment keeps serving.
 5. Copy the deployment's GraphQL endpoint from the dashboard into the consumers
-   as `createIndexerClient({ url })`.
+   as `createIndexerClient({ url })`. The apps take it as `NEXT_PUBLIC_INDEXER_URL`
+   (web) and `EXPO_PUBLIC_INDEXER_URL` (mobile): with it set, Profile > Previous
+   rules lists the signed-in wallet's on-chain record (the queries are in
+   `packages/ui/src/lib/onchain-record.ts`). The indexer must be on the chain
+   the app is built for (`ENVIO_CHAIN_ID` equal to `NEXT_PUBLIC_CHAIN_ID`), since
+   the app asks for ids prefixed with its own chain.
 
 Constraints from Envio's docs to keep in mind: the repository must stay under
 100 MB, imports must stay inside the indexer directory (this package is

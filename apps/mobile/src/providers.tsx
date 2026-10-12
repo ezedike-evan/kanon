@@ -21,6 +21,7 @@ import {
   resolveMarketFeed,
   resolveRegistryAddress,
   resolveSeriesMap,
+  resolveIndexer,
   resolveVenueTrade,
   useConvexKanonSource,
   type ConvexHooks,
@@ -55,6 +56,7 @@ assertPublicEnv(
     vaultStartBlock: process.env.EXPO_PUBLIC_VAULT_START_BLOCK,
     vaultCollateralDecimals: process.env.EXPO_PUBLIC_VAULT_COLLATERAL_DECIMALS,
     gatewayUrl: process.env.EXPO_PUBLIC_GATEWAY_URL,
+    indexerUrl: process.env.EXPO_PUBLIC_INDEXER_URL,
   },
   { platform: 'mobile', requireCore: true },
 );
@@ -129,6 +131,14 @@ const VAULT_CONFIG = resolveVaultConfig({
  * feed opens nothing: the first chart to subscribe does.
  */
 const MARKET_FEED = resolveMarketFeed(process.env.EXPO_PUBLIC_GATEWAY_URL);
+
+/**
+ * The Kanon indexer on Envio HyperIndex (`packages/indexer`), read the same way and written out
+ * literally so Metro inlines it: its GraphQL endpoint. With an address, Profile's on-chain record
+ * is read from it for the signed-in wallet; with none the record says it is not connected.
+ * Resolving it requests nothing: the record does, while it is on screen.
+ */
+const INDEXER = resolveIndexer(process.env.EXPO_PUBLIC_INDEXER_URL);
 
 /**
  * How Convex learns who is calling: Privy's own access token (an ES256 JWT
@@ -289,6 +299,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
     hasWallet: Boolean(address),
     marketFeed: MARKET_FEED,
     venueTrade,
+    indexer: INDEXER,
   });
 
   // Who signed in and how, and the one way out. Convex's session follows Privy's, so `logout`

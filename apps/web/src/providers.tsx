@@ -30,7 +30,7 @@ import {
   type PlatformCapabilities,
   type Signer,
 } from '@kanon/ui';
-import { AccountProvider, assertPublicEnv, resolveVenueTrade, type KanonAccount } from '@kanon/ui';
+import { AccountProvider, assertPublicEnv, resolveIndexer, resolveVenueTrade, type KanonAccount } from '@kanon/ui';
 // The generated `api` object only knows about the `users` module until
 // `npx convex dev` has run once against a real deployment and regenerated
 // `_generated/api.d.ts` — see that file's header. At runtime `api` is a
@@ -71,6 +71,7 @@ assertPublicEnv(
     vaultStartBlock: process.env.NEXT_PUBLIC_VAULT_START_BLOCK,
     vaultCollateralDecimals: process.env.NEXT_PUBLIC_VAULT_COLLATERAL_DECIMALS,
     gatewayUrl: process.env.NEXT_PUBLIC_GATEWAY_URL,
+    indexerUrl: process.env.NEXT_PUBLIC_INDEXER_URL,
   },
   { platform: 'web', requireCore: typeof window !== 'undefined' },
 );
@@ -148,6 +149,14 @@ const VAULT_CONFIG = resolveVaultConfig({
  * subscribe does, so this is safe at module load and during a server render.
  */
 const MARKET_FEED = resolveMarketFeed(process.env.NEXT_PUBLIC_GATEWAY_URL);
+
+/**
+ * The Kanon indexer on Envio HyperIndex (`packages/indexer`), read the same way: its GraphQL
+ * endpoint. With an address, Profile's on-chain record is read from it for the signed-in wallet;
+ * with none the record says it is not connected. Resolving it requests nothing: the record does,
+ * while it is on screen.
+ */
+const INDEXER = resolveIndexer(process.env.NEXT_PUBLIC_INDEXER_URL);
 
 /**
  * How Convex learns who is calling: Privy's own access token (an ES256 JWT
@@ -308,6 +317,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
     hasWallet: Boolean(address),
     marketFeed: MARKET_FEED,
     venueTrade,
+    indexer: INDEXER,
   });
 
   // Who signed in and how, and the one way out. Convex's session follows Privy's, so `logout`

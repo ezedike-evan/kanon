@@ -78,6 +78,20 @@ describe('validatePublicEnv', () => {
     }
     expect(validatePublicEnv({ ...good, gatewayUrl: 'wss://x' }, mobile).map((p) => p.name)).toEqual(['EXPO_PUBLIC_GATEWAY_URL']);
   });
+
+  it('takes the indexer address the same way: unset is fine, and a set one is an http or https URL', () => {
+    expect(validatePublicEnv({ ...good, indexerUrl: undefined }, web)).toEqual([]);
+    expect(validatePublicEnv({ ...good, indexerUrl: '' }, mobile)).toEqual([]);
+    expect(validatePublicEnv({ ...good, indexerUrl: 'http://localhost:8080/v1/graphql' }, web)).toEqual([]);
+    expect(validatePublicEnv({ ...good, indexerUrl: 'https://indexer.kanon.example/v1/graphql' }, mobile)).toEqual([]);
+    expect(validatePublicEnv({ ...empty, indexerUrl: 'https://indexer.kanon.example/v1/graphql' }, { platform: 'web', requireCore: false })).toEqual([]);
+    for (const bad of ['indexer.kanon.example/v1/graphql', 'wss://indexer.kanon.example', 'not a url']) {
+      expect(validatePublicEnv({ ...good, indexerUrl: bad }, web), bad).toEqual([
+        { name: 'NEXT_PUBLIC_INDEXER_URL', expected: 'an http(s) URL' },
+      ]);
+    }
+    expect(validatePublicEnv({ ...good, indexerUrl: 'ftp://x' }, mobile).map((p) => p.name)).toEqual(['EXPO_PUBLIC_INDEXER_URL']);
+  });
 });
 
 describe('assertPublicEnv', () => {

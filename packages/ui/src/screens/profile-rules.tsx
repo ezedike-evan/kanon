@@ -6,12 +6,15 @@ import { Card } from '../components/card';
 import { EmptyState } from '../components/empty-state';
 import { Icon, type Icon as IconName } from '../components/icons';
 import { ProfileFrame } from '../components/profile/frame';
+import { OnchainRecordSection } from '../components/profile/onchain-record';
 import { CopyButton } from '../components/profile-parts';
 import { Skeleton } from '../components/skeleton';
 import { Label } from '../components/stat';
 import { Num } from '../components/ui';
 import { Link } from '../nav';
 import { useHaptics } from '../platform';
+import { useAccount } from '../lib/account';
+import { useOnchainRecord } from '../lib/domains';
 import { activeChain } from '../lib/monad-chain';
 import { useRules } from '../lib/profile-hooks';
 import {
@@ -34,6 +37,10 @@ import type { RuleHistoryItem } from '../lib/domain-types';
  * its spec hash with the pin transaction one tap away. Nothing here loosens a
  * rule. The one entry that changes a pinned rule goes through the review screen,
  * where tightening applies at once and loosening waits out its hold.
+ *
+ * Under the rules is the chain's own account of them: the on-chain record, read
+ * from the Kanon indexer on Envio for the signed-in wallet. It has its own
+ * states, so it is drawn whatever the rules above it are doing.
  */
 
 const STATE_BADGE: Record<RuleState, Pick<BadgeProps, 'label' | 'tone' | 'icon'>> = {
@@ -227,15 +234,28 @@ export function ProfileRulesScreen() {
     [ordinals],
   );
 
-  // The desktop pane: the same sections and cards, in the pane's own scroller, not a virtual list.
-  const pane =
+  // What the chain holds for the signed-in wallet's rules. Read once here and drawn in both layouts.
+  const account = useAccount();
+  const record = useOnchainRecord(account.address);
+  // A draft with nothing pinned is one review away from its first transaction. Any other empty
+  // record needs no button of its own: the rules above it already carry the next step.
+  const forward = useMemo(
+    () =>
+      rules && rules.some((r) => r.status === 'draft') && !rules.some((r) => r.status !== 'draft')
+        ? { label: 'Review draft', href: routes.compileReview }
+        : undefined,
+    [rules],
+  );
+  // The rules' own two states with nothing to list, shared by both layouts. Each ends 12 below
+  // itself, as a rule card does, so the record sits the same distance under either.
+  const blank =
     state.status === 'loading' ? (
-      <View className="gap-3">
+      <View className="gap-3 pb-3">
         <Skeleton height={190} />
         <Skeleton height={150} />
       </View>
     ) : state.status === 'empty' ? (
-      <View className="rounded-sm border border-hairline bg-panel">
+      <View className="mb-3 rounded-sm border border-hairline bg-panel">
         <EmptyState
           icon="scroll"
           title="No rules yet"
@@ -243,17 +263,23 @@ export function ProfileRulesScreen() {
           action={{ label: 'Build a rule', href: routes.create, primary: true }}
         />
       </View>
-    ) : (
-      <View className="max-w-[760px]">
-        {entries.map((item) =>
+    ) : null;
+
+  // The desktop pane: the same sections and cards, in the pane's own scroller, not a virtual list.
+  // One column for all of it, so a skeleton is the width of the card it stands for.
+  const pane = (
+    <View className="max-w-[760px]">
+      {blank ??
+        entries.map((item) =>
           item.type === 'section' ? (
             <SectionRow key={item.id} section={item} />
           ) : (
             <RuleCard key={item.id} rule={item.rule} state={item.state} ordinal={ordinals.get(item.id) ?? ''} />
           ),
         )}
-      </View>
-    );
+      <OnchainRecordSection state={record} forward={forward} className="pt-3" />
+    </View>
+  );
 
   return (
     <ProfileFrame
@@ -263,33 +289,20 @@ export function ProfileRulesScreen() {
       pane={pane}
       right={state.status === 'demo' ? <Badge label="Demo" tone="signal" icon="sparkles" /> : null}
     >
-      {state.status === 'loading' ? (
-        <View className="gap-3 px-5 pt-2">
-          <Skeleton height={190} />
-          <Skeleton height={150} />
-        </View>
-      ) : state.status === 'empty' ? (
-        <View className="mx-5 mt-2 rounded-sm border border-hairline bg-panel">
-          <EmptyState
-            icon="scroll"
-            title="No rules yet"
-            body="Describe a strategy in your own words. It becomes a rule you read, sign off and pin."
-            action={{ label: 'Build a rule', href: routes.create, primary: true }}
-          />
-        </View>
-      ) : (
-        <FlatList
-          className="min-h-0 flex-1"
-          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
-          data={entries}
-          keyExtractor={(e) => e.id}
-          renderItem={renderItem}
-          initialNumToRender={4}
-          maxToRenderPerBatch={4}
-          windowSize={7}
-          showsVerticalScrollIndicator={false}
-        />
-      )}
+      {/* One scroller on a phone whatever the rules are doing, so the record under them is always reachable. */}
+      <FlatList
+        className="min-h-0 flex-1"
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24 }}
+        data={entries}
+        keyExtractor={(e) => e.id}
+        renderItem={renderItem}
+        ListEmptyComponent={<View className="pt-2">{blank}</View>}
+        ListFooterComponent={<OnchainRecordSection state={record} forward={forward} className="pt-3" />}
+        initialNumToRender={4}
+        maxToRenderPerBatch={4}
+        windowSize={7}
+        showsVerticalScrollIndicator={false}
+      />
     </ProfileFrame>
   );
 }

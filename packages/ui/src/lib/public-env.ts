@@ -26,6 +26,8 @@ export interface PublicEnvInput {
   vaultCollateralDecimals: string | undefined;
   /** The market data gateway. Unset, charts read their candles from Convex. */
   gatewayUrl?: string | undefined;
+  /** The Kanon indexer's GraphQL endpoint on Envio. Unset, the on-chain record says it is not connected. */
+  indexerUrl?: string | undefined;
 }
 
 export interface PublicEnvProblem {
@@ -47,6 +49,7 @@ export interface PublicEnvNames {
   vaultStartBlock: string;
   vaultCollateralDecimals: string;
   gatewayUrl: string;
+  indexerUrl: string;
 }
 
 const names = (prefix: string): PublicEnvNames => ({
@@ -63,6 +66,7 @@ const names = (prefix: string): PublicEnvNames => ({
   vaultStartBlock: `${prefix}_VAULT_START_BLOCK`,
   vaultCollateralDecimals: `${prefix}_VAULT_COLLATERAL_DECIMALS`,
   gatewayUrl: `${prefix}_GATEWAY_URL`,
+  indexerUrl: `${prefix}_INDEXER_URL`,
 });
 
 export const WEB_ENV_NAMES = names('NEXT_PUBLIC');
@@ -125,6 +129,7 @@ export function validatePublicEnv(env: PublicEnvInput, opts: PublicEnvOptions): 
     'an integer from 0 to 36',
   );
   maybe(n.gatewayUrl, env.gatewayUrl, isHttpUrl, 'an http(s) URL');
+  maybe(n.indexerUrl, env.indexerUrl, isHttpUrl, 'an http(s) URL');
   return problems;
 }
 

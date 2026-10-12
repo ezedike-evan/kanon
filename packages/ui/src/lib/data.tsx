@@ -77,6 +77,7 @@ import type {
   TimedTradesState,
 } from './timed-types';
 import { RISK_NOT_CONNECTED, type PerplRiskState } from './perpl-risk-reads';
+import type { OnchainRecordState } from './onchain-record-reads';
 export type * from './timed-types';
 
 /**
@@ -492,6 +493,16 @@ export interface KanonDataSource {
    * a timer) only while a caller is mounted, and the same signed in or out.
    */
   usePerplRisk(): PerplRiskState;
+
+  /**
+   * What the chain holds for `address`'s rules: each pin, tightening and
+   * loosening, and each refusal with its predicate and number, newest first,
+   * every row with its transaction. Read from the Kanon indexer on Envio (two
+   * requests on a timer) only while a caller is mounted. Never a fixture:
+   * signed out it asks for sign-in, and with no indexer address it says the
+   * record is not connected.
+   */
+  useOnchainRecord(address: string | null): OnchainRecordState;
 }
 
 const dec = (n: string, decimals = 2): Decimal => parseDecimal(n, decimals);
@@ -585,6 +596,8 @@ const DEMO_TIMED_TRADES: TimedTradesState = { status: 'empty' };
 
 /** No gateway behind the demo source: the risk screen says market data is not connected, and invents no market. */
 const DEMO_PERPL_RISK: PerplRiskState = { status: 'unavailable', message: RISK_NOT_CONNECTED };
+/** No indexer behind the demo source either: the on-chain record says it is not connected, and invents no transaction. */
+const DEMO_ONCHAIN_RECORD: OnchainRecordState = { status: 'not_connected' };
 const demoTimedOpen = async (): Promise<TimedOpenResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 const demoTimedClose = async (): Promise<TimedCloseResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 
@@ -767,6 +780,7 @@ export const demoDataSource: KanonDataSource = {
   closeTimedTrade: demoTimedClose,
   useTimedTrades: () => DEMO_TIMED_TRADES,
   usePerplRisk: () => DEMO_PERPL_RISK,
+  useOnchainRecord: () => DEMO_ONCHAIN_RECORD,
 };
 
 /** Re-exported so a real provider can fall back to the demo trade id. */

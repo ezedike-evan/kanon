@@ -178,4 +178,14 @@ export { recordWithWalletLink } from './lib/wallet-link';
 // hands `resolveVenueTrade(...)` to `useConvexKanonSource`.
 export { createVenueTradeReads, type VenueTradeReadsDeps, type VenueTradeSession, type VenueTradeActions } from './lib/venue-trade-reads';
 export { createVenueTradeActions, resolveVenueTrade, type VenueTradeClientOptions } from './lib/venue-trade-client';
+// Profile's on-chain record: the Kanon indexer on Envio HyperIndex. An app with an indexer address
+// hands `resolveIndexer(...)` to `useConvexKanonSource`.
+export {
+  createIndexerPost,
+  resolveIndexer,
+  type IndexerClientOptions,
+  type IndexerPost,
+  type OnchainRecordState,
+} from './lib/onchain-record-reads';
+export type { IndexerRequest, OnchainKind, OnchainRow } from './lib/onchain-record';
 export type * from './lib/venue-types';

@@ -26,6 +26,8 @@ import { disconnectedVenueTrade } from './venue-trade-client';
 import { createVenueTradeReads, type VenueTradeActions } from './venue-trade-reads';
 import { createTimedTradeReads } from './timed-trade-reads';
 import { DISCONNECTED_RISK_STORE, createRiskStore, useRiskStore, type PerplRiskState } from './perpl-risk-reads';
+import { activeChain } from './monad-chain';
+import { createOnchainRecordReads, createOnchainRecordStores, type IndexerPost } from './onchain-record-reads';
 
 /**
  * Convex, wired to the live data source, once for both clients.
@@ -96,6 +98,13 @@ export function useConvexKanonSource(input: {
    * is not connected. Only the value at first render is used.
    */
   venueTrade?: VenueTradeActions | undefined;
+  /**
+   * The Kanon indexer on Envio, as one GraphQL request (`resolveIndexer`).
+   * Present, Profile's on-chain record is read from it for the signed-in
+   * wallet. Absent, the record says it is not connected. Only the value at
+   * first render is used.
+   */
+  indexer?: IndexerPost | undefined;
 }): KanonDataSource {
   const { hooks, api, session, pinClient } = input;
   // Fixed for the life of the source. `useSeries`, `useMarkets` and `useTicker` are hooks that
@@ -103,6 +112,11 @@ export function useConvexKanonSource(input: {
   // Convex's do, so the two must never be swapped under a component.
   const [marketFeed] = useState(() => input.marketFeed);
   const [venueTrade] = useState(() => input.venueTrade ?? disconnectedVenueTrade);
+  // One store per wallet for the life of the source, so a change of session does not drop a record
+  // already read. The chain is asked for at each read: the app configures it before any screen renders.
+  const [onchainStores] = useState(() =>
+    input.indexer ? createOnchainRecordStores({ post: input.indexer, chainId: () => activeChain().id }) : null,
+  );
 
   // The caller's own `users` row, found from the token. `userId` is only a
   // gate ("signed in, and signup has created a row"); it is never an argument.
@@ -322,6 +336,17 @@ export function useConvexKanonSource(input: {
     };
   }, [venueTrade]);
 
+  // Profile's on-chain record, from the Kanon indexer on Envio: public data keyed by the wallet's
+  // address, so Convex is not involved. Read only while the record is mounted, and only signed in.
+  const onchainRecordReads = useMemo(
+    () =>
+      createOnchainRecordReads({
+        stores: onchainStores,
+        session: { pending: session.pending, signedIn: session.signedIn },
+      }),
+    [onchainStores, session.pending, session.signedIn],
+  );
+
   // Guarded vaults and copy trading: the chain for what is true on-chain, Convex for finding it again.
   // Read only while a vault or copy screen is mounted (`useVaults`), never at the root.
   const vaultStrategy = useMemo(() => {
@@ -391,6 +416,7 @@ export function useConvexKanonSource(input: {
       ...venueTradeReads,
       ...timedTradeReads,
       ...perplRiskReads,
+      ...onchainRecordReads,
       session: kanonSession,
       settings: userId ? settings : live.settings,
       ruleHistory: userId ? history : live.ruleHistory,
@@ -404,6 +430,7 @@ export function useConvexKanonSource(input: {
       venueTradeReads,
       timedTradeReads,
       perplRiskReads,
+      onchainRecordReads,
       kanonSession,
       settings,
       history,

@@ -278,6 +278,26 @@ rule's trade opens its evidence screen; a running timed trade goes to Predict.
 newest five under "Your trades", each linking to that address, and its Trades tile
 counts all three kinds.
 
+**The on-chain record (Profile > Previous rules, under the rule cards).** The rule cards
+are the app's account of a rule; this section is the chain's, read from the Kanon indexer
+on Envio HyperIndex (`packages/indexer`) for the signed-in wallet, and said so once in
+small type at its foot. One list, newest first: each pin, tightening, loosening proposed
+and loosening finalized, and each trade the gate refused. A row is three lines: what
+happened (with `ENFORCING` on the change that set the hash in force now and `COOLING OFF`
+on the proposal still waiting), then its particulars (spec hashes at the length the rule
+cards show them, or a refusal's predicate verbatim and its deciding value exactly as
+emitted), then the block time and the transaction. The whole row opens that transaction
+on the explorer. A deciding value takes a unit only where the contract fixes one (`bps`
+for a fair value gap); a close or a wick is the series' raw integer and is never
+formatted as a price. A refusal takes the `ban` mark in `refused` and no error styling.
+No row carries money. The newest six show, with one control for the rest. Its states are
+its own, whatever the rules above it are doing: a skeleton of the row; "not connected in
+this build" with no indexer address; a request to sign in (nothing is read signed out);
+an empty record, which is the ordinary answer before a first pin and says that it starts
+with one; and a read that failed, which keeps the last good list and says what time it is
+from. It is never a fixture: the demo rules above it get no made-up
+transactions.
+
 ## Density and rhythm
 
 "Scanty" is the failure: a screen with one number and a lot of dark. Raise

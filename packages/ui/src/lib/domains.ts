@@ -15,6 +15,7 @@ import { shallowEqual } from './store';
 import type { CopyLeadsState, SparklineState } from './home-types';
 import type { VaultSource } from './vault-types';
 import type { PerplRiskState } from './perpl-risk-reads';
+import type { OnchainRecordState } from './onchain-record-reads';
 import type { TimedStateRead, TimedTradesState } from './timed-types';
 import type { VenueAccountRead, VenueOrdersState } from './venue-types';
 
@@ -119,6 +120,14 @@ export function useTimedTrades(): TimedTradesState {
 /** Perpl's markets with their terms, funding and newest state. Public data, polled only while mounted. */
 export function usePerplRisk(): PerplRiskState {
   return useKanonSelector((s) => s.usePerplRisk)();
+}
+
+/**
+ * What the chain holds for a wallet's rules, newest first, from the Kanon indexer on Envio.
+ * Pass the signed-in wallet (`useAccount().address`). Read only while mounted.
+ */
+export function useOnchainRecord(address: string | null): OnchainRecordState {
+  return useKanonSelector((s) => s.useOnchainRecord)(address);
 }
 
 /**
