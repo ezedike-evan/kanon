@@ -1,6 +1,12 @@
 # yaml-language-server: $schema=../../node_modules/envio/evm.schema.json
 #
-# Kanon indexer, Envio HyperIndex v3, Monad mainnet (chain id 143).
+# Kanon indexer, Envio HyperIndex v3.
+#
+# THIS IS THE `envio` BRANCH: the one Envio's hosted service deploys. It differs
+# from `main` only in this file's defaults, which here are the Monad testnet
+# deployment of 5 October 2026 (chain 10143, the addresses in README.md), so the
+# hosted indexer needs no settings of its own. On `main` the defaults are inert
+# placeholders on chain 143, which is what the tests run against.
 #
 # Event signatures are inlined (copied from packages/contracts/src/*.sol) so the
 # indexer builds without a forge artifact step. If the contract events change,
@@ -98,21 +104,21 @@ contracts:
 chains:
   # Monad mainnet unless ENVIO_CHAIN_ID says otherwise. The contracts are on
   # Monad testnet (10143) today: `testnet.env` holds that deployment's values.
-  - id: ${ENVIO_CHAIN_ID:-143}
-    start_block: ${ENVIO_START_BLOCK:-0}
+  - id: ${ENVIO_CHAIN_ID:-10143}
+    start_block: ${ENVIO_START_BLOCK:-68489836}
     contracts:
       - name: StrategyRegistry
-        address: "${ENVIO_STRATEGY_REGISTRY:-0x0000000000000000000000000000000000000001}"
+        address: "${ENVIO_STRATEGY_REGISTRY:-0xdb91f547b59a3326f3db8e8f510e8dbbf4e50852}"
       - name: RefusalGate
-        address: "${ENVIO_REFUSAL_GATE:-0x0000000000000000000000000000000000000002}"
+        address: "${ENVIO_REFUSAL_GATE:-0x388f55962954c5083d885543af22b1b6ee640ec0}"
       - name: ThresholdMarket
-        address: "${ENVIO_THRESHOLD_MARKET:-0x0000000000000000000000000000000000000003}"
+        address: "${ENVIO_THRESHOLD_MARKET:-0x6105e943c40fd1c18d7288a5c443914af3672815}"
       - name: MarginAccount
-        address: "${ENVIO_MARGIN_ACCOUNT:-0x0000000000000000000000000000000000000004}"
+        address: "${ENVIO_MARGIN_ACCOUNT:-0x94fc3e4d37d348fa81556d748a34f31905dad333}"
       - name: InsuranceFund
-        address: "${ENVIO_INSURANCE_FUND:-0x0000000000000000000000000000000000000005}"
+        address: "${ENVIO_INSURANCE_FUND:-0xba0dda7891bab53af7a6ccd2f4d12484a00b247f}"
       - name: VaultFactory
-        address: "${ENVIO_VAULT_FACTORY:-0x0000000000000000000000000000000000000006}"
+        address: "${ENVIO_VAULT_FACTORY:-0x3ae5478b8bbedc7273e0df70b361e7faca7ecf8d}"
       # GuardedVault and CopyVault addresses are discovered from VaultFactory
       # events. Entries without an address are the dynamic ones.
       - name: GuardedVault
@@ -121,5 +127,5 @@ chains:
       # series (BTC/USD and ETH/USD are the demo assets).
       - name: CanonicalSeries
         address:
-          - "${ENVIO_CANONICAL_SERIES_BTC:-0x0000000000000000000000000000000000000007}"
-          - "${ENVIO_CANONICAL_SERIES_ETH:-0x0000000000000000000000000000000000000008}"
+          - "${ENVIO_CANONICAL_SERIES_BTC:-0x74c4b8710fb83dcc18c1a5ae2e35a63dc005257a}"
+          - "${ENVIO_CANONICAL_SERIES_ETH:-0x8d2d1b9dafa8f68eccfec9fdebbe04268b4ffbf3}"
