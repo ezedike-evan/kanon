@@ -23,9 +23,9 @@ Verified handles (fill in, with the date checked):
 
 | Who | Handle | Checked |
 |---|---|---|
-| Monad | | |
-| Perpl | | |
-| Privy | | |
+| Monad | `@monad` | 13 Oct 2026, from news reports naming the verified account |
+| Perpl | `@perpltrade` | 13 Oct 2026, from the X link on perpl.xyz |
+| Privy | `@privy_io` | 13 Oct 2026, from several company directories |
 
 ## Sprint: 11 to 13 October
 
@@ -35,7 +35,7 @@ Verified handles (fill in, with the date checked):
 | Mon 12 | 9:30 AM | Build update | A market order placed from the chart on Perpl testnet, opened and closed | Gateway hosted, order path working on the public address | 30 s clip ending on the transaction in the explorer | The two testnet transactions already in `packages/execution/README.md`, as text |
 | Mon 12 | 1:00 PM | Bounty clip | Predict: a pair called up or down for a minute, closed by the server | Predict working on the public address | 30 s vertical clip of the reel, one trade start to finish | Skip |
 | Mon 12 | 6:00 PM | Thread | One record of every trade: chart, Predict and rule, each with its transactions | Trading records checked signed in | 3 images: the list, a trade's details, a transaction | Fold into Tuesday's thread |
-| Tue 13 | 9:30 AM | Build update | The compiler: plain language to an exact spec, every default shown | Compile and review working on the public address | 30 s clip | Skip |
+| Tue 13 | 9:30 AM | Build update | The compiler: plain language to an exact spec, every default shown. **Slipped 13 Oct:** the compiler's model key is not set on the hosted backend, so nothing compiles on the public address. Not postable in this slot | Compile and review working on the public address | 30 s clip | Skip. If a compile is seen to finish on the public address later today, post it then; otherwise it moves to the judging list as a build update |
 | Tue 13 | 2:00 PM | Thread | The demo video, and what each part proves | Demo video recorded (see `videos.md`) | The video, then 3 stills | Post the video alone |
 | Tue 13 | 9:00 PM | Post | Submitted: the app, the repo, the video, and what is not done yet | Submission sent | Screenshot of the project profile | None: this one is posted |
 
