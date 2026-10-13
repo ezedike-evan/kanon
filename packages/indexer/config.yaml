@@ -18,7 +18,7 @@
 # Envio Cloud injects. The defaults below are inert placeholders so
 # `envio codegen` and the tests run without a deployment.
 name: kanon-indexer
-description: Trade history, refusals, strategy timelines and positions for Kanon on Monad.
+description: Trade history, refusals, strategy timelines and positions for Kanon on Monad testnet.
 ecosystem: evm
 
 address_format: lowercase
