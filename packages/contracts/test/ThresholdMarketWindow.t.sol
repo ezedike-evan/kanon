@@ -207,7 +207,9 @@ contract ThresholdMarketWindowTest is Test {
             t += CADENCE + (r % 400);
             vm.warp(t);
             times[i] = t;
-            prices[i] = int64(int256(1 + ((r >> 40) % 1_000_000)));
+            // From 50 up: `_record` prints a confidence of 1, and the series refuses a print whose
+            // confidence is wider than MAX_CONF_BPS (2%) of its price, which a price under 50 is.
+            prices[i] = int64(int256(50 + ((r >> 40) % 1_000_000)));
             _record(prices[i]);
         }
         uint256 lo = T0 + (a % (t - T0 + 200));
