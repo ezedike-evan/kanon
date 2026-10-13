@@ -140,10 +140,13 @@ export function useConvexKanonSource(input: {
 
   const compile = hooks.useAction(api.compiler.compileStrategy);
   const saveDraft = hooks.useMutation(api.strategies.saveDraft);
-  const pinStrategy = hooks.useMutation(api.strategies.pinStrategy);
-  const amendStrategy = hooks.useMutation(api.strategies.amendStrategy);
-  const finalizeAmendment = hooks.useMutation(api.strategies.finalizeAmendment);
+  // Actions, not mutations: each reads the transaction from the chain before it saves anything.
+  const pinStrategy = hooks.useAction(api.strategies.pinStrategy);
+  const amendStrategy = hooks.useAction(api.strategies.amendStrategy);
+  const finalizeAmendment = hooks.useAction(api.strategies.finalizeAmendment);
   const withdrawAmendment = hooks.useMutation(api.strategies.withdrawAmendment);
+  // The text a wallet signs to link itself to the account: the pin asks for it, and so does Predict.
+  const walletLinkMessage = hooks.useAction(api.users.walletLinkChallenge);
   const runProposer = hooks.useAction(api.proposer.runProposer);
   const blockedReport = hooks.useAction(api.proposer.blockedReport);
   const undoTrade = hooks.useMutation(api.trades.undoTrade);
@@ -158,6 +161,7 @@ export function useConvexKanonSource(input: {
       amendStrategy: (args) => amendStrategy(args),
       finalizeAmendment: (args) => finalizeAmendment(args),
       withdrawAmendment: (args) => withdrawAmendment(args),
+      walletLinkMessage: () => walletLinkMessage({}) as Promise<{ message: string }>,
       runProposer: (args) => runProposer(args),
       blockedReport: (args) => blockedReport(args),
       undoTrade: (args) => undoTrade(args),
@@ -171,6 +175,7 @@ export function useConvexKanonSource(input: {
       amendStrategy,
       finalizeAmendment,
       withdrawAmendment,
+      walletLinkMessage,
       runProposer,
       blockedReport,
       undoTrade,
@@ -212,7 +217,6 @@ export function useConvexKanonSource(input: {
   );
   const linkChainMarket = hooks.useMutation(api.markets.linkChainMarket);
   const recordPosition = hooks.useAction(api.predictions.recordPosition);
-  const walletLinkMessage = hooks.useAction(api.users.walletLinkChallenge);
   const predictReads = useMemo(
     () =>
       createPredictReads({

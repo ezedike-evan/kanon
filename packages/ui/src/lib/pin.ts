@@ -88,6 +88,11 @@ export interface PinClient {
   ): Promise<{ txHash: string; cooldownEndsAtMs: number | null }>;
   /** Permissionless: applies a loosening whose cooldown has fully run. */
   finalizeLoosening(chainStrategyId: string): Promise<{ txHash: string }>;
+  /**
+   * Signs text with the connected wallet (`personal_sign`), to link it to the account the first
+   * time a pin is recorded. It moves no funds and grants nothing. Absent when the client cannot sign.
+   */
+  signMessage?(message: string): Promise<string>;
 }
 
 export class PinError extends Error {

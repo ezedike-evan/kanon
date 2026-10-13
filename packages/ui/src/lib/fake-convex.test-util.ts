@@ -5,7 +5,8 @@ import { useEffect, useSyncExternalStore } from 'react';
  * name, `emit` to push a new result (as a live query would), and a count of
  * which queries are subscribed at the moment and which actions were called.
  * A mutation records what it was called with and answers `{}` unless
- * `onMutation` gives it something else to do, a throw included.
+ * `onMutation` gives it something else to do, a throw included. An action does
+ * the same, answering `{ outcomes: {} }` unless `onAction` says otherwise.
  */
 export function createFakeConvex() {
   const results = new Map<string, unknown>();
@@ -14,6 +15,8 @@ export function createFakeConvex() {
   const actionCalls: Record<string, number> = {};
   const mutationCalls: Array<{ name: string; args: unknown }> = [];
   const mutationAnswers = new Map<string, (args: any) => unknown>();
+  const actionArgs: Array<{ name: string; args: unknown }> = [];
+  const actionAnswers = new Map<string, (args: any) => unknown>();
 
   const subscribe = (l: () => void) => {
     listeners.add(l);
@@ -44,7 +47,7 @@ export function createFakeConvex() {
   // Convex returns the same function for the same reference on every render; so does this,
   // or every consumer of one would look like it had changed.
   const mutations = new Map<string, (args?: unknown) => Promise<unknown>>();
-  const actions = new Map<string, () => Promise<unknown>>();
+  const actions = new Map<string, (args?: unknown) => Promise<unknown>>();
 
   return {
     api,
@@ -62,9 +65,11 @@ export function createFakeConvex() {
       },
       useAction: (ref: any) => {
         if (!actions.has(ref.__name)) {
-          actions.set(ref.__name, async () => {
+          actions.set(ref.__name, async (args) => {
             actionCalls[ref.__name] = (actionCalls[ref.__name] ?? 0) + 1;
-            return { outcomes: {} };
+            actionArgs.push({ name: ref.__name, args });
+            const answer = actionAnswers.get(ref.__name);
+            return answer ? answer(args) : { outcomes: {} };
           });
         }
         return actions.get(ref.__name)!;
@@ -82,6 +87,12 @@ export function createFakeConvex() {
     /** What a mutation answers from now on: a value, or a throw. */
     onMutation(name: string, answer: (args: any) => unknown) {
       mutationAnswers.set(name, answer);
+    },
+    /** Every action call so far, in order, with its arguments. */
+    actionArgs,
+    /** What an action answers from now on: a value, or a throw. */
+    onAction(name: string, answer: (args: any) => unknown) {
+      actionAnswers.set(name, answer);
     },
   };
 }

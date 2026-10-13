@@ -20,6 +20,7 @@ const SERIES = '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9' as const;
 const TARGET = { specHash: SPEC_HASH, predicatesCommitment: COMMITMENT, series: SERIES };
 const TX = `0x${'cd'.repeat(32)}` as Hex;
 const MIN_BOND = 250_000_000_000_000_000n;
+const SIGNATURE = `0x${'5a'.repeat(65)}` as Hex;
 
 const TIGHTEN_SIG =
   'tighten(uint256,bytes32,bytes32,address,(uint8,bytes32,uint8,uint256,uint256,uint8,uint8,uint256)[],(uint8,bytes32,uint8,uint256,uint256,uint8,uint8,uint256)[])';
@@ -75,6 +76,11 @@ function fakeWallet(opts: { reject?: boolean } = {}) {
             throw Object.assign(new Error('User rejected the request.'), { code: 4001 });
           }
           return TX;
+        case 'personal_sign':
+          if (opts.reject) {
+            throw Object.assign(new Error('User rejected the request.'), { code: 4001 });
+          }
+          return SIGNATURE;
         default:
           throw new Error(`unexpected wallet call ${method}`);
       }
@@ -321,6 +327,31 @@ describe('createViemPinClient', () => {
     expect(tighten.slice(10).startsWith(
       `${'7'.padStart(64, '0')}${SPEC_HASH.slice(2)}${COMMITMENT.slice(2)}${SERIES.slice(2).toLowerCase().padStart(64, '0')}`,
     )).toBe(true);
+  });
+
+  it('signs the link message with the connected wallet, and sends no transaction for it', async () => {
+    const wallet = fakeWallet();
+    const client = clientWith(wallet, fakeNode());
+    expect(await client.signMessage!('Link this wallet')).toBe(SIGNATURE);
+    const signed = wallet.calls.find((c) => c.method === 'personal_sign');
+    expect(signed!.params).toEqual([toHex('Link this wallet'), ACCOUNT]);
+    expect(wallet.calls.find((c) => c.method === 'eth_sendTransaction')).toBeUndefined();
+  });
+
+  it('a declined link signature is "rejected", and no wallet is "no_wallet"', async () => {
+    const declined = clientWith(fakeWallet({ reject: true }), fakeNode());
+    await expect(declined.signMessage!('Link this wallet')).rejects.toMatchObject({
+      name: 'PinError',
+      code: 'rejected',
+    });
+    const none = createViemPinClient({
+      chain: monad,
+      registryAddress: REGISTRY,
+      hasWallet: true,
+      getSigner: async () => null,
+      publicTransport: fakeNode(),
+    });
+    await expect(none.signMessage!('Link this wallet')).rejects.toMatchObject({ code: 'no_wallet' });
   });
 
   it('proposeLoosening sends the new commitment and series too', async () => {

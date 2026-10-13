@@ -12,15 +12,40 @@
  *   - a pin the chain accepted whose row failed to save is retried, never sent
  *     twice (a second pin would post a second bond)
  *   - the hash that is signed is the hash of the spec that is saved
+ *   - a row counts as saved only when the server answers `ok: true`. It reads
+ *     the transaction from the chain itself, and when it will not save it says
+ *     why in a sentence: that sentence is what the user is shown. A refused pin
+ *     is kept and retried exactly as one whose save threw
+ *   - the first pin from a wallet the server has not linked asks that wallet
+ *     for one signature of the server's own link message, and records the same
+ *     pin once more with it. Nothing is sent to the chain for that
+ *   - a change the registry took whose row was not saved says so, and names
+ *     the transaction
  */
 
 import { isSpecOnchainTightening, planAmendment, toPredicateDefinitions, type StrategySpec } from '@kanon/spec';
 import type { AmendOutcome, PinOutcome } from './flow-types';
 import type { LiveActions } from './live';
 import { PinError, buildPinTarget, type PinClient, type PinReceipt, type PinTarget } from './pin';
+import { recordWithWalletLink, replyFailed } from './wallet-link';
 
 const errorText = (err: unknown, fallback: string) =>
   err instanceof Error && err.message ? err.message : fallback;
+
+/** Whether the server said it saved the row. Only a plain `ok: true` counts: anything else did not save. */
+const replySaved = (reply: unknown): boolean =>
+  typeof reply === 'object' && reply !== null && (reply as { ok?: unknown }).ok === true;
+
+/** The server's own sentence for a row it would not save, when it sent one. */
+const refusalText = (reply: unknown): string | undefined =>
+  replyFailed(reply) && typeof reply.message === 'string' && reply.message ? reply.message : undefined;
+
+const unsavedPinText = (txHash: string) =>
+  `The registry accepted the pin (${txHash}) but saving it here failed. Try again; it will not be sent twice.`;
+
+/** A tighten, a proposal or a finalize is already on-chain when its row fails to save: say so, and why. */
+const unsavedChangeText = (txHash: string, why: string | undefined) =>
+  `The registry accepted the change (${txHash}) but saving it here failed${why ? `: ${why}` : '.'}`;
 
 export interface UnsavedPin {
   current: { hash: string; receipt: PinReceipt } | null;
@@ -32,7 +57,7 @@ export interface PinFlowInput {
   draft: { _id: string; specHash: string } | undefined;
   acknowledged: boolean;
   pinClient: PinClient;
-  actions: Pick<LiveActions, 'saveDraft' | 'pinStrategy'>;
+  actions: Pick<LiveActions, 'saveDraft' | 'pinStrategy' | 'walletLinkMessage'>;
   unsaved: UnsavedPin;
 }
 
@@ -57,6 +82,8 @@ export async function runPinFlow(i: PinFlowInput): Promise<PinOutcome> {
     };
   }
 
+  // The pin of this spec the chain holds, whether it was sent now or on an earlier try.
+  let accepted: PinReceipt | undefined;
   try {
     // The hash, the predicates commitment and the series address, all derived from the spec.
     // A rule with no deployed series, or one the gate cannot encode, is not sent anywhere.
@@ -75,32 +102,42 @@ export async function runPinFlow(i: PinFlowInput): Promise<PinOutcome> {
       await actions.saveDraft({ strategyId: draft._id, spec });
     }
 
-    let receipt = unsaved.current?.hash === hash ? unsaved.current.receipt : undefined;
-    if (!receipt) {
-      receipt = await pinClient.pin(target);
-      unsaved.current = { hash, receipt };
+    accepted = unsaved.current?.hash === hash ? unsaved.current.receipt : undefined;
+    if (!accepted) {
+      accepted = await pinClient.pin(target);
+      unsaved.current = { hash, receipt: accepted };
     }
-    await actions.pinStrategy({
-      strategyId: draft._id,
-      specHash: hash,
-      predicatesCommitment: receipt.predicatesCommitment,
-      series: receipt.series,
-      bondAtoms: receipt.bond,
-      txHash: receipt.txHash,
-      chainId: receipt.chainId,
-      registryAddress: receipt.registryAddress,
-      chainStrategyId: receipt.chainStrategyId,
-    });
+    const receipt = accepted;
+    // The server reads the pin from the chain before it marks the rule pinned. A wallet it has not
+    // linked yet signs the link message once, and the same pin is recorded again with that signature.
+    const reply = await recordWithWalletLink(
+      (extra) =>
+        actions.pinStrategy({
+          strategyId: draft._id,
+          specHash: hash,
+          predicatesCommitment: receipt.predicatesCommitment,
+          series: receipt.series,
+          bondAtoms: receipt.bond,
+          txHash: receipt.txHash,
+          chainId: receipt.chainId,
+          registryAddress: receipt.registryAddress,
+          chainStrategyId: receipt.chainStrategyId,
+          ...extra,
+        }),
+      { walletLinkMessage: actions.walletLinkMessage, signMessage: pinClient.signMessage?.bind(pinClient) },
+    );
+    if (!replySaved(reply)) {
+      // Not saved, so the pin stays in `unsaved`: the next try records this one and sends no other.
+      return { ok: false, reason: 'failed', message: refusalText(reply) ?? unsavedPinText(receipt.txHash) };
+    }
     unsaved.current = null;
     return { ok: true, txHash: receipt.txHash };
   } catch (err) {
-    if (err instanceof PinError) return { ok: false, reason: err.code, message: err.message };
+    // Before the chain holds the pin, a PinError is the wallet's or the registry's own answer. After
+    // it (the link signature was declined) the pin exists and is not saved, which is what is said.
+    if (err instanceof PinError && !accepted) return { ok: false, reason: err.code, message: err.message };
     if (unsaved.current) {
-      return {
-        ok: false,
-        reason: 'failed',
-        message: `The registry accepted the pin (${unsaved.current.receipt.txHash}) but saving it here failed. Try again; it will not be sent twice.`,
-      };
+      return { ok: false, reason: 'failed', message: unsavedPinText(unsaved.current.receipt.txHash) };
     }
     return { ok: false, reason: 'failed', message: errorText(err, 'The pin did not complete.') };
   }
@@ -129,6 +166,8 @@ export async function runAmendFlow(i: AmendFlowInput): Promise<AmendOutcome> {
   const availability = pinClient.availability();
   if (availability.state !== 'ready') return { ok: false, message: availability.message };
 
+  // The transaction of a change the registry has taken. A failure after it is a failure to save.
+  let sent: string | undefined;
   try {
     const built = await buildPinTarget(staged, pinClient.series);
     if (!built.ok) return { ok: false, message: built.message };
@@ -147,20 +186,23 @@ export async function runAmendFlow(i: AmendFlowInput): Promise<AmendOutcome> {
         old: toPredicateDefinitions(current),
         next: toPredicateDefinitions(staged),
       });
-      await actions.amendStrategy({
+      sent = txHash;
+      const reply = await actions.amendStrategy({
         strategyId: strategy._id,
         nextSpec: staged,
         predicatesCommitment: target.predicatesCommitment,
         series: target.series,
         txHash,
       });
+      if (!replySaved(reply)) return { ok: false, message: unsavedChangeText(txHash, refusalText(reply)) };
       return { ok: true, kind: 'immediate' };
     }
     const { txHash, cooldownEndsAtMs } = await pinClient.proposeLoosening(
       strategy.chainStrategyId,
       target,
     );
-    await actions.amendStrategy({
+    sent = txHash;
+    const reply = await actions.amendStrategy({
       strategyId: strategy._id,
       nextSpec: staged,
       predicatesCommitment: target.predicatesCommitment,
@@ -168,8 +210,10 @@ export async function runAmendFlow(i: AmendFlowInput): Promise<AmendOutcome> {
       txHash,
       ...(cooldownEndsAtMs !== null ? { chainCooldownEndsAt: cooldownEndsAtMs } : {}),
     });
+    if (!replySaved(reply)) return { ok: false, message: unsavedChangeText(txHash, refusalText(reply)) };
     return { ok: true, kind: 'cooling_off' };
   } catch (err) {
+    if (sent) return { ok: false, message: unsavedChangeText(sent, errorText(err, '')) };
     return { ok: false, message: errorText(err, 'The change could not be sent.') };
   }
 }
@@ -206,11 +250,16 @@ export async function runFinalizeFlow(i: PendingFlowInput): Promise<AmendOutcome
   const blocked = pendingGuard(i);
   if (blocked) return blocked;
   const { strategy, pinClient, actions } = i;
+  // The transaction of a finalize the registry has taken. A failure after it is a failure to save.
+  let sent: string | undefined;
   try {
     const { txHash } = await pinClient.finalizeLoosening(strategy!.chainStrategyId!);
-    await actions.finalizeAmendment({ strategyId: strategy!._id, txHash });
+    sent = txHash;
+    const reply = await actions.finalizeAmendment({ strategyId: strategy!._id, txHash });
+    if (!replySaved(reply)) return { ok: false, message: unsavedChangeText(txHash, refusalText(reply)) };
     return { ok: true, kind: 'cooling_off' };
   } catch (err) {
+    if (sent) return { ok: false, message: unsavedChangeText(sent, errorText(err, '')) };
     return { ok: false, message: errorText(err, 'The change could not be applied yet.') };
   }
 }

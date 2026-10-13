@@ -52,6 +52,7 @@ import {
   type UnsavedPin,
 } from './flows';
 import { buildPinTarget, type PinClient, type PinTargetResult } from './pin';
+import type { WalletLinkDeps } from './wallet-link';
 
 /**
  * The live `KanonDataSource`, built once for both clients.
@@ -79,6 +80,39 @@ export type RunProposerResult =
   | { status: 'unavailable'; reason: string; message: string }
   | { status: 'blocked'; message: string };
 
+/**
+ * What a recording action answers when it did not save: why, and a sentence fit
+ * to show the user as it is. These actions read the chain themselves, so a
+ * well-formed transaction hash is not enough to be saved.
+ */
+export interface RecordRefused<Reason extends string = string> {
+  ok: false;
+  reason: Reason;
+  message: string;
+}
+
+export type PinStrategyReply =
+  | { ok: true; specHash: string }
+  | RecordRefused<
+      | 'invalid'
+      | 'not_configured'
+      | 'rejected'
+      | 'not_confirmed'
+      | 'no_user'
+      | 'wallet_not_linked'
+      | 'bad_signature'
+      | 'already_linked'
+      | 'wallet_in_use'
+    >;
+
+export type AmendStrategyReply =
+  | { ok: true; kind: 'none' }
+  | { ok: true; kind: 'immediate'; specHash: string }
+  | { ok: true; kind: 'cooling_off'; cooldownEndsAt: number }
+  | RecordRefused;
+
+export type FinalizeAmendmentReply = { ok: true; specHash: string } | RecordRefused;
+
 export interface LiveActions {
   compile(args: {
     prompt: string;
@@ -89,6 +123,10 @@ export interface LiveActions {
     strategyId?: string;
     spec: StrategySpec;
   }): Promise<{ strategyId: string; specHash: string }>;
+  /**
+   * `strategies:pinStrategy`, an action. It marks the rule pinned only after reading the pin from
+   * the chain. `walletSignature` is the signed link message, sent on the retry after `wallet_not_linked`.
+   */
   pinStrategy(args: {
     strategyId: string;
     specHash: string;
@@ -99,7 +137,9 @@ export interface LiveActions {
     chainId: number;
     registryAddress: string;
     chainStrategyId: string;
-  }): Promise<unknown>;
+    walletSignature?: string;
+  }): Promise<PinStrategyReply>;
+  /** `strategies:amendStrategy`, an action. */
   amendStrategy(args: {
     strategyId: string;
     nextSpec: StrategySpec;
@@ -107,9 +147,13 @@ export interface LiveActions {
     series: string;
     txHash: string;
     chainCooldownEndsAt?: number;
-  }): Promise<{ kind: 'none' | 'immediate' | 'cooling_off' }>;
-  finalizeAmendment(args: { strategyId: string; txHash: string }): Promise<unknown>;
+  }): Promise<AmendStrategyReply>;
+  /** `strategies:finalizeAmendment`, an action. */
+  finalizeAmendment(args: { strategyId: string; txHash: string }): Promise<FinalizeAmendmentReply>;
+  /** `strategies:withdrawAmendment`, still a mutation: it throws when it does not save. */
   withdrawAmendment(args: { strategyId: string; txHash: string }): Promise<unknown>;
+  /** `users.walletLinkChallenge`, for the first pin from a wallet the server has not linked yet. */
+  walletLinkMessage?: WalletLinkDeps['walletLinkMessage'];
   runProposer(args: { strategyId: string }): Promise<RunProposerResult>;
   blockedReport(args: {
     strategyId: string;

@@ -292,5 +292,14 @@ export function createViemPinClient(opts: ViemPinClientOptions): PinClient {
       const { hash } = await send('finalizeLoosening', [asId(chainStrategyId)]);
       return { txHash: hash };
     },
+
+    async signMessage(message: string): Promise<string> {
+      const { wallet, account } = await walletFor();
+      try {
+        return await wallet.signMessage({ account, message });
+      } catch (err) {
+        throw toPinError(err);
+      }
+    },
   };
 }

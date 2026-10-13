@@ -1,3 +1,4 @@
+import { createElement, type ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
   RULE_04,
@@ -9,6 +10,9 @@ import {
   toPredicateDefinitions,
   type StrategySpec,
 } from '@kanon/spec';
+import { useConvexKanonSource } from './convex-source';
+import { KanonDataProvider, useKanonData, type KanonDataSource } from './data';
+import { createFakeConvex } from './fake-convex.test-util';
 import {
   runAmendFlow,
   runFinalizeFlow,
@@ -16,9 +20,16 @@ import {
   runWithdrawFlow,
   type UnsavedPin,
 } from './flows';
+import type { LiveActions } from './live';
 import { PinError, type PinClient, type PinReceipt, type PinTarget } from './pin';
+import { createHarness, settle } from './render-harness';
 
 const TX = `0x${'cd'.repeat(32)}`;
+// The server's own sentences, as `strategies.ts` words them. The flows show them as they are.
+const NOT_CONFIRMED = 'The transaction is not confirmed yet. Try again in a moment; nothing needs to be sent twice.';
+const NOT_LINKED = 'Sign the link message with your wallet, so the pin can be checked against it.';
+const BAD_SIGNATURE = 'That signature is not from a wallet. Sign the link message again.';
+const LINK_MESSAGE = 'Link this wallet to Kanon account did:privy:abc';
 const SERIES_BTC = '0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9';
 const SERIES_OTHER = '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707';
 const RECEIPT: PinReceipt = {
@@ -85,9 +96,9 @@ async function pinInput(over: Record<string, unknown> = {}) {
       log.push('convex.saveDraft');
       return { strategyId: 'd1', specHash: hash };
     }),
-    pinStrategy: vi.fn(async () => {
+    pinStrategy: vi.fn<LiveActions['pinStrategy']>(async () => {
       log.push('convex.pinStrategy');
-      return {};
+      return { ok: true, specHash: hash };
     }),
   };
   return {
@@ -137,7 +148,7 @@ describe('runPinFlow', () => {
     const order: string[] = [];
     t.actions.pinStrategy.mockImplementation(async () => {
       order.push(...t.chainLog, 'convex.pinStrategy');
-      return {};
+      return { ok: true, specHash: t.hash };
     });
     const out = await runPinFlow(t.input);
     expect(out).toEqual({ ok: true, txHash: TX });
@@ -194,6 +205,143 @@ describe('runPinFlow', () => {
   });
 });
 
+describe('runPinFlow: what the server answers', () => {
+  it('a pin the server will not save is reported in its words, kept, and never sent twice', async () => {
+    const t = await pinInput();
+    const refusal = { ok: false, reason: 'not_confirmed', message: NOT_CONFIRMED } as const;
+    t.actions.pinStrategy.mockResolvedValueOnce(refusal).mockResolvedValueOnce(refusal);
+    const state = unsaved();
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(await runPinFlow({ ...t.input, unsaved: state })).toEqual({
+        ok: false,
+        reason: 'failed',
+        message: NOT_CONFIRMED,
+      });
+      expect(state.current).toEqual({ hash: t.hash, receipt: RECEIPT });
+    }
+
+    expect(await runPinFlow({ ...t.input, unsaved: state })).toEqual({ ok: true, txHash: TX });
+    expect(t.chainLog).toHaveLength(1); // one pin, one bond, however many tries it took to save
+    expect(t.actions.pinStrategy).toHaveBeenCalledTimes(3);
+    // Every try records the same pin.
+    const calls = t.actions.pinStrategy.mock.calls.map(([args]) => args);
+    expect(calls[1]).toEqual(calls[0]);
+    expect(calls[2]).toEqual(calls[0]);
+    expect(state.current).toBeNull();
+  });
+
+  it('a reply that does not say ok is not a save', async () => {
+    const t = await pinInput();
+    t.actions.pinStrategy.mockResolvedValueOnce({} as never);
+    const state = unsaved();
+    const out = await runPinFlow({ ...t.input, unsaved: state });
+    expect(out).toMatchObject({ ok: false, reason: 'failed' });
+    expect(out.ok === false && out.message).toContain(TX);
+    expect(state.current).not.toBeNull();
+  });
+
+  /** A wallet that can sign, a server that hands out its link message, and a pin recorded through both. */
+  async function linking(over: Partial<PinClient> = {}) {
+    const sign = vi.fn(async (_message: string) => '0xsig');
+    const link = vi.fn(async () => ({ message: LINK_MESSAGE }));
+    const { client, log: chainLog } = fakeClient({ signMessage: sign, ...over });
+    const t = await pinInput({ pinClient: client });
+    const state = unsaved();
+    const notLinked = { ok: false, reason: 'wallet_not_linked', message: NOT_LINKED } as const;
+    return {
+      sign,
+      link,
+      chainLog,
+      state,
+      notLinked,
+      pinStrategy: t.actions.pinStrategy,
+      input: { ...t.input, actions: { ...t.actions, walletLinkMessage: link }, unsaved: state },
+    };
+  }
+
+  it('a wallet the server has not linked signs the link message once, and the same pin is recorded with it', async () => {
+    const t = await linking();
+    t.pinStrategy.mockResolvedValueOnce(t.notLinked);
+
+    expect(await runPinFlow(t.input)).toEqual({ ok: true, txHash: TX });
+    expect(t.link).toHaveBeenCalledTimes(1);
+    expect(t.sign).toHaveBeenCalledTimes(1);
+    expect(t.sign).toHaveBeenCalledWith(LINK_MESSAGE);
+    expect(t.pinStrategy).toHaveBeenCalledTimes(2);
+    const [first, second] = t.pinStrategy.mock.calls.map(([args]) => args);
+    expect(first).not.toHaveProperty('walletSignature');
+    expect(second).toEqual({ ...first, walletSignature: '0xsig' });
+    expect(t.chainLog).toHaveLength(1); // linking sends nothing to the chain
+    expect(t.state.current).toBeNull();
+  });
+
+  it('a wallet the server already knows is never asked to sign', async () => {
+    const t = await linking();
+    expect(await runPinFlow(t.input)).toEqual({ ok: true, txHash: TX });
+    expect(t.link).not.toHaveBeenCalled();
+    expect(t.sign).not.toHaveBeenCalled();
+    expect(t.pinStrategy).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries once: a signature the server refuses is its failure, and the pin is kept', async () => {
+    const t = await linking();
+    t.pinStrategy
+      .mockResolvedValueOnce(t.notLinked)
+      .mockResolvedValueOnce({ ok: false, reason: 'bad_signature', message: BAD_SIGNATURE });
+
+    expect(await runPinFlow(t.input)).toEqual({ ok: false, reason: 'failed', message: BAD_SIGNATURE });
+    expect(t.sign).toHaveBeenCalledTimes(1);
+    expect(t.pinStrategy).toHaveBeenCalledTimes(2);
+    expect(t.chainLog).toHaveLength(1);
+    expect(t.state.current).not.toBeNull();
+  });
+
+  it('a client that cannot sign returns the server failure, and keeps the pin for the next try', async () => {
+    const { client, log: chainLog } = fakeClient(); // no `signMessage`
+    const t = await linking();
+    t.pinStrategy.mockResolvedValue(t.notLinked);
+
+    const input = { ...t.input, pinClient: client };
+    expect(await runPinFlow(input)).toEqual({ ok: false, reason: 'failed', message: NOT_LINKED });
+    expect(t.link).not.toHaveBeenCalled();
+    expect(t.pinStrategy).toHaveBeenCalledTimes(1);
+    expect(t.state.current).not.toBeNull();
+
+    // The next try records the pin already made. It does not post a second bond.
+    expect(await runPinFlow(input)).toEqual({ ok: false, reason: 'failed', message: NOT_LINKED });
+    expect(chainLog).toHaveLength(1);
+    expect(t.pinStrategy).toHaveBeenCalledTimes(2);
+  });
+
+  it('a source with no link message to hand out returns the server failure too', async () => {
+    const t = await linking();
+    t.pinStrategy.mockResolvedValue(t.notLinked);
+    const { walletLinkMessage: _none, ...actions } = t.input.actions;
+
+    expect(await runPinFlow({ ...t.input, actions })).toEqual({ ok: false, reason: 'failed', message: NOT_LINKED });
+    expect(t.sign).not.toHaveBeenCalled();
+    expect(t.pinStrategy).toHaveBeenCalledTimes(1);
+  });
+
+  it('a declined link signature does not say nothing was pinned: the pin is kept and recorded on the next try', async () => {
+    const t = await linking();
+    t.pinStrategy.mockResolvedValueOnce(t.notLinked).mockResolvedValueOnce(t.notLinked);
+    t.sign.mockRejectedValueOnce(new PinError('rejected', 'The signature was declined. Nothing was pinned.'));
+
+    const first = await runPinFlow(t.input);
+    expect(first).toMatchObject({ ok: false, reason: 'failed' });
+    expect(first.ok === false && first.message).toContain(TX);
+    expect(first.ok === false && first.message).not.toMatch(/nothing was pinned/i);
+    expect(t.state.current).not.toBeNull();
+
+    expect(await runPinFlow(t.input)).toEqual({ ok: true, txHash: TX });
+    expect(t.chainLog).toHaveLength(1);
+    expect(t.pinStrategy).toHaveBeenLastCalledWith(expect.objectContaining({ walletSignature: '0xsig' }));
+    expect(t.state.current).toBeNull();
+  });
+});
+
 describe('runPinFlow: what the pin carries', () => {
   it('says not deployed, and sends nothing, when the spec asset has no deployed series', async () => {
     const { client, log } = fakeClient({ series: {} });
@@ -235,7 +383,13 @@ describe('runAmendFlow', () => {
 
   async function setup(staged: StrategySpec | null, over: Record<string, unknown> = {}) {
     const { client, log } = fakeClient();
-    const actions = { amendStrategy: vi.fn(async () => ({ kind: 'immediate' as const })) };
+    const actions = {
+      amendStrategy: vi.fn<LiveActions['amendStrategy']>(async () => ({
+        ok: true,
+        kind: 'immediate',
+        specHash: '0xnext',
+      })),
+    };
     return {
       log,
       actions,
@@ -338,8 +492,52 @@ describe('runAmendFlow', () => {
       },
     });
     const t = await setup(edit(RULE_04, 'risk.riskPerTradeBps', 25), { pinClient: client });
-    expect(await runAmendFlow(t.input)).toMatchObject({ ok: false });
+    // Nothing reached the registry, so nothing claims it did.
+    expect(await runAmendFlow(t.input)).toEqual({
+      ok: false,
+      message: 'The signature was declined. Nothing was pinned.',
+    });
     expect(t.actions.amendStrategy).not.toHaveBeenCalled();
+  });
+
+  it('a tightening the registry took and the server will not save says so, with the transaction', async () => {
+    const t = await setup(edit(RULE_04, 'risk.riskPerTradeBps', 25));
+    t.actions.amendStrategy.mockResolvedValueOnce({ ok: false, reason: 'not_confirmed', message: NOT_CONFIRMED });
+    expect(await runAmendFlow(t.input)).toEqual({
+      ok: false,
+      message: `The registry accepted the change (${TX}) but saving it here failed: ${NOT_CONFIRMED}`,
+    });
+    expect(t.log).toHaveLength(1);
+    expect(t.log[0]).toMatch(/^chain\.tighten:/);
+  });
+
+  it('a loosening the registry took and the server will not save says so, with the transaction', async () => {
+    const t = await setup(edit(RULE_04, 'risk.stopDistanceBps', 90));
+    t.actions.amendStrategy.mockResolvedValueOnce({ ok: false, reason: 'not_confirmed', message: NOT_CONFIRMED });
+    expect(await runAmendFlow(t.input)).toEqual({
+      ok: false,
+      message: `The registry accepted the change (${TX}) but saving it here failed: ${NOT_CONFIRMED}`,
+    });
+    expect(t.log).toHaveLength(1);
+    expect(t.log[0]).toMatch(/^chain\.proposeLoosening:/);
+  });
+
+  it('a save that throws after the registry took the change says so too', async () => {
+    const t = await setup(edit(RULE_04, 'risk.riskPerTradeBps', 25));
+    t.actions.amendStrategy.mockRejectedValueOnce(new Error('network'));
+    expect(await runAmendFlow(t.input)).toEqual({
+      ok: false,
+      message: `The registry accepted the change (${TX}) but saving it here failed: network`,
+    });
+  });
+
+  it('a reply that does not say ok is not a save', async () => {
+    const t = await setup(edit(RULE_04, 'risk.riskPerTradeBps', 25));
+    t.actions.amendStrategy.mockResolvedValueOnce({ kind: 'immediate' } as never);
+    expect(await runAmendFlow(t.input)).toEqual({
+      ok: false,
+      message: `The registry accepted the change (${TX}) but saving it here failed.`,
+    });
   });
 });
 
@@ -357,7 +555,7 @@ describe('cooling-off flows', () => {
   function setup(over: Record<string, unknown> = {}) {
     const { client, log } = fakeClient();
     const actions = {
-      finalizeAmendment: vi.fn(async () => ({})),
+      finalizeAmendment: vi.fn<LiveActions['finalizeAmendment']>(async () => ({ ok: true, specHash: '0xnext' })),
       withdrawAmendment: vi.fn(async () => ({})),
     };
     return { log, actions, input: { userId: 'u1', strategy: cooling, pinClient: client, actions, ...over } };
@@ -379,6 +577,25 @@ describe('cooling-off flows', () => {
     const t = setup({ pinClient: client });
     expect(await runFinalizeFlow(t.input)).toEqual({ ok: false, message: 'CoolingOff' });
     expect(t.actions.finalizeAmendment).not.toHaveBeenCalled();
+  });
+
+  it('a finalize the registry took and the server will not save says so, with the transaction', async () => {
+    const t = setup();
+    t.actions.finalizeAmendment.mockResolvedValueOnce({ ok: false, reason: 'not_confirmed', message: NOT_CONFIRMED });
+    expect(await runFinalizeFlow(t.input)).toEqual({
+      ok: false,
+      message: `The registry accepted the change (${TX}) but saving it here failed: ${NOT_CONFIRMED}`,
+    });
+    expect(t.log).toEqual(['chain.finalizeLoosening:7']);
+  });
+
+  it('a finalize whose save throws after the registry took it says so too', async () => {
+    const t = setup();
+    t.actions.finalizeAmendment.mockRejectedValueOnce(new Error('nothing is cooling off'));
+    expect(await runFinalizeFlow(t.input)).toEqual({
+      ok: false,
+      message: `The registry accepted the change (${TX}) but saving it here failed: nothing is cooling off`,
+    });
   });
 
   it('withdraw is a tighten to exactly what is in force: hash, commitment and series as recorded', async () => {
@@ -406,5 +623,79 @@ describe('cooling-off flows', () => {
     expect(await runFinalizeFlow(t.input)).toEqual({ ok: false, message: 'Nothing is cooling off.' });
     expect(await runWithdrawFlow(t.input)).toEqual({ ok: false, message: 'Nothing is cooling off.' });
     expect(t.log).toEqual([]);
+  });
+});
+
+describe('the pin, through the data source', () => {
+  it('records through actions, and links the wallet with the message the server hands out', async () => {
+    const hash = await specHash(RULE_04);
+    const sign = vi.fn(async (_message: string) => '0xsig');
+    const { client, log: chainLog } = fakeClient({ signMessage: sign });
+    const fake = createFakeConvex();
+    // Which hook each function was bound with: the server refuses a call made as the wrong kind.
+    const bound: Record<string, string> = {};
+    const hooks = {
+      useQuery: fake.hooks.useQuery,
+      useMutation: (ref: any) => {
+        bound[ref.__name] = 'mutation';
+        return fake.hooks.useMutation(ref);
+      },
+      useAction: (ref: any) => {
+        bound[ref.__name] = 'action';
+        return fake.hooks.useAction(ref);
+      },
+    };
+
+    const seen: { source: KanonDataSource | null } = { source: null };
+    function Reader(): null {
+      seen.source = useKanonData();
+      return null;
+    }
+    const screens = [createElement(Reader, { key: 'reader' })];
+    function Bridge(): ReactElement {
+      const source = useConvexKanonSource({
+        hooks,
+        api: fake.api,
+        session: { pending: false, signedIn: true },
+        pinClient: client,
+        hasWallet: true,
+      });
+      return createElement(KanonDataProvider, { source, children: screens });
+    }
+    const h = createHarness();
+    await h.render(createElement(Bridge));
+    fake.emit('users.me', { _id: 'u1', username: 'x', name: 'X' });
+    fake.emit('strategies.listStrategiesByOwner', [
+      { _id: 'd1', _creationTime: 1, status: 'draft', pendingSpec: RULE_04, specHash: hash },
+    ]);
+    await settle();
+
+    expect(bound).toMatchObject({
+      'strategies.pinStrategy': 'action',
+      'strategies.amendStrategy': 'action',
+      'strategies.finalizeAmendment': 'action',
+      'strategies.withdrawAmendment': 'mutation',
+      'users.walletLinkChallenge': 'action',
+    });
+
+    const replies: unknown[] = [
+      { ok: false, reason: 'wallet_not_linked', message: NOT_LINKED },
+      { ok: true, specHash: hash },
+    ];
+    fake.onAction('strategies.pinStrategy', () => replies.shift());
+    fake.onAction('users.walletLinkChallenge', () => ({ message: LINK_MESSAGE }));
+
+    seen.source!.acknowledgeReview(true);
+    await settle();
+    expect(await seen.source!.pinStrategy()).toEqual({ ok: true, txHash: TX });
+
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect(sign).toHaveBeenCalledWith(LINK_MESSAGE);
+    const recorded = fake.actionArgs.filter((c) => c.name === 'strategies.pinStrategy').map((c) => c.args);
+    expect(recorded).toHaveLength(2);
+    expect(recorded[0]).toMatchObject({ strategyId: 'd1', specHash: hash, txHash: TX });
+    expect(recorded[1]).toEqual({ ...(recorded[0] as object), walletSignature: '0xsig' });
+    expect(chainLog).toHaveLength(1);
+    await h.unmount();
   });
 });
