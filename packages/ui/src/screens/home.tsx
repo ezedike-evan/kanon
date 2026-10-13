@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
+import { ActiveRuleAutopilotSheet } from '../components/autopilot';
 import { Col, Row, Screen, StatusBar, TabBar } from '../components/chrome';
 import { ActivitySection } from '../components/home/activity';
 import { AskAiCard } from '../components/home/ask-ai';
@@ -23,7 +24,7 @@ import { useTheme } from '../theme';
  * `MarketsSection`) never re-renders it, and a new trade never re-renders the
  * pair list.
  */
-function Core() {
+function Core({ onAutopilot }: { onAutopilot: () => void }) {
   const home = useHomeData();
   const rules = useKanonSelector(
     (s) => ({
@@ -45,7 +46,7 @@ function Core() {
   return (
     <>
       <StatsGrid stats={home.stats} rules={rules} latestTakenId={latestTaken?.id} />
-      <RuleSection rule={home.rule} />
+      <RuleSection rule={home.rule} onAutopilot={onAutopilot} />
     </>
   );
 }
@@ -73,6 +74,10 @@ export function HomeScreen() {
   const { colors } = useTheme();
   const [epoch, setEpoch] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  // Autopilot's terms and its switch, for the rule in force: a sheet over the page, opened from the rule's card.
+  const [autopilot, setAutopilot] = useState(false);
+  const openAutopilot = useCallback(() => setAutopilot(true), []);
+  const closeAutopilot = useCallback(() => setAutopilot(false), []);
 
   const refresh = useCallback(() => {
     setRefreshing(true);
@@ -100,7 +105,7 @@ export function HomeScreen() {
         <HomeHeader key={`h${epoch}`} />
         <Row align="start">
           <Col span={8}>
-            <Core key={`c${epoch}`} />
+            <Core key={`c${epoch}`} onAutopilot={openAutopilot} />
             <MarketsSection key={`m${epoch}`} />
             <LeadsSection key={`l${epoch}`} className={web('lg:hidden')} />
             <ActivitySection key={`a${epoch}`} />
@@ -119,6 +124,7 @@ export function HomeScreen() {
         {isWeb ? <HomeFoot key={`pf${epoch}`} part="pnl" className="hidden lg:flex" /> : null}
       </ScrollView>
       <TabBar active="home" />
+      <ActiveRuleAutopilotSheet open={autopilot} onClose={closeAutopilot} />
     </Screen>
   );
 }

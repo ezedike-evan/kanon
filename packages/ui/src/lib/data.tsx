@@ -23,6 +23,7 @@ import type { EditableParam } from '@kanon/spec';
 import type {
   AmendOutcome,
   AmendmentPreview,
+  AutopilotOutcome,
   CompilerStatus,
   DataMode,
   EditOutcome,
@@ -52,6 +53,7 @@ import type {
 } from './domain-types';
 import type { AnalyticsState, NansenState } from '@kanon/spec';
 import { DEMO_ANALYTICS } from './analytics-demo';
+import { AUTOPILOT_DEMO, type AutopilotNote } from './autopilot';
 
 const DEMO_ANALYTICS_STATE: AnalyticsState = { status: 'demo', report: DEMO_ANALYTICS };
 const NANSEN_NOT_CONNECTED: NansenState = { status: 'not_connected' };
@@ -104,7 +106,14 @@ export type Claim = {
   badge?: string;
   tone?: 'long' | 'ash';
 };
-export type BlockedRow = { symbol: string; at: string; detail: string; tradeId?: string };
+export type BlockedRow = {
+  symbol: string;
+  at: string;
+  detail: string;
+  tradeId?: string;
+  /** Autopilot judged it at a candle close; nobody pressed anything. */
+  autopilot?: boolean;
+};
 
 export interface RuleData {
   ordinal: string;
@@ -121,6 +130,8 @@ export interface RuleData {
   bucketSeconds: number;
   /** The asset as the series knows it, e.g. `BTC/USD`. */
   symbol: string;
+  /** Autopilot is on: the rule is judged on every closed candle with nobody pressing anything. */
+  autopilot: boolean;
 }
 
 export interface HomeStats {
@@ -154,6 +165,8 @@ export interface RefusalData {
   actualLabel: string;
   actualSub: string;
   tradeId: string;
+  /** Present when autopilot judged the setup at a candle close, with nobody pressing anything. */
+  autopilot?: AutopilotNote;
 }
 
 export interface CompilerData {
@@ -220,6 +233,12 @@ export interface ProposalData {
   sizeUnit: string;
   /** Where the account equity behind the size came from, stated rather than assumed. */
   sizing: string;
+  /**
+   * Present on a proposal autopilot wrote. It has no undo window and nothing to
+   * confirm: the gateway opens a timed trade for it, or says why it did not.
+   * `entry`, `stop` and `size` stay the rule's own sizing, not what was sent.
+   */
+  autopilot?: AutopilotNote;
 }
 
 export interface TradeDetailData {
@@ -231,6 +250,8 @@ export interface TradeDetailData {
   exit: Decimal | null;
   returnBps: number | null;
   claims: Claim[];
+  /** Present when autopilot judged the setup: where it stands, what was sent, and the way to its timed trade. */
+  autopilot?: AutopilotNote;
 }
 
 export interface BlockedLogData {
@@ -369,6 +390,13 @@ export interface KanonDataSource {
   confirmProposal(): Promise<TradeActionOutcome>;
   /** Cancels a pending trade proposal within the undo window. */
   undoProposal(): Promise<TradeActionOutcome>;
+  /**
+   * Turns autopilot on or off for one of the person's own rules, by its id. On,
+   * the rule is judged on every closed candle with nobody pressing anything.
+   * Resolves with what the server says the switch is now, or a sentence saying
+   * why it was not thrown; it never rejects. Signed out nothing is sent.
+   */
+  setAutopilot(strategyId: string, on: boolean): Promise<AutopilotOutcome>;
   /** Looks up a trade's evidence chain by id. Demo falls back to the demo trade; live returns null for an unknown id. */
   tradeDetail(id: string): TradeDetailData | null;
   /** A change waiting out its hold. Null when nothing is cooling off. */
@@ -615,6 +643,7 @@ export const demoDataSource: KanonDataSource = {
     predicates: [...RULE.predicates],
     bucketSeconds: 900,
     symbol: 'BTC/USD',
+    autopilot: false,
   },
   home: { ...HOME, sparkline: [...HOME.sparkline], attempts: HOME.taken + HOME.blocked },
   latestTradeId: TRADE_ID,
@@ -684,6 +713,10 @@ export const demoDataSource: KanonDataSource = {
   },
   async undoProposal() {
     return { ok: true };
+  },
+  async setAutopilot() {
+    // Demo: the switch is shown with its terms, and nothing is turned on for a rule nobody pinned.
+    return { ok: false, reason: 'demo', message: AUTOPILOT_DEMO };
   },
   tradeDetail(id: string) {
     return {

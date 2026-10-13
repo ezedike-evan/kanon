@@ -1,6 +1,7 @@
-import { memo, useMemo, type ReactNode } from 'react';
+import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { FlatList, Linking, Pressable, Text, View } from 'react-native';
 import { COOLING_OFF_SECONDS, abbreviateHash } from '@kanon/spec';
+import { AutopilotRow, AutopilotSheet } from '../components/autopilot';
 import { Badge, type BadgeProps } from '../components/badge';
 import { Card } from '../components/card';
 import { EmptyState } from '../components/empty-state';
@@ -14,6 +15,7 @@ import { Num } from '../components/ui';
 import { Link } from '../nav';
 import { useHaptics } from '../platform';
 import { useAccount } from '../lib/account';
+import { autopilotOffer, type AutopilotSubject } from '../lib/autopilot';
 import { useOnchainRecord } from '../lib/domains';
 import { activeChain } from '../lib/monad-chain';
 import { useRules } from '../lib/profile-hooks';
@@ -21,6 +23,7 @@ import {
   explorerUrl,
   ruleOrdinals,
   ruleSections,
+  ruleState,
   stampLabel,
   type RuleEntry,
   type RuleSection,
@@ -37,6 +40,10 @@ import type { RuleHistoryItem } from '../lib/domain-types';
  * its spec hash with the pin transaction one tap away. Nothing here loosens a
  * rule. The one entry that changes a pinned rule goes through the review screen,
  * where tightening applies at once and loosening waits out its hold.
+ *
+ * The rule enforcing now also says whether autopilot is on for it, and opens
+ * autopilot's terms and switch. A rule that was replaced while autopilot was on
+ * is still being judged, so it keeps that row, as the way to turn it off.
  *
  * Under the rules is the chain's own account of them: the on-chain record, read
  * from the Kanon indexer on Envio for the signed-in wallet. It has its own
@@ -135,12 +142,16 @@ const RuleCard = memo(function RuleCard({
   rule,
   state,
   ordinal,
+  onAutopilot,
 }: {
   rule: RuleHistoryItem;
   state: RuleState;
   ordinal: string;
+  /** Opens autopilot's terms and switch for this rule. */
+  onAutopilot: (ruleId: string) => void;
 }) {
   const badge = STATE_BADGE[state];
+  const offer = autopilotOffer(state, rule.autopilot, rule.candleSeconds !== null);
   const predicates = rule.name ? rule.name.split(' + ') : [];
   const actions = actionsFor(rule, state);
   const enforcing = state === 'pinned' || state === 'cooling_off';
@@ -188,6 +199,16 @@ const RuleCard = memo(function RuleCard({
           />
         ) : null}
 
+        {offer === 'none' ? null : (
+          <AutopilotRow
+            on={rule.autopilot}
+            candleSeconds={rule.candleSeconds}
+            replaced={state === 'superseded' && rule.autopilot}
+            onPress={() => onAutopilot(rule.id)}
+            className="border-t border-hairline"
+          />
+        )}
+
         {actions.length > 0 ? (
           <View className="flex-row border-t border-hairline">
             {actions.map((a, i) => (
@@ -225,11 +246,37 @@ export function ProfileRulesScreen() {
   const entries = useMemo<Entry[]>(() => (rules ? ruleSections(rules) : []), [rules]);
   const ordinals = useMemo(() => (rules ? ruleOrdinals(rules) : new Map<string, string>()), [rules]);
 
+  // Autopilot's terms and switch, for the rule whose row was pressed. Looked up on every change,
+  // so the sheet shows what the server says the switch is.
+  const [autopilotFor, setAutopilotFor] = useState<string | null>(null);
+  const closeAutopilot = useCallback(() => setAutopilotFor(null), []);
+  const subject = useMemo<AutopilotSubject | null>(() => {
+    const rule = autopilotFor ? rules?.find((r) => r.id === autopilotFor) : undefined;
+    if (!rule) return null;
+    const standing = ruleState(rule);
+    return {
+      id: rule.id,
+      ordinal: ordinals.get(rule.id) ?? '',
+      asset: rule.asset,
+      candleSeconds: rule.candleSeconds,
+      on: rule.autopilot,
+      offer: autopilotOffer(standing, rule.autopilot, rule.candleSeconds !== null),
+      replaced: standing === 'superseded',
+    };
+  }, [autopilotFor, rules, ordinals]);
+
   const renderItem = useMemo(
     () =>
       function renderRule({ item }: { item: Entry }) {
         if (item.type === 'section') return <SectionRow section={item} />;
-        return <RuleCard rule={item.rule} state={item.state} ordinal={ordinals.get(item.id) ?? ''} />;
+        return (
+          <RuleCard
+            rule={item.rule}
+            state={item.state}
+            ordinal={ordinals.get(item.id) ?? ''}
+            onAutopilot={setAutopilotFor}
+          />
+        );
       },
     [ordinals],
   );
@@ -274,7 +321,13 @@ export function ProfileRulesScreen() {
           item.type === 'section' ? (
             <SectionRow key={item.id} section={item} />
           ) : (
-            <RuleCard key={item.id} rule={item.rule} state={item.state} ordinal={ordinals.get(item.id) ?? ''} />
+            <RuleCard
+              key={item.id}
+              rule={item.rule}
+              state={item.state}
+              ordinal={ordinals.get(item.id) ?? ''}
+              onAutopilot={setAutopilotFor}
+            />
           ),
         )}
       <OnchainRecordSection state={record} forward={forward} className="pt-3" />
@@ -288,6 +341,7 @@ export function ProfileRulesScreen() {
       title="Previous rules"
       pane={pane}
       right={state.status === 'demo' ? <Badge label="Demo" tone="signal" icon="sparkles" /> : null}
+      overlay={<AutopilotSheet subject={subject} onClose={closeAutopilot} />}
     >
       {/* One scroller on a phone whatever the rules are doing, so the record under them is always reachable. */}
       <FlatList

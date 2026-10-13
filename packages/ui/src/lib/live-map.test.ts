@@ -610,3 +610,88 @@ describe('pinAvailabilityFor', () => {
     expect(pinningData(base).commitment).toBeUndefined();
   });
 });
+
+describe('autopilot on the rows a screen draws', () => {
+  /** A proposal the sweep wrote for a pass: no undo window, and what the gateway is asked to open. */
+  const waiting: LiveTrade = {
+    ...proposed,
+    _id: 't-auto',
+    origin: 'autopilot',
+    handoff: 'pending',
+    stakeUsd: 10,
+    holdSeconds: 900,
+    undoExpiresAt: undefined as never,
+  };
+  const opened: LiveTrade = {
+    ...waiting,
+    status: 'executed',
+    handoff: 'opened',
+    executedAt: T + 4000,
+    executionMode: 'paper',
+    timedTradeId: 'tt-1',
+  };
+  const notOpened: LiveTrade = {
+    ...waiting,
+    status: 'undone',
+    handoff: 'not_opened',
+    handoffReason: 'The BTC market is closed.',
+  };
+
+  it('a rule says whether autopilot is on for it, and a row that does not say is off', () => {
+    expect(ruleFromStrategy({ strategy: strategy({ autopilot: true }), spec: RULE_04, ordinal: 'RULE 04' }).autopilot).toBe(true);
+    expect(ruleFromStrategy({ strategy: strategy({ autopilot: false }), spec: RULE_04, ordinal: 'RULE 04' }).autopilot).toBe(false);
+    expect(ruleFromStrategy({ strategy: strategy(), spec: RULE_04, ordinal: 'RULE 04' }).autopilot).toBe(false);
+    expect(emptyRule('RULE 01').autopilot).toBe(false);
+  });
+
+  it('a proposal its owner asked for carries no autopilot note', () => {
+    expect(proposalFromTrade(proposed, RULE_04, T)).not.toHaveProperty('autopilot');
+    expect(tradeDetailFromTrade(proposed, RULE_04)).not.toHaveProperty('autopilot');
+    expect(refusalFromTrade(bosRefusal, RULE_04)).not.toHaveProperty('autopilot');
+    expect(blockedRow(bosRefusal, RULE_04)).not.toHaveProperty('autopilot');
+  });
+
+  it('a waiting autopilot proposal has no undo window, and says it waits for the gateway', () => {
+    const p = proposalFromTrade(waiting, RULE_04, T)!;
+    expect(p.status).toBe('proposed');
+    // Nothing to count down: confirm and undo are not this proposal's.
+    expect(p.undoSeconds).toBe(0);
+    expect(p).not.toHaveProperty('undoExpiresAt');
+    expect(p.autopilot).toMatchObject({ state: 'waiting', label: 'WAITING FOR THE GATEWAY', sent: '$10 · 15m', timedTradeId: null });
+  });
+
+  it('an opened one leads to its timed trade, and its size stays the rule\'s own sizing', () => {
+    const p = proposalFromTrade(opened, RULE_04, T)!;
+    expect(p.status).toBe('executed');
+    expect(p.autopilot).toMatchObject({ state: 'opened', timedTradeId: 'tt-1', sent: '$10 · 15m' });
+    // The row's size is what the rule's risk setting works out, not the $10 that was sent.
+    expect(formatDecimal(p.size)).toBe(formatDecimal(proposed.size));
+    // Paper, and said to be: this row's own fill was never a venue fill.
+    expect(p.paper).toBe(true);
+  });
+
+  it('one that was not opened shows the reason verbatim, and is not called undone', () => {
+    const p = proposalFromTrade(notOpened, RULE_04, T)!;
+    expect(p.autopilot).toMatchObject({ state: 'not_opened', label: 'NOT OPENED', reason: 'The BTC market is closed.' });
+    expect(tradeDetailFromTrade(notOpened, RULE_04).side).toBe('LONG · NOT OPENED');
+  });
+
+  it("the evidence screen names autopilot's states in its own words", () => {
+    expect(tradeDetailFromTrade(waiting, RULE_04).side).toBe('LONG · WAITING FOR THE GATEWAY');
+    expect(tradeDetailFromTrade(opened, RULE_04).side).toBe('LONG · OPENED');
+    expect(tradeDetailFromTrade(opened, RULE_04).autopilot?.timedTradeId).toBe('tt-1');
+    // The evidence chain is the same arithmetic a button press records.
+    expect(tradeDetailFromTrade(opened, RULE_04).claims.map((c) => c.symbol)).toEqual(['bos_bullish', 'fvg_present']);
+  });
+
+  it('a refusal autopilot recorded is a refusal like any other, and says who asked', () => {
+    const refused: LiveTrade = { ...bosRefusal, origin: 'autopilot' };
+    const r = refusalFromTrade(refused, RULE_04)!;
+    expect(r.predicate).toBe('bos_bullish');
+    expect(r.autopilot).toMatchObject({ state: 'refused', sent: null, timedTradeId: null, reason: null });
+    expect(tradeDetailFromTrade(refused, RULE_04).side).toBe('LONG · REFUSED');
+    expect(blockedRow(refused, RULE_04)).toMatchObject({ symbol: 'bos_bullish', autopilot: true });
+    // It still counts as the rule working.
+    expect(countTrades([refused, opened])).toEqual({ taken: 1, blocked: 1 });
+  });
+});

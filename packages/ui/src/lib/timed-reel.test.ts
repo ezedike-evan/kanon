@@ -327,3 +327,27 @@ describe('the candles behind a slide', () => {
     expect([3600, 14_400].map(lineBucketSeconds)).toEqual([300, 300]);
   });
 });
+
+describe('a trade autopilot opened, on a slide', () => {
+  const auto = trade({ origin: 'autopilot', proposalId: 'p1', seconds: 900, expiresAt: T0 + 900_000 });
+  const at = formatClockTime(auto.expiresAt);
+
+  it('says who opened it in the line under the trade, on its own time and on another', () => {
+    expect(runningNote(auto, { seconds: 900 }, false)).toBe(`Autopilot opened up on BTC. It closes itself at ${at}.`);
+    expect(runningNote(auto, { seconds: 60 }, false)).toBe(
+      `BTC takes one timed trade at a time. Autopilot opened this one. It closes itself at ${at}.`,
+    );
+  });
+
+  it("still gives way to the server's own words, and to its time being up", () => {
+    expect(runningNote({ ...auto, reason: 'The venue has not filled the close. Trying again.' }, { seconds: 900 }, false)).toBe(
+      'The venue has not filled the close. Trying again.',
+    );
+    expect(runningNote(auto, { seconds: 900 }, true)).toBe(TIME_IS_UP);
+  });
+
+  it('takes its pair exactly as any running trade does: the slide shows it in place of the two actions', () => {
+    const view = timedView(READY, { asset: 'BTC/USD', stakeUsd: 10, seconds: 60 });
+    expect(slideMode({ asset: 'BTC/USD' }, view, [auto], [])).toEqual({ kind: 'running', trade: auto });
+  });
+});

@@ -187,3 +187,49 @@ describe('dayLabel and groupByDay', () => {
     expect(groupByDay([], NOW)).toEqual([]);
   });
 });
+
+describe('activityCopy for a row autopilot wrote', () => {
+  const base = DEMO_ACTIVITY.find((a) => a.kind === 'executed')!;
+  const auto = (kind: 'executed' | 'refused' | 'proposed' | 'undone') =>
+    activityCopy({ ...base, kind, origin: 'autopilot', ...(kind === 'refused' ? { refusedBy: 'bos_bullish' } : {}) });
+
+  it('says autopilot did it, in every state', () => {
+    for (const kind of ['executed', 'refused', 'proposed', 'undone'] as const) {
+      expect(auto(kind).sub).toMatch(/^By autopilot · /);
+    }
+  });
+
+  it('waits for the gateway, not for the person', () => {
+    const c = auto('proposed');
+    expect(c.badge).toBe('Waiting');
+    expect(c.sub).toBe('By autopilot · waiting for the gateway to open it');
+    expect(c.sub).not.toMatch(/waiting on you/);
+  });
+
+  it('was not opened, and nobody undid it', () => {
+    const c = auto('undone');
+    expect(c.badge).toBe('Not opened');
+    expect(`${c.badge} ${c.sub}`).not.toMatch(/undid|undone|error|fail|sorry/i);
+  });
+
+  it('does not state the rule\'s own sizing as a fill', () => {
+    const c = auto('executed');
+    expect(c.badge).toBe('Opened');
+    expect(c.sub).toBe('By autopilot · a timed trade was opened for it');
+    // The entry and size on the row are the rule's sizing of the setup, not what was sent.
+    expect(c.sub).not.toContain('67,940.10');
+    expect(c.sub).not.toContain('BTC');
+  });
+
+  it('names the predicate that held a refused entry, as any refusal does', () => {
+    const c = auto('refused');
+    expect(c.badge).toBe('Refused');
+    expect(c.sub).toBe('By autopilot · your rule held this entry: bos_bullish');
+    expect(`${c.title} ${c.sub} ${c.badge}`.toLowerCase()).not.toMatch(/error|fail|sorry|denied|rejected/);
+  });
+
+  it('leaves a row its owner asked for exactly as it was', () => {
+    expect(activityCopy({ ...base, kind: 'proposed' }).sub).toMatch(/waiting on you$/);
+    expect(activityCopy(base).badge).toBe('Executed');
+  });
+});

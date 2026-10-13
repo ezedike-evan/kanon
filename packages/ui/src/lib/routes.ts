@@ -38,6 +38,14 @@ export const routes = {
 } as const;
 
 export const tradeRoute = (id: string) => `/trades/${id}`;
+/** The Trading records screen opened on one record's details. `id` is the record's own: `chart:…`, `timed:…`. */
+export const recordRoute = (id: string) => `${routes.profileRecords}?open=${encodeURIComponent(id)}`;
+/**
+ * One timed trade, opened in the Trading records: its figures and both of its
+ * transactions, running or finished. It is where a proposal autopilot opened
+ * leads, since the timed trade is where the real fill is.
+ */
+export const timedTradeRoute = (timedTradeId: string) => recordRoute(`timed:${timedTradeId}`);
 export const loosenRoute = (ruleId: string) => `/rules/${ruleId}/loosen`;
 export const shareRoute = (ruleId: string) => `/share/${ruleId}`;
 

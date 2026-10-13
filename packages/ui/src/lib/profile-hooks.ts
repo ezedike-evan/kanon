@@ -3,7 +3,15 @@ import { useKanonSelector } from './data';
 import { useActivity, useProfile, useTimedTrades, useVenueOrders } from './domains';
 import type { RuleHistoryItem } from './domain-types';
 import { DEMO_RECORDS, DEMO_RULES } from './profile-demo';
-import { chartRecords, mergeRecords, stakeRecords, timedRecords, tradeRecords, type LedgerRecord } from './profile-logic';
+import {
+  chartRecords,
+  mergeRecords,
+  onePerPosition,
+  stakeRecords,
+  timedRecords,
+  tradeRecords,
+  type LedgerRecord,
+} from './profile-logic';
 import { chartTrades } from './trade-records';
 import type { TimedTrade } from './timed-types';
 import type { VenueOrder } from './venue-types';
@@ -34,8 +42,9 @@ const NO_TIMED: TimedTrade[] = [];
 export type OwnTradesState = { status: 'loading' } | { status: 'ready'; records: LedgerRecord[]; truncated: boolean };
 
 /**
- * The trades the person took by hand, newest first: positions from the chart's
- * ticket (paired from their orders) and timed trades from Predict. Signed out
+ * The person's positions on the venue, newest first: those from the chart's
+ * ticket (paired from their orders) and their timed trades, the ones they
+ * called on Predict and the ones autopilot opened for their rule. Signed out
  * it is ready and empty: this list is never filled with made-up trades.
  */
 export function useOwnTrades(): OwnTradesState {
@@ -58,6 +67,10 @@ export function useOwnTrades(): OwnTradesState {
  * the chart, on a timer in Predict, or through their rule (executed and
  * refused), with any stake left from the earlier threshold markets.
  * Subscribes to its reads only while the caller is mounted.
+ *
+ * One row per position: a proposal autopilot wrote is left out once the timed
+ * trade opened for it is in the list (`onePerPosition`), so nothing is listed
+ * or counted twice.
  */
 export function useRecords(): RecordsState {
   const activity = useActivity(RECORDS_LIMIT);
@@ -69,7 +82,7 @@ export function useRecords(): RecordsState {
     if (activity.status === 'loading' || own.status === 'loading') return { status: 'loading' };
     if (activity.status === 'demo') return { status: 'demo', records: DEMO_RECORDS, truncated: false };
     const trades = activity.status === 'ready' ? activity.items : [];
-    const records = mergeRecords(own.records, tradeRecords(trades), stakeRecords(markets));
+    const records = onePerPosition(mergeRecords(own.records, tradeRecords(trades), stakeRecords(markets)));
     if (records.length === 0) return { status: 'empty' };
     return { status: 'ready', records, truncated: own.truncated || trades.length >= RECORDS_LIMIT };
   }, [activity, own, markets]);
@@ -92,7 +105,9 @@ export function useRecentRecords(limit: number): RecentRecordsState {
     if (activity.status === 'demo') {
       return { status: 'demo', records: DEMO_RECORDS.slice(0, limit) };
     }
-    const records = mergeRecords(own.records, tradeRecords(activity.status === 'ready' ? activity.items : []));
+    const records = onePerPosition(
+      mergeRecords(own.records, tradeRecords(activity.status === 'ready' ? activity.items : [])),
+    );
     return { status: 'ready', records: records.slice(0, limit) };
   }, [activity, own, limit]);
 }

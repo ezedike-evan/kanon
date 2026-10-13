@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseDecimal } from '@kanon/spec';
+import type { ActivityItem } from './domain-types';
 import type { TimedTrade } from './timed-types';
 import {
   EXIT_PENDING,
@@ -9,6 +10,8 @@ import {
   chartTradeDetail,
   chartTradeView,
   chartTrades,
+  ruleRowView,
+  runningFacts,
   timedOrderIds,
   timedRowView,
 } from './trade-records';
@@ -69,6 +72,8 @@ function timed(id: string, openedAt: number, over: Partial<TimedTrade> = {}): Ti
     openTx: null,
     closeTx: null,
     reason: null,
+    origin: null,
+    proposalId: null,
     ...over,
   };
 }
@@ -314,6 +319,93 @@ describe('the two figures on a row', () => {
   it('shows the exit alone for a close with no open of the caller\'s', () => {
     const [trade] = chartTrades([close('c', s(0))]);
     expect(chartRowFigures(chartTradeView(trade!))).toEqual({ value: '50,500.0', sub: 'CLOSED' });
+  });
+});
+
+describe('a timed trade autopilot opened, as a record row', () => {
+  const opened = (over: Partial<TimedTrade> = {}) => timed('t', s(0), { origin: 'autopilot', proposalId: 'p1', seconds: 900, ...over });
+
+  it('names autopilot as its source and carries the proposal that is its evidence', () => {
+    const view = timedRowView(opened());
+    expect(view).toMatchObject({ source: 'Autopilot', proposalId: 'p1', terms: '$10 · 5x · 15m', state: 'TIME UP' });
+    expect(view.accessibilityLabel).toMatch(/^Opened by autopilot\. /);
+  });
+
+  it('a trade the person called is Predict\'s, with no proposal behind it', () => {
+    expect(timedRowView(timed('t', s(0)))).toMatchObject({ source: 'Predict', proposalId: null });
+    // A proposal id on a row that does not say autopilot opened it is not offered as evidence.
+    expect(timedRowView(timed('t', s(0), { proposalId: 'p1' })).proposalId).toBeNull();
+  });
+
+  it('while it runs, it opens its details, where the evidence is, not Predict', () => {
+    const view = timedRowView(opened({ status: 'live', closedAt: null, endedBy: null, exitPrice: null }));
+    expect(view).toMatchObject({ running: true, state: 'RUNNING', source: 'Autopilot' });
+    expect(view.accessibilityLabel).toContain('Open the details.');
+    expect(view.accessibilityLabel).not.toContain('Open Predict');
+  });
+
+  it('states a running trade as figures with no result, since it has none yet', () => {
+    const live = opened({ status: 'live', closedAt: null, endedBy: null, exitPrice: null, result: null, fees: null });
+    const facts = runningFacts(live);
+    expect(facts.map(([label]) => label)).toEqual(['Opened', 'Closes itself', 'Stake', 'Size', 'Entry']);
+    expect(Object.fromEntries(facts)).toMatchObject({ Stake: '$10', Size: '0.001 BTC · 5x', Entry: '50,000.0' });
+    expect(facts.flat().join(' ')).not.toMatch(/AUSD|result/i);
+  });
+});
+
+describe('a setup put to the rule, as a record row', () => {
+  const item = (kind: ActivityItem['kind'], over: Partial<ActivityItem> = {}): ActivityItem => ({
+    id: 'p1',
+    kind,
+    asset: 'BTC/USD',
+    direction: 'long',
+    entry: price('68441.2'),
+    size: size('0.01840'),
+    at: s(0),
+    ...over,
+  });
+
+  it('keeps a setup the person put to the rule worded as it always was', () => {
+    expect(ruleRowView(item('executed'))).toMatchObject({ source: 'Rule', state: 'Executed', badge: 'Executed', sized: true });
+    expect(ruleRowView(item('proposed'))).toMatchObject({ source: 'Rule', state: 'Proposed', badge: 'Proposed', sized: true });
+    expect(ruleRowView(item('undone'))).toMatchObject({ source: 'Rule', state: 'Undone', badge: 'Undone', sized: true });
+    expect(ruleRowView(item('refused', { refusedBy: 'bos_bullish' }))).toMatchObject({
+      source: 'Rule',
+      state: 'Blocked by bos_bullish',
+      badge: 'Refused',
+      accessibilityLabel: 'Refused: BTC/USD long, blocked by bos_bullish. Open evidence.',
+    });
+  });
+
+  it('words a row autopilot wrote for what happened to it', () => {
+    const auto = (kind: ActivityItem['kind'], over: Partial<ActivityItem> = {}) => ruleRowView(item(kind, { origin: 'autopilot', ...over }));
+    // Seconds old, so its time gives way to the words that have to be read in full.
+    expect(auto('proposed')).toMatchObject({ source: 'Autopilot', state: 'Waiting for the gateway', badge: 'Waiting', dated: false });
+    expect(auto('undone')).toMatchObject({ source: 'Autopilot', state: 'Not opened', badge: 'Not opened', dated: true });
+    expect(ruleRowView(item('proposed')).dated).toBe(true);
+    expect(auto('executed')).toMatchObject({ source: 'Autopilot', state: 'Opened', badge: 'Opened' });
+    expect(auto('refused', { refusedBy: 'fvg_present' })).toMatchObject({
+      source: 'Autopilot',
+      state: 'Blocked by fvg_present',
+      badge: 'Refused',
+      accessibilityLabel: 'Refused: BTC/USD long, blocked by fvg_present. By autopilot. Open evidence.',
+    });
+  });
+
+  it("does not show the rule's own sizing as a size traded on a proposal autopilot wrote", () => {
+    const auto = (kind: ActivityItem['kind']) => ruleRowView(item(kind, { origin: 'autopilot' })).sized;
+    expect(auto('proposed')).toBe(false);
+    expect(auto('executed')).toBe(false);
+    expect(auto('undone')).toBe(false);
+    // A refusal's size is what the rule would have risked, by a press or by autopilot alike.
+    expect(auto('refused')).toBe(true);
+  });
+
+  it('never words a refusal or a setup that was not opened as a fault', () => {
+    for (const kind of ['executed', 'refused', 'proposed', 'undone'] as const) {
+      const view = ruleRowView(item(kind, { origin: 'autopilot' }));
+      expect(`${view.state} ${view.badge} ${view.accessibilityLabel}`).not.toMatch(/error|failed|sorry|undone|undid/i);
+    }
   });
 });
 

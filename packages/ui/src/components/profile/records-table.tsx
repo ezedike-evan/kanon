@@ -26,7 +26,7 @@ import {
   type RecordTotals,
 } from '../../lib/profile-logic';
 import { routes, tradeRoute } from '../../lib/routes';
-import { chartTradeView, timedRowView, type ChartTrade } from '../../lib/trade-records';
+import { chartTradeView, ruleRowView, timedRowView, type ChartTrade } from '../../lib/trade-records';
 import type { PriceMove } from '../../lib/timed-trade';
 import type { TimedTrade } from '../../lib/timed-types';
 import { useHaptics } from '../../platform';
@@ -36,13 +36,14 @@ import type { ActivityItem } from '../../lib/domain-types';
  * Trading records as a table, for the desktop pane: when, what and where from,
  * which way, how much, what came of it, and the way to the evidence. Trades from
  * the chart, from Predict and through the rule sit in the same rows, each naming
- * its source under its asset. A refusal carries its own mark and the predicate
+ * its source under its asset (`Autopilot` for the rule judged at a candle close
+ * with nobody pressing anything). A refusal carries its own mark and the predicate
  * that stopped it, and no error styling: it is the product working.
  *
  * No row carries money. What came of a trade is its state and what the price did
  * between entry and exit. The whole row opens the trade: a rule's trade goes to
  * its evidence screen, a chart trade and a finished timed trade open their
- * details over the table.
+ * details over the table, and so does a running one that autopilot opened.
  */
 
 /** Column widths, shared by the header and every row so they line up. `Entry` needs room, so it waits for `xl`. */
@@ -56,11 +57,12 @@ const COL = {
   evidence: 'w-[76px] items-end',
 } as const;
 
-const KIND: Record<ActivityItem['kind'], { label: string; tone: 'neutral' | 'refused' | 'signal'; icon: 'check' | 'ban' | 'clock' | 'undo' }> = {
-  executed: { label: 'Executed', tone: 'neutral', icon: 'check' },
-  refused: { label: 'Refused', tone: 'refused', icon: 'ban' },
-  proposed: { label: 'Proposed', tone: 'signal', icon: 'clock' },
-  undone: { label: 'Undone', tone: 'neutral', icon: 'undo' },
+/** A kind's mark. Its word is `ruleRowView`'s, which knows a row autopilot wrote from one a person did. */
+const KIND: Record<ActivityItem['kind'], { tone: 'neutral' | 'refused' | 'signal'; icon: 'check' | 'ban' | 'clock' | 'undo' }> = {
+  executed: { tone: 'neutral', icon: 'check' },
+  refused: { tone: 'refused', icon: 'ban' },
+  proposed: { tone: 'signal', icon: 'clock' },
+  undone: { tone: 'neutral', icon: 'undo' },
 };
 
 const STAKE_RESULT = { won: 'Won', lost: 'Lost', refunded: 'Refunded' } as const;
@@ -129,30 +131,34 @@ function Outcome({ state, exit, move }: { state: string; exit: string | null; mo
 const TradeLine = memo(function TradeLine({ item, now }: { item: ActivityItem; now: number }) {
   const { tap } = useHaptics();
   const kind = KIND[item.kind];
+  const view = ruleRowView(item);
   const base = item.asset.split('/')[0] ?? item.asset;
   const long = item.direction === 'long';
+  // Nothing was opened for it and nobody undid it: the neutral dash, not the undo glyph.
+  const icon = item.origin === 'autopilot' && item.kind === 'undone' ? 'minus' : kind.icon;
   return (
-    <Link
-      href={tradeRoute(item.id)}
-      onPressIn={tap}
-      aria-label={`${kind.label}: ${item.asset} ${long ? 'long' : 'short'}${item.kind === 'refused' ? `, blocked by ${item.refusedBy ?? 'your rule'}` : ''}. Open evidence.`}
-      className={ROW}
-    >
+    <Link href={tradeRoute(item.id)} onPressIn={tap} aria-label={view.accessibilityLabel} className={ROW}>
       <When at={item.at} now={now} />
-      <Asset asset={item.asset} source="Rule" />
+      <Asset asset={item.asset} source={view.source} />
       <Side up={long} label={long ? 'Long' : 'Short'} />
       <View className={cx('gap-0.5', COL.size)}>
-        <Num className="text-12">{compactDecimal(item.size)}</Num>
-        <Num className="text-11 text-ash">{base}</Num>
+        {/* A proposal autopilot wrote carries the rule's own sizing, not what was sent, so no size is stated for it. */}
+        <Num className={cx('text-12', !view.sized && 'text-ash')}>{view.sized ? compactDecimal(item.size) : '—'}</Num>
+        <Num className="text-11 text-ash">{view.sized ? base : ''}</Num>
       </View>
       <View className={COL.entry}>
         <Num className="text-12">{priceLabel(item.entry)}</Num>
       </View>
       <View className={cx('gap-1', COL.result)}>
-        <Badge label={kind.label} tone={kind.tone} icon={kind.icon} />
+        <Badge label={view.badge} tone={kind.tone} icon={icon} />
         {item.kind === 'refused' ? (
           <Text numberOfLines={2} className="break-all font-mono text-11 leading-[1.4] text-ash">
             {item.refusedBy ?? 'Your rule'}
+          </Text>
+        ) : view.state !== view.badge ? (
+          // What the badge's word is short for: `Waiting for the gateway`.
+          <Text numberOfLines={2} className="font-sans text-11 leading-[1.4] text-ash">
+            {view.state}
           </Text>
         ) : null}
       </View>
@@ -246,10 +252,12 @@ const TimedLine = memo(function TimedLine({
   const { tap } = useHaptics();
   const view = timedRowView(trade);
   const [stake = '', ...terms] = view.terms.split(' · ');
+  // One autopilot opened has details while it runs too: they are where the proposal that is its evidence is.
+  const toPredict = view.running && view.proposalId === null;
   const cells = (
     <>
       <When at={view.at} now={now} />
-      <Asset asset={view.asset} source="Predict" />
+      <Asset asset={view.asset} source={view.source} />
       <Side up={view.direction === 'up'} label={view.word} />
       <View className={cx('gap-0.5', COL.size)}>
         <Num className="text-12">{stake}</Num>
@@ -259,11 +267,11 @@ const TimedLine = memo(function TimedLine({
         <Num className="text-12">{view.entry}</Num>
       </View>
       <Outcome state={view.state} exit={view.exit} move={view.move} />
-      <EvidenceCell label={view.running ? 'Predict' : 'Details'} />
+      <EvidenceCell label={toPredict ? 'Predict' : 'Details'} />
     </>
   );
   // A running trade is watched where its countdown is; a finished one has details.
-  return view.running ? (
+  return toPredict ? (
     <Link href={routes.predict} onPressIn={tap} aria-label={view.accessibilityLabel} className={ROW}>
       {cells}
     </Link>

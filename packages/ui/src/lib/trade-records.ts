@@ -1,10 +1,12 @@
 import type { Decimal } from '@kanon/spec';
 import { normalizeSymbol } from './chart-assets';
+import type { ActivityItem } from './domain-types';
 import { formatAtoms } from './chart-format';
 import {
   endedAt,
   finishedView,
   formatAusd,
+  formatClockTime,
   formatRan,
   formatTimedPrice,
   moveLine,
@@ -425,6 +427,10 @@ export function chartRowFigures(view: ChartTradeView): RowFigures {
 /** One timed trade as a row of the record: running or finished, in the words Predict uses for it. */
 export interface TimedRowView {
   id: string;
+  /** `Predict` for one the person called, `Autopilot` for one their rule opened at a candle close. */
+  source: string;
+  /** The proposal an autopilot trade was opened for: its evidence. Null for one called on Predict. */
+  proposalId: string | null;
   asset: string;
   direction: TimedTrade['direction'];
   /** `Up`, `Down`. */
@@ -452,8 +458,14 @@ export function timedRowView(trade: TimedTrade): TimedRowView {
   const finished = running ? null : finishedView(trade);
   const state = finished ? finished.ended : trade.status === 'closing' ? 'CLOSING' : 'RUNNING';
   const exit = finished ? finished.exit : null;
+  const autopilot = trade.origin === 'autopilot';
+  const label = finished
+    ? finished.accessibilityLabel
+    : `${word} on ${trade.asset}, ${state.toLowerCase()}. Entry ${entry}. ${autopilot ? 'Open the details.' : 'Open Predict.'}`;
   return {
     id: trade.id,
+    source: autopilot ? 'Autopilot' : 'Predict',
+    proposalId: autopilot ? trade.proposalId : null,
     asset: trade.asset,
     direction: trade.direction,
     word,
@@ -465,8 +477,82 @@ export function timedRowView(trade: TimedTrade): TimedRowView {
     move: finished ? finished.move : null,
     figures: rowFigures(entry, exit, state),
     at: trade.openedAt,
-    accessibilityLabel: finished
-      ? finished.accessibilityLabel
-      : `${word} on ${trade.asset}, ${state.toLowerCase()}. Entry ${entry}. Open Predict.`,
+    accessibilityLabel: autopilot ? `Opened by autopilot. ${label}` : label,
+  };
+}
+
+/**
+ * A running timed trade's figures, for its details: label then value. No money
+ * beyond the stake that was put on it: a result exists once it has closed.
+ */
+export function runningFacts(trade: TimedTrade): Array<[label: string, value: string]> {
+  return [
+    ['Opened', formatClockTime(trade.openedAt)],
+    ['Closes itself', formatClockTime(trade.expiresAt)],
+    ['Stake', formatUsd(trade.stakeUsd)],
+    ['Size', `${formatVenueSize(trade.size, trade.asset)} · ${formatLeverage(trade.leverage)}`],
+    ['Entry', formatTimedPrice(trade.entryPrice)],
+  ];
+}
+
+// --- A setup put to the rule, in the same list ---------------------------------
+
+/**
+ * One setup put to the person's rule as a row of the record: by a press of
+ * "check setup now", or by autopilot at a candle close.
+ *
+ * An autopilot row is worded for what happened to it. Its `proposed` is waiting
+ * for the gateway, not for the person; its `undone` is one nothing was opened
+ * for, not one the person cancelled; and its size is the rule's own sizing of
+ * the setup, never what was sent, so the row does not show it as a size traded.
+ */
+export interface RuleRowView {
+  /** `Rule`, or `Autopilot`. */
+  source: string;
+  /** `Executed`, `Blocked by bos_bullish`, `Waiting for the gateway`, `Not opened`. */
+  state: string;
+  /** The same in a word or two, for a badge: `Executed`, `Refused`, `Waiting`, `Opened`, `Not opened`. */
+  badge: string;
+  /** The row's size is what a trade used, or would have. False for a proposal autopilot wrote. */
+  sized: boolean;
+  /**
+   * The row's time is worth its room on a narrow row. False while autopilot's
+   * proposal waits: it is seconds old, and "waiting for the gateway" is what
+   * has to be read in full.
+   */
+  dated: boolean;
+  /** `Refused: BTC/USD long, blocked by bos_bullish. By autopilot. Open evidence.` */
+  accessibilityLabel: string;
+}
+
+const RULE_STATE: Record<ActivityItem['kind'], { state: string; badge: string }> = {
+  executed: { state: 'Executed', badge: 'Executed' },
+  refused: { state: 'Blocked', badge: 'Refused' },
+  proposed: { state: 'Proposed', badge: 'Proposed' },
+  undone: { state: 'Undone', badge: 'Undone' },
+};
+
+const AUTOPILOT_RULE_STATE: Record<ActivityItem['kind'], { state: string; badge: string }> = {
+  executed: { state: 'Opened', badge: 'Opened' },
+  refused: { state: 'Blocked', badge: 'Refused' },
+  proposed: { state: 'Waiting for the gateway', badge: 'Waiting' },
+  undone: { state: 'Not opened', badge: 'Not opened' },
+};
+
+export function ruleRowView(item: ActivityItem): RuleRowView {
+  const autopilot = item.origin === 'autopilot';
+  const words = (autopilot ? AUTOPILOT_RULE_STATE : RULE_STATE)[item.kind];
+  const refused = item.kind === 'refused';
+  const state = refused ? `Blocked by ${item.refusedBy ?? 'your rule'}` : words.state;
+  const side = item.direction === 'long' ? 'long' : 'short';
+  return {
+    source: autopilot ? 'Autopilot' : 'Rule',
+    state,
+    badge: words.badge,
+    sized: !autopilot || refused,
+    dated: !(autopilot && item.kind === 'proposed'),
+    accessibilityLabel:
+      `${words.badge}: ${item.asset} ${side}${refused ? `, blocked by ${item.refusedBy ?? 'your rule'}` : ''}.` +
+      `${autopilot ? ' By autopilot.' : ''} Open evidence.`,
   };
 }

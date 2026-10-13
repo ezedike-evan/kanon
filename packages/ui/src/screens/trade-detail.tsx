@@ -1,5 +1,6 @@
 import { Text, View } from 'react-native';
 import { formatBps, formatDecimal } from '@kanon/spec';
+import { AutopilotBlock } from '../components/autopilot';
 import { Body, Footer, NavBar, Screen } from '../components/chrome';
 import { EvidenceChain } from '../components/evidence-chain';
 import { EvidenceLink, Meta, Num } from '../components/ui';
@@ -12,6 +13,10 @@ import { routes, shareRoute } from '../lib/routes';
  * The result is stated once and the evidence chain gets the rest of the screen.
  * If verification took more than one tap, "verifiable" would be marketing and
  * this audience would treat it as marketing.
+ *
+ * A setup autopilot judged carries that above its evidence: where it stands
+ * with the venue, what was asked for, the timed trade that was opened for it
+ * (one press, and where the real fill is), or the reason nothing was.
  */
 export function TradeDetailScreen({ id }: { id: string }) {
   const { rule: RULE, tradeDetail } = useKanonData();
@@ -38,6 +43,8 @@ export function TradeDetailScreen({ id }: { id: string }) {
   }
 
   const refused = TRADE.side.includes('REFUSED');
+  // Waiting, or nothing opened: a state, set in the neutral colour. Never an alarm.
+  const neutral = TRADE.autopilot?.state === 'waiting' || TRADE.autopilot?.state === 'not_opened';
   return (
     <Screen rail="bg-hairline" label="06 · TRADE DETAIL · EVIDENCE">
       <NavBar
@@ -54,7 +61,9 @@ export function TradeDetailScreen({ id }: { id: string }) {
               className={
                 refused
                   ? 'font-mono text-11 tracking-w14 text-refused'
-                  : 'font-mono text-11 tracking-w14 text-long'
+                  : neutral
+                    ? 'font-mono text-11 tracking-w14 text-ash'
+                    : 'font-mono text-11 tracking-w14 text-long'
               }
             >
               {TRADE.side}
@@ -100,6 +109,8 @@ export function TradeDetailScreen({ id }: { id: string }) {
             </Num>
           </View>
         </View>
+
+        {TRADE.autopilot ? <AutopilotBlock note={TRADE.autopilot} className="mt-5" /> : null}
 
         <Meta className="mt-6.5 tracking-w20">
           EVIDENCE CHAIN · {TRADE.claims.length} CLAIMS

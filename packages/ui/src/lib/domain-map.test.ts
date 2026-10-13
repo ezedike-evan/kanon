@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDecimal } from '@kanon/spec';
+import { RULE_04, parseDecimal } from '@kanon/spec';
 import {
   activityFromRows,
   behaviourFrom,
@@ -7,6 +7,7 @@ import {
   pairFromTicker,
   samePair,
   ruleHistory,
+  sameActivity,
   type ActivityRow,
   type TickerRow,
 } from './domain-map';
@@ -136,5 +137,54 @@ describe('the demo fixtures', () => {
     if (DEMO_MARKETS.status !== 'demo') throw new Error('unreachable');
     for (const p of DEMO_MARKETS.pairs) expect(Number.isInteger(p.changeBps)).toBe(true);
     expect(DEMO_ACTIVITY.every((a) => a.entry.atoms !== '')).toBe(true);
+  });
+});
+
+describe('autopilot on activity and rules', () => {
+  const row = (over: Partial<ActivityRow> = {}): ActivityRow => ({
+    _id: 't1',
+    strategyId: 's1',
+    asset: 'BTC/USD',
+    direction: 'long',
+    status: 'executed',
+    entry: usd('68000.00'),
+    size: parseDecimal('0.05', 8),
+    stop: usd('67000.00'),
+    createdAt: 1_000,
+    ...over,
+  });
+
+  it('carries who asked for the evaluation, and nothing for a button press', () => {
+    const [auto, manual] = activityFromRows([row({ origin: 'autopilot' }), row({ _id: 't2' })]);
+    expect(auto?.origin).toBe('autopilot');
+    expect(manual).not.toHaveProperty('origin');
+  });
+
+  it('a row that gains its origin is a changed row', () => {
+    const [before] = activityFromRows([row()]);
+    const [after] = activityFromRows([row({ origin: 'autopilot' })]);
+    expect(sameActivity(before!, after!)).toBe(false);
+    expect(sameActivity(after!, { ...after! })).toBe(true);
+  });
+
+  it('a rule says whether autopilot is on and which candle it would be judged on', () => {
+    const strategy = (over: Partial<LiveStrategy> & { _id: string; _creationTime: number }): LiveStrategy => ({
+      status: 'pinned',
+      specHash: '0xabc',
+      ...over,
+    });
+    const [newest, older, unreadable] = ruleHistory(
+      [
+        strategy({ _id: 'c', _creationTime: 1, spec: { not: 'a spec' }, autopilot: true }),
+        strategy({ _id: 'b', _creationTime: 2, spec: RULE_04 }),
+        strategy({ _id: 'a', _creationTime: 3, spec: RULE_04, autopilot: true }),
+      ],
+      'a',
+    );
+    expect(newest).toMatchObject({ id: 'a', autopilot: true, candleSeconds: 900, active: true });
+    // A row that does not say is off.
+    expect(older).toMatchObject({ id: 'b', autopilot: false, candleSeconds: 900 });
+    // Still on for a rule whose spec no longer parses: the switch has to stay reachable to be turned off.
+    expect(unreadable).toMatchObject({ id: 'c', autopilot: true, candleSeconds: null });
   });
 });

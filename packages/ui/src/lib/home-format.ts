@@ -116,10 +116,30 @@ export interface ActivityCopy {
 /**
  * The words for an activity row. A refusal is the rule doing its job: it says
  * which predicate held the trade and stops there. No "failed", no "error".
+ *
+ * A row autopilot wrote says so, and is worded for what happened to it: nobody
+ * was waited on, nobody undid anything, and the entry and size on the row are
+ * the rule's own sizing of the setup, so neither is stated as a fill.
  */
 export function activityCopy(item: ActivityItem): ActivityCopy {
   const side = item.direction === 'long' ? 'Long' : 'Short';
   const title = `${item.asset} · ${side}`;
+  if (item.origin === 'autopilot') {
+    switch (item.kind) {
+      case 'executed':
+        return { title, badge: 'Opened', sub: 'By autopilot · a timed trade was opened for it' };
+      case 'refused':
+        return {
+          title,
+          badge: 'Refused',
+          sub: item.refusedBy ? `By autopilot · your rule held this entry: ${item.refusedBy}` : 'By autopilot · your rule held this entry',
+        };
+      case 'proposed':
+        return { title, badge: 'Waiting', sub: 'By autopilot · waiting for the gateway to open it' };
+      case 'undone':
+        return { title, badge: 'Not opened', sub: 'By autopilot · not opened. The reason is with its evidence' };
+    }
+  }
   switch (item.kind) {
     case 'executed':
       return { title, badge: 'Executed', sub: `Entered at ${formatDecimal(item.entry)} · ${formatSize(item.size)} ${baseOf(item.asset)}` };

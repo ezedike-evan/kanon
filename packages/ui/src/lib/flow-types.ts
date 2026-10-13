@@ -46,6 +46,15 @@ export type ProposalRun =
 
 export type TradeActionOutcome = { ok: true } | { ok: false; reason: string };
 
+/**
+ * Throwing the autopilot switch for a rule. `on` is what the server says it is
+ * now. A switch that was not thrown comes back with a sentence a person can
+ * read; it is never a rejection.
+ */
+export type AutopilotOutcome =
+  | { ok: true; on: boolean }
+  | { ok: false; reason: 'demo' | 'no_rule' | 'failed'; message: string };
+
 export interface AmendmentPreview {
   kind: 'none' | 'immediate' | 'cooling_off';
   changes: SpecChange[];

@@ -474,6 +474,8 @@ describe('createTimedTradeReads', () => {
         openTx: null,
         closeTx: null,
         reason: null,
+        origin: null,
+        proposalId: null,
       },
     ]);
     await c.h.unmount();

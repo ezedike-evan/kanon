@@ -3,14 +3,15 @@ import { ListRow } from '../list-row';
 import type { ActivityItem } from '../../lib/domain-types';
 import { monad } from '../../lib/monad-chain';
 import { compactDecimal, priceLabel, timeLabel, type LedgerRecord, type StakeRecord } from '../../lib/profile-logic';
-import { routes, tradeRoute } from '../../lib/routes';
+import { recordRoute, routes, tradeRoute } from '../../lib/routes';
 import type { TimedTrade } from '../../lib/timed-types';
-import { chartRowFigures, chartTradeView, timedRowView, type ChartTrade } from '../../lib/trade-records';
+import { chartRowFigures, chartTradeView, ruleRowView, timedRowView, type ChartTrade } from '../../lib/trade-records';
 
 /**
  * One row of the trading record, whichever way the trade was taken. Each says
- * where it came from first (`Chart`, `Predict`, `Rule`), so three kinds of
- * trade read as one list. The Trading records screen draws these, and so does
+ * where it came from first (`Chart`, `Predict`, `Rule`, or `Autopilot` for the
+ * rule judged at a candle close with nobody pressing anything), so every kind
+ * of trade reads as one list. The Trading records screen draws these, and so does
  * the newest handful on the Profile tab.
  *
  * A row is a direction, a state and prices. It never carries money: a trade's
@@ -20,14 +21,7 @@ import { chartRowFigures, chartTradeView, timedRowView, type ChartTrade } from '
  */
 
 /** The Trading records screen opened on one record's details. */
-export const recordHref = (id: string) => `${routes.profileRecords}?open=${encodeURIComponent(id)}`;
-
-const KIND_LABEL: Record<ActivityItem['kind'], string> = {
-  executed: 'Executed',
-  refused: 'Blocked',
-  proposed: 'Proposed',
-  undone: 'Undone',
-};
+export const recordHref = recordRoute;
 
 const RESULT_LABEL = { won: 'WON', lost: 'LOST', refunded: 'REFUNDED' } as const;
 
@@ -45,18 +39,16 @@ const RuleRow = memo(function RuleRow({ item, divider }: { item: ActivityItem; d
   const refused = item.kind === 'refused';
   const base = item.asset.split('/')[0] ?? item.asset;
   const long = item.direction === 'long';
+  const view = ruleRowView(item);
   return (
     <ListRow
       leading={refused ? 'ban' : long ? 'trending-up' : 'trending-down'}
       leadingTone={refused ? 'refused' : long ? 'long' : 'short'}
       title={`${item.asset} · ${long ? 'Long' : 'Short'}`}
-      subtitle={
-        refused
-          ? `Rule · Blocked by ${item.refusedBy ?? 'your rule'} · ${timeLabel(item.at)}`
-          : `Rule · ${KIND_LABEL[item.kind]} · ${timeLabel(item.at)}`
-      }
+      subtitle={`${view.source} · ${view.state}${view.dated ? ` · ${timeLabel(item.at)}` : ''}`}
       value={priceLabel(item.entry)}
-      valueSub={`${compactDecimal(item.size)} ${base}`}
+      // A proposal autopilot wrote carries the rule's own sizing, which is not what was sent: its state, not a size.
+      valueSub={view.sized ? `${compactDecimal(item.size)} ${base}` : view.badge.toUpperCase()}
       href={tradeRoute(item.id)}
       divider={divider}
     />
@@ -102,12 +94,13 @@ const TimedRow = memo(function TimedRow({ id, trade, onOpen, divider }: RowProps
       leading={view.direction === 'up' ? 'trending-up' : 'trending-down'}
       leadingTone={view.direction === 'up' ? 'long' : 'short'}
       title={`${view.asset} · ${view.word}`}
-      subtitle={`Predict · ${view.terms} · ${timeLabel(view.at)}`}
+      subtitle={`${view.source} · ${view.terms} · ${timeLabel(view.at)}`}
       value={view.figures.value}
       valueSub={view.figures.sub}
       divider={divider}
-      // A running trade is watched where its countdown is; a finished one has details.
-      {...(view.running ? { href: routes.predict } : opening(id, onOpen))}
+      // A running trade is watched where its countdown is; a finished one has details. One autopilot
+      // opened has details while it runs too: they are where the proposal that is its evidence is.
+      {...(view.running && view.proposalId === null ? { href: routes.predict } : opening(id, onOpen))}
     />
   );
 });

@@ -239,6 +239,8 @@ describe('reading the trade list', () => {
       openTx: null,
       closeTx: null,
       reason: null,
+      origin: null,
+      proposalId: null,
     });
   });
 
@@ -867,5 +869,42 @@ describe('stateRecheck', () => {
   it('reads again after a short wait when a market is still held past its time', () => {
     const state = withMarkets([{ asset: 'BTC/USD', open: true, leverage: 5, busy: { until: T0 } }]);
     expect(stateRecheck(state, T0 + BUSY_GRACE_MS)).toEqual({ delayMs: OVERDUE_RECHECK_MS, overdue: true });
+  });
+});
+
+describe('a trade autopilot opened', () => {
+  const AUTO: TimedTradeRow = { ...ROW, seconds: 900, expiresAt: T0 + 900_000, origin: 'autopilot', proposalId: 'p1' };
+
+  it('reads who opened it and the proposal that is its evidence', () => {
+    expect(timedTradeFromRow(AUTO)).toMatchObject({ id: 't1', origin: 'autopilot', proposalId: 'p1', seconds: 900 });
+  });
+
+  it('a trade somebody called on Predict has neither', () => {
+    expect(timedTradeFromRow(ROW)).toMatchObject({ origin: null, proposalId: null });
+    expect(tradeFromOpened(VIEW, 'testnet')).toMatchObject({ origin: null, proposalId: null });
+  });
+
+  it('offers no evidence link for a row that does not say autopilot opened it', () => {
+    expect(timedTradeFromRow({ ...ROW, proposalId: 'p1' })).toMatchObject({ origin: null, proposalId: null });
+    expect(timedTradeFromRow({ ...ROW, origin: 'somebody', proposalId: 'p1' })).toMatchObject({ origin: null, proposalId: null });
+    // Said to be autopilot's, with no proposal named: it keeps the mark and has nothing to link to.
+    expect(timedTradeFromRow({ ...ROW, origin: 'autopilot' })).toMatchObject({ origin: 'autopilot', proposalId: null });
+    expect(timedTradeFromRow({ ...ROW, origin: 'autopilot', proposalId: 42 })).toMatchObject({ origin: 'autopilot', proposalId: null });
+  });
+
+  it('is running, finished and listed exactly as any other trade is', () => {
+    const live = timedTradeFromRow(AUTO)!;
+    const closed = timedTradeFromRow({ ...CLOSED, origin: 'autopilot', proposalId: 'p1' })!;
+    expect(runningTrades([live, closed]).map((t) => t.id)).toEqual(['t1']);
+    expect(finishedTrades([live, closed])).toHaveLength(1);
+    expect(finishedView(closed).ended).toBe('TIME UP');
+    // Its result is where every trade's is: in the details, never on a row.
+    expect(finishedDetail(closed).facts.map(([label]) => label)).toContain('Result after fees');
+  });
+
+  it('says autopilot opened it, since nobody on the screen pressed anything', () => {
+    const at = formatClockTime(T0 + 900_000);
+    expect(openedLine(timedTradeFromRow(AUTO)!)).toBe(`Autopilot opened up on BTC. It closes itself at ${at}.`);
+    expect(openedLine(trade())).toMatch(/^Opened up on BTC\./);
   });
 });

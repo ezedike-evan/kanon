@@ -265,8 +265,8 @@ the markets are shown and the account asks for sign-in.
 **One record for three ways of trading.** Trading records lists every trade the person
 took, newest first by the day it was opened: a position from the chart's ticket, a
 timed trade from Predict, and a setup put to their rule (executed or refused). Each row
-names its source (`Chart`, `Predict`, `Rule`) and the chips filter by it (All, Chart,
-Predict, By rule, Refused); the four tiles above are counts of the same. The server
+names its source (`Chart`, `Predict`, `Rule`, or `Autopilot`) and the chips filter by it
+(All, Chart, Predict, By rule, Refused); the four tiles above are counts of the same. The server
 records orders, not trades, so a chart trade is paired from the person's own orders:
 every filled open and add on a market, up to the close that followed, with the entry
 weighted by size. The orders a timed trade placed are left out of that pairing, since
@@ -274,9 +274,36 @@ the timed trade is already a row. A row carries a direction, a state and prices 
 never money. Pressing a chart trade or a finished timed trade opens a bottom sheet with
 its figures, the result among them, and each order's transaction on the explorer; a
 rule's trade opens its evidence screen; a running timed trade goes to Predict.
-`/profile/records?open=<id>` opens the screen on one record. The Profile tab shows the
-newest five under "Your trades", each linking to that address, and its Trades tile
-counts all three kinds.
+`/profile/records?open=<id>` opens the screen on one record (a running timed trade
+opened that way shows where it stands, with Predict one press from the foot). The
+Profile tab shows the newest five under "Your trades", each linking to that address,
+and its Trades tile counts all three kinds.
+
+**Autopilot.** A pinned rule judged at every close of its own candle with nobody
+pressing anything. A pass opens a small timed trade on Perpl testnet; a fail is a
+refusal like any other. The switch is a row on the rule's card, on Home and on the
+enforcing rule in Profile > Previous rules: the word, an `ON` or `OFF` badge and one
+line of what it does. The row turns nothing on. It opens a bottom sheet that states
+every term as an exact figure (checked at each candle close, the stake, the hold, one
+trade at a time, what a fail is, what turning it off withdraws), then the venue's own
+two terms as Predict was last told them (the size at the market's leverage, the
+slippage bound), then the rest as short sentences, with the action anchored at the
+foot: `TURN AUTOPILOT ON` in `signal`, `TURN AUTOPILOT OFF` as the ghost. Signed out
+the terms can be read and the foot is the way to sign in. Pinning a
+newer rule turns autopilot off on the one it replaces; a replaced rule that still has it
+on keeps the row, as the way to turn it off and nothing else.
+A switch that was not thrown says so in one sentence above the action. Whatever
+autopilot judged carries its mark, the `bot` glyph with the words `BY AUTOPILOT` in
+`signal`, and a list row names `Autopilot` as its source. A waiting proposal reads
+`WAITING FOR THE GATEWAY`, shows no undo window and offers neither confirm nor cancel;
+an opened one leads to its timed trade in one press; one that was not opened shows the
+server's reason verbatim, in neutral type. A timed trade autopilot opened leads to the
+proposal that is its evidence, one press from a running row on Predict and from its
+details anywhere; in the record its row opens those details even while it runs. A
+position is one row of the record: the timed trade, which has the
+real fill, counted under By rule and not under Predict; its proposal is not listed
+beside it. An autopilot proposal's entry, size and stop are the rule's own sizing of
+the setup and are never shown as what was sent.
 
 **The on-chain record (Profile > Previous rules, under the rule cards).** The rule cards
 are the app's account of a rule; this section is the chain's, read from the Kanon indexer

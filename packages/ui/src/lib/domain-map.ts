@@ -42,6 +42,8 @@ export interface ActivityRow {
   createdAt: number;
   executedAt?: number | undefined;
   failedSymbol?: string | undefined;
+  /** `autopilot` when the sweep wrote the row. Absent for a button press. */
+  origin?: 'autopilot' | undefined;
 }
 
 export interface FollowRow {
@@ -93,6 +95,7 @@ export function activityFromRows(rows: readonly ActivityRow[]): ActivityItem[] {
     size: r.size,
     at: r.executedAt ?? r.createdAt,
     ...(r.status === 'refused' && r.failedSymbol ? { refusedBy: r.failedSymbol } : {}),
+    ...(r.origin === 'autopilot' ? { origin: 'autopilot' as const } : {}),
   }));
 }
 
@@ -102,6 +105,7 @@ export function sameActivity(a: ActivityItem, b: ActivityItem): boolean {
     a.kind === b.kind &&
     a.at === b.at &&
     a.refusedBy === b.refusedBy &&
+    a.origin === b.origin &&
     a.entry.atoms === b.entry.atoms &&
     a.size.atoms === b.size.atoms
   );
@@ -138,6 +142,8 @@ export function ruleHistory(
         asset: spec ? spec.series.asset : null,
         active: s._id === activeId,
         ...(s.pinTxHash ? { pinTxHash: s.pinTxHash } : {}),
+        autopilot: s.autopilot === true,
+        candleSeconds: spec ? spec.series.bucketSeconds : null,
       };
     });
 }

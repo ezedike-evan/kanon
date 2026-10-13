@@ -245,6 +245,9 @@ export function timedTradeFromRow(row: unknown): TimedTrade | null {
     openTx: isText(row.openTx) ? row.openTx : null,
     closeTx: isText(row.closeTx) ? row.closeTx : null,
     reason: isText(row.reason) ? row.reason : null,
+    origin: row.origin === 'autopilot' ? 'autopilot' : null,
+    // The evidence link is only ever drawn for a trade that says autopilot opened it.
+    proposalId: row.origin === 'autopilot' && isText(row.proposalId) ? row.proposalId : null,
   };
 }
 
@@ -281,6 +284,9 @@ export function tradeFromOpened(view: TimedTradeView, network: TimedNetwork): Ti
     openTx: null,
     closeTx: null,
     reason: null,
+    // An `opened` answer is the answer to the caller's own press: autopilot's trades arrive as rows.
+    origin: null,
+    proposalId: null,
   };
 }
 
@@ -742,9 +748,15 @@ export function closeOutcomeView(result: TimedCloseResult, trade: Pick<TimedTrad
   };
 }
 
-/** What a live region says when a trade opens: `Opened up on BTC. It closes itself at 12:01:05.` */
-export function openedLine(trade: Pick<TimedTrade, 'asset' | 'direction' | 'expiresAt'>): string {
-  return `Opened ${trade.direction} on ${baseOf(trade.asset)}. It closes itself at ${formatClockTime(trade.expiresAt)}.`;
+/**
+ * What a live region says when a trade opens: `Opened up on BTC. It closes itself at 12:01:05.`
+ * One autopilot opened says so, since nobody on this screen pressed anything for it.
+ */
+export function openedLine(
+  trade: Pick<TimedTrade, 'asset' | 'direction' | 'expiresAt'> & { origin?: TimedTrade['origin'] | undefined },
+): string {
+  const opened = trade.origin === 'autopilot' ? 'Autopilot opened' : 'Opened';
+  return `${opened} ${trade.direction} on ${baseOf(trade.asset)}. It closes itself at ${formatClockTime(trade.expiresAt)}.`;
 }
 
 // --- A running trade ----------------------------------------------------------

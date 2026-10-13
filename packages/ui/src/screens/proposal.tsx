@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
 import { formatBps, formatDecimal, type Decimal } from '@kanon/spec';
+import { AutopilotBlock } from '../components/autopilot';
 import { Body, BrandBar, Footer, NavBar, Screen, StatusBar } from '../components/chrome';
 import { UndoCountdown } from '../components/countdown';
-import { DangerButton, Dot, GhostButton, Meta, Num, Panel, PrimaryButton } from '../components/ui';
+import { DangerButton, Dot, EvidenceLink, GhostButton, Meta, Num, Panel, PrimaryButton } from '../components/ui';
 import { useNavigator } from '../nav';
 import { useKanonData } from '../lib/data';
-import { routes } from '../lib/routes';
+import { routes, timedTradeRoute } from '../lib/routes';
 import { cx } from '../lib/cx';
 
 /**
@@ -19,6 +20,12 @@ import { cx } from '../lib/cx';
  * The undo window is enforced on the server clock, not this countdown: the
  * countdown only shows it. Cancelling after the window has closed is refused
  * there, and this screen says so.
+ *
+ * A proposal autopilot wrote is not the person's to confirm or cancel: the
+ * gateway opens a small timed trade for it, or records why it did not. It has
+ * no undo window, so it shows none and offers neither action. It says where it
+ * stands, what was asked of the venue, and leads to the timed trade in one
+ * press. Its entry, stop and size stay the rule's own sizing of the setup.
  */
 export function ProposalScreen() {
   const nav = useNavigator();
@@ -73,8 +80,12 @@ export function ProposalScreen() {
     );
   }
 
-  const open = PROPOSAL.status === 'proposed';
+  const auto = PROPOSAL.autopilot ?? null;
+  // The undo window is a person's proposal's. Autopilot's is the gateway's to open.
+  const open = PROPOSAL.status === 'proposed' && auto === null;
   const long = PROPOSAL.direction === 'long';
+  // Nothing was opened, by the person's undo or by the venue's answer: neutral, never an alarm.
+  const quiet = PROPOSAL.status === 'undone' || auto?.state === 'not_opened';
   const rows: Array<[string, Decimal]> = [
     ['ENTRY', PROPOSAL.entry],
     ['STOP', PROPOSAL.stop],
@@ -101,32 +112,23 @@ export function ProposalScreen() {
   }
 
   return (
-    <Screen
-      rail={PROPOSAL.status === 'undone' ? 'bg-hairline' : 'bg-long'}
-      label="05 · TRADE PROPOSAL · UNDO WINDOW"
-    >
+    <Screen rail={quiet ? 'bg-hairline' : 'bg-long'} label="05 · TRADE PROPOSAL · UNDO WINDOW">
       <StatusBar />
-      <BrandBar
-        status={`${RULE.ordinal} SATISFIED`}
-        dot={PROPOSAL.status === 'undone' ? 'bg-ash' : 'bg-long'}
-      />
+      <BrandBar status={`${RULE.ordinal} SATISFIED`} dot={quiet ? 'bg-ash' : 'bg-long'} />
 
       <Body>
         <View className="mt-7.5 flex-row items-center gap-2.25">
-          <Dot size="size-2" className={PROPOSAL.status === 'undone' ? 'bg-ash' : 'bg-long'} />
-          <Text
-            className={cx(
-              'font-mono-bold text-11 tracking-w20',
-              PROPOSAL.status === 'undone' ? 'text-ash' : 'text-long',
-            )}
-          >
-            {PROPOSAL.status === 'proposed'
-              ? 'SETUP VALID · EXECUTING'
-              : PROPOSAL.status === 'executed'
-                ? PROPOSAL.paper
-                  ? 'SETUP VALID · EXECUTED (PAPER)'
-                  : 'SETUP VALID · EXECUTED'
-                : 'SETUP VALID · UNDONE BY YOU'}
+          <Dot size="size-2" className={quiet ? 'bg-ash' : 'bg-long'} />
+          <Text className={cx('font-mono-bold text-11 tracking-w20', quiet ? 'text-ash' : 'text-long')}>
+            {auto
+              ? `SETUP VALID · ${auto.label}`
+              : PROPOSAL.status === 'proposed'
+                ? 'SETUP VALID · EXECUTING'
+                : PROPOSAL.status === 'executed'
+                  ? PROPOSAL.paper
+                    ? 'SETUP VALID · EXECUTED (PAPER)'
+                    : 'SETUP VALID · EXECUTED'
+                  : 'SETUP VALID · UNDONE BY YOU'}
           </Text>
         </View>
         <Text className="mt-3.5 font-sans text-30 font-medium tracking-t25 text-bone leading-[1.08]">
@@ -165,6 +167,9 @@ export function ProposalScreen() {
           SIZED ON {PROPOSAL.sizing}
           {PROPOSAL.target ? '' : ' · NO TARGET IN THE SPEC'}
         </Text>
+
+        {/* Autopilot's proposal: where it stands, what was asked of the venue, and the timed trade one press away. */}
+        {auto ? <AutopilotBlock note={auto} link={false} className="mt-5" /> : null}
 
         <View className="mt-5.5 mb-5">
           <Meta className="pb-2.5 tracking-w20">
@@ -217,6 +222,29 @@ export function ProposalScreen() {
                 CANCEL TRADE
               </DangerButton>
             </View>
+          </>
+        ) : auto ? (
+          <>
+            {auto.timedTradeId ? (
+              <EvidenceLink
+                className="mb-4.5"
+                label="Open the timed trade"
+                hash={auto.sent ?? ''}
+                href={timedTradeRoute(auto.timedTradeId)}
+              />
+            ) : (
+              <View className="mb-4 border-t border-hairline py-4">
+                <Meta>{`BY AUTOPILOT · ${auto.label}`}</Meta>
+                <Text className="mt-1.75 font-mono text-10 tracking-w06 text-ash leading-[1.5]">
+                  {auto.state === 'waiting'
+                    ? 'Nothing here is yours to confirm or cancel. Turning autopilot off withdraws it, if it has not been sent.'
+                    : auto.state === 'opened'
+                      ? 'A timed trade was opened for it. It is in your trading records.'
+                      : 'The reason is above, as the server recorded it.'}
+                </Text>
+              </View>
+            )}
+            <GhostButton href={routes.home}>BACK TO RULE</GhostButton>
           </>
         ) : (
           <>

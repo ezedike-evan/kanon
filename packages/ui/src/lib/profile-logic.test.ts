@@ -20,6 +20,7 @@ import {
   loginLabel,
   memberSince,
   mergeRecords,
+  onePerPosition,
   orderRules,
   pinnedCount,
   priceLabel,
@@ -31,6 +32,7 @@ import {
   shortId,
   stakeRecords,
   tableDayLabel,
+  takenByHand,
   timeLabel,
   timedRecords,
   tradeRecords,
@@ -143,6 +145,8 @@ describe('records', () => {
       openTx: null,
       closeTx: null,
       reason: null,
+      origin: null,
+      proposalId: null,
     };
     const chart = chartTrades([
       order('o', '2026-09-02T12:00:00Z'),
@@ -317,5 +321,105 @@ describe('figures', () => {
   it('states the version that was built', () => {
     const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
     expect(APP_VERSION).toBe(pkg.version);
+  });
+});
+
+describe('one row per position, with autopilot', () => {
+  const timed = (id: string, at: string, over: Partial<TimedTrade> = {}): TimedTrade => ({
+    id,
+    network: 'testnet',
+    asset: 'BTC/USD',
+    direction: 'up',
+    stakeUsd: 10,
+    leverage: 5,
+    seconds: 900,
+    status: 'closed',
+    openedAt: Date.parse(at),
+    expiresAt: Date.parse(at) + 900_000,
+    closedAt: Date.parse(at) + 900_500,
+    endedBy: 'time',
+    size: parseDecimal('0.00070', 5),
+    entryPrice: parseDecimal('68441.2', 1),
+    exitPrice: parseDecimal('68490.0', 1),
+    result: null,
+    fees: null,
+    openTx: null,
+    closeTx: null,
+    reason: null,
+    origin: null,
+    proposalId: null,
+    ...over,
+  });
+  const auto = (id: string, kind: ActivityItem['kind'], at: string): ActivityItem => ({ ...trade(id, kind, at), origin: 'autopilot' });
+
+  // What the two reads hand back for one autopilot position: the proposal, executed, and the timed trade opened for it.
+  const proposal = auto('p1', 'executed', '2026-09-02T14:30:02Z');
+  const position = timed('tt1', '2026-09-02T14:30:09Z', { origin: 'autopilot', proposalId: 'p1' });
+  const called = timed('tt2', '2026-09-02T13:00:00Z');
+  const rule = [
+    proposal,
+    auto('p2', 'refused', '2026-09-02T14:15:01Z'),
+    auto('p3', 'undone', '2026-09-02T14:00:01Z'),
+    trade('m1', 'executed', '2026-09-02T12:00:00Z'),
+  ];
+  const merged = mergeRecords(timedRecords([position, called]), tradeRecords(rule));
+  const records = onePerPosition(merged);
+
+  it('lists an opened autopilot proposal once, as its timed trade', () => {
+    expect(merged.map((r) => r.id)).toEqual(['timed:tt1', 'p1', 'p2', 'p3', 'timed:tt2', 'm1']);
+    expect(records.map((r) => r.id)).toEqual(['timed:tt1', 'p2', 'p3', 'timed:tt2', 'm1']);
+    // The row kept is the one with the real fill, and it still knows its evidence.
+    const kept = records[0];
+    expect(kept?.type === 'timed' && kept.trade.proposalId).toBe('p1');
+  });
+
+  it('counts it once, where the rule\'s setups are, and not under Predict', () => {
+    const totals = recordTotals(records);
+    expect(totals).toEqual({ all: 5, chart: 0, predictions: 1, executed: 2, refused: 1 });
+    // The same counts before the fix would have had it under Predict, and its proposal under By rule as well.
+    expect(recordTotals(merged).all).toBe(6);
+    expect(filterRecords(records, 'executed').map((r) => r.id)).toEqual(['timed:tt1', 'm1']);
+    expect(filterRecords(records, 'predictions').map((r) => r.id)).toEqual(['timed:tt2']);
+    expect(filterRecords(records, 'refused').map((r) => r.id)).toEqual(['p2']);
+  });
+
+  it('keeps every chip the count of the rows it shows, and the tiles adding up to the total', () => {
+    const totals = recordTotals(records);
+    for (const f of RECORD_FILTERS) expect(filterRecords(records, f.value)).toHaveLength(totals[f.value]);
+    // Total, Chart, Predict, Rule: every row is in exactly one of the last three, or is a proposal still open or not opened.
+    const elsewhere = records.filter((r) => r.type === 'trade' && r.item.kind !== 'executed' && r.item.kind !== 'refused').length;
+    expect(totals.chart + totals.predictions + totals.executed + totals.refused + elsewhere).toBe(totals.all);
+  });
+
+  it('keeps a proposal whose timed trade is not in the list: nothing was opened, or it is older than the list reaches', () => {
+    const alone = onePerPosition(mergeRecords(timedRecords([called]), tradeRecords(rule)));
+    expect(alone.map((r) => r.id)).toEqual(['p1', 'p2', 'p3', 'timed:tt2', 'm1']);
+    expect(recordTotals(alone)).toEqual({ all: 5, chart: 0, predictions: 1, executed: 2, refused: 1 });
+  });
+
+  it('drops the proposal even in the moment its row still reads as waiting', () => {
+    const waiting = auto('p1', 'proposed', '2026-09-02T14:30:02Z');
+    const live = timed('tt1', '2026-09-02T14:30:09Z', { origin: 'autopilot', proposalId: 'p1', status: 'live', closedAt: null, endedBy: null, exitPrice: null });
+    expect(onePerPosition(mergeRecords(timedRecords([live]), tradeRecords([waiting]))).map((r) => r.id)).toEqual(['timed:tt1']);
+  });
+
+  it('never drops a rule trade for a timed trade the person called themselves', () => {
+    const list = mergeRecords(timedRecords([called]), tradeRecords([trade('m1', 'executed', '2026-09-02T12:00:00Z')]));
+    expect(onePerPosition(list)).toEqual(list);
+    // A stray proposalId on a row that does not say autopilot opened it is not read at all (`timedTradeFromRow`).
+    expect(onePerPosition([])).toEqual([]);
+  });
+
+  it('counts a trade autopilot opened with the rule\'s, not with the ones taken by hand', () => {
+    const order: VenueOrder = {
+      id: 'o', network: 'testnet', asset: 'ETH/USD', action: 'open', side: 'long', status: 'filled',
+      createdAt: Date.parse('2026-09-02T11:00:00Z'), settledAt: Date.parse('2026-09-02T11:00:02Z'),
+      notionalUsd: 50, leverage: 5, requestId: 1, size: parseDecimal('0.01500', 5), fillPrice: parseDecimal('3400.0', 1),
+      fee: null, block: null, txHash: null, reason: null,
+    };
+    const own = mergeRecords(chartRecords(chartTrades([order], [position, called])), timedRecords([position, called]));
+    expect(own).toHaveLength(3);
+    expect(takenByHand(own)).toBe(2);
+    expect(takenByHand([])).toBe(0);
   });
 });

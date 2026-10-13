@@ -151,6 +151,10 @@ export interface TimedTradeRow {
   closeTx?: string;
   /** Why closing is delayed, in the server's words. */
   reason?: string;
+  /** Absent: somebody called it on Predict. `autopilot`: opened for a proposal the rule passed, with nobody there. */
+  origin?: 'autopilot';
+  /** The proposal an autopilot trade was opened for (a `trades` id): the evidence that the rule passed. */
+  proposalId?: string;
 }
 
 // --- What a screen is handed --------------------------------------------------
@@ -198,6 +202,10 @@ export interface TimedTrade {
   openTx: string | null;
   closeTx: string | null;
   reason: string | null;
+  /** `autopilot` when the rule opened it at a candle close with nobody pressing anything. Null for one called on Predict. */
+  origin: 'autopilot' | null;
+  /** The proposal an autopilot trade was opened for: its evidence, one press away. Null for one called on Predict. */
+  proposalId: string | null;
 }
 
 /** Signed out it is `empty`: a trade list is never filled with made-up trades. */

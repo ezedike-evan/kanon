@@ -1,5 +1,6 @@
 import { Text, View } from 'react-native';
 import { formatDecimal } from '@kanon/spec';
+import { AutopilotMark } from '../components/autopilot';
 import { Body, Screen, StatusBar, TabBar } from '../components/chrome';
 import { Dot, Meta, Num } from '../components/ui';
 import { Link } from '../nav';
@@ -65,12 +66,16 @@ export function BlockedLogScreen() {
               key={row.tradeId ?? `${row.symbol}-${row.at}`}
               href={row.tradeId ? tradeRoute(row.tradeId) : routes.refused}
               className={cx('flex-row gap-3 py-3.5', i > 0 && 'border-t border-hairline')}
-              aria-label={`Refusal ${i + 1} of ${BLOCKED.rows.length}: ${row.symbol}`}
+              aria-label={`Refusal ${i + 1} of ${BLOCKED.rows.length}: ${row.symbol}${row.autopilot ? ', by autopilot' : ''}`}
             >
               <Dot className="mt-1.25 bg-refused" />
               <View className="flex-1 gap-2">
                 <View className="flex-row items-baseline justify-between gap-3">
-                  <Text className="font-mono-medium text-12 text-bone">{row.symbol}</Text>
+                  <View className="min-w-0 flex-1 flex-row flex-wrap items-center gap-x-2.5 gap-y-1">
+                    <Text className="font-mono-medium text-12 text-bone">{row.symbol}</Text>
+                    {/* Judged at a candle close, with nobody pressing anything. */}
+                    {row.autopilot ? <AutopilotMark label="Autopilot" /> : null}
+                  </View>
                   <Num className="text-10 text-ash">{row.at}</Num>
                 </View>
                 {/* The predicate, and the number that failed it. Always both. */}

@@ -18,7 +18,16 @@ import { useAccount } from '../../lib/account';
 import { useProfile } from '../../lib/domains';
 import { useOwnTrades, useRecentRecords } from '../../lib/profile-hooks';
 import { DEMO_FOLLOWING, DEMO_JOINED_AT, DEMO_PROFILE, DEMO_RULES } from '../../lib/profile-demo';
-import { allocationLabel, handleOf, loginLabel, memberSince, pinnedCount, shortAddress, shortId } from '../../lib/profile-logic';
+import {
+  allocationLabel,
+  handleOf,
+  loginLabel,
+  memberSince,
+  pinnedCount,
+  shortAddress,
+  shortId,
+  takenByHand,
+} from '../../lib/profile-logic';
 import { routes } from '../../lib/routes';
 import { THEME_MODES } from '../../lib/theme-logic';
 import { useTheme } from '../../theme';
@@ -133,7 +142,8 @@ export const BehaviourSection = memo(function BehaviourSection() {
   const rules = profile.status === 'demo' ? DEMO_RULES : profile.rules;
   const { blocked, attempts, adherenceBps } = profile.records;
   // Every trade taken, however it was: through the rule, by hand on the chart, on a timer in Predict.
-  const taken = profile.records.taken + (own.status === 'ready' ? own.records.length : 0);
+  // A timed trade autopilot opened is the rule's, already among its executed setups, so it is not added again.
+  const taken = profile.records.taken + (own.status === 'ready' ? takenByHand(own.records) : 0);
   return (
     <View className="gap-2.5">
       <StatRow

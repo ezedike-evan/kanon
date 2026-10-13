@@ -104,6 +104,9 @@ const rule = (
   name,
   asset,
   pinnedAt: pinnedAt ? Date.parse(pinnedAt) : null,
+  // Nobody pinned a demo rule, so nothing runs it. Every demo rule is on 15m candles, as the demo rule card is.
+  autopilot: false,
+  candleSeconds: 900,
 });
 
 /** Newest first, as the profile domain returns them. */

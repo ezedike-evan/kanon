@@ -227,17 +227,21 @@ export function accountLine(network: 'testnet' | 'mainnet' | null): string {
  * The line under a running trade's "End now". The server's own words on a
  * delay come first, then that its time is up, then, on a slide for another
  * time than the trade's, why this slide offers nothing, and otherwise when the
- * trade closes itself.
+ * trade closes itself. A trade autopilot opened says so in that last line: the
+ * person looking at the slide did not open it.
  */
 export function runningNote(
-  trade: Pick<TimedTrade, 'asset' | 'direction' | 'seconds' | 'expiresAt' | 'status' | 'reason'>,
+  trade: Pick<TimedTrade, 'asset' | 'direction' | 'seconds' | 'expiresAt' | 'status' | 'reason'> & {
+    origin?: TimedTrade['origin'] | undefined;
+  },
   slide: Pick<ReelSlide, 'seconds'>,
   due: boolean,
 ): string {
   if (trade.reason) return trade.reason;
   if (due && trade.status === 'live') return TIME_IS_UP;
   if (trade.seconds !== slide.seconds) {
-    return `${baseOf(trade.asset)} takes one timed trade at a time. This one closes itself at ${formatClockTime(trade.expiresAt)}.`;
+    const which = trade.origin === 'autopilot' ? 'Autopilot opened this one. It' : 'This one';
+    return `${baseOf(trade.asset)} takes one timed trade at a time. ${which} closes itself at ${formatClockTime(trade.expiresAt)}.`;
   }
   return openedLine(trade);
 }

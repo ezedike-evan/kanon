@@ -21,6 +21,11 @@ export type RecordFilter = 'all' | 'chart' | 'predictions' | 'executed' | 'refus
  * A person trades three ways and the record holds all three: by hand from the
  * chart's ticket, on a timer from Predict, and through a pinned rule, which
  * either executes a setup or refuses it.
+ *
+ * Autopilot is the third way, not a fourth: the rule judged at a candle close
+ * with nobody pressing anything. The timed trade it opens is the rule's trade,
+ * so it is listed and counted under `By rule`, and not under `Predict`, which
+ * is what the person called by hand.
  */
 export const RECORD_FILTERS: ReadonlyArray<{ value: RecordFilter; label: string }> = [
   { value: 'all', label: 'All' },
@@ -56,7 +61,7 @@ export type LedgerRecord =
   | { type: 'stake'; id: string; at: number; stake: StakeRecord }
   /** A position taken by hand from the chart's ticket. */
   | { type: 'chart'; id: string; at: number; trade: ChartTrade }
-  /** A timed trade from Predict. */
+  /** A timed trade: one the person called on Predict, or one autopilot opened for their rule (`trade.origin`). */
   | { type: 'timed'; id: string; at: number; trade: TimedTrade };
 
 export function tradeRecords(items: readonly ActivityItem[]): LedgerRecord[] {
@@ -106,6 +111,34 @@ export function mergeRecords(...lists: ReadonlyArray<readonly LedgerRecord[]>): 
     .map(({ r }) => r);
 }
 
+/** A timed trade autopilot opened for the person's rule: the rule's trade, with its real fill. */
+export const byAutopilot = (record: LedgerRecord): boolean => record.type === 'timed' && record.trade.origin === 'autopilot';
+
+/**
+ * One row per position. A proposal autopilot wrote and the timed trade the
+ * gateway opened for it are the same position, told twice: once as the rule's
+ * verdict, once as the fill. The timed trade is the one kept, since it has the
+ * real entry, exit and transactions, and the proposal is reached from it as its
+ * evidence (`trade.proposalId`). A proposal whose timed trade is not in the list
+ * (nothing was opened for it, or the trade is older than the list reaches) stays.
+ */
+export function onePerPosition(records: readonly LedgerRecord[]): LedgerRecord[] {
+  const opened = new Set<string>();
+  for (const r of records) {
+    if (r.type === 'timed' && r.trade.proposalId !== null) opened.add(r.trade.proposalId);
+  }
+  return opened.size === 0 ? [...records] : records.filter((r) => !(r.type === 'trade' && opened.has(r.id)));
+}
+
+/**
+ * How many of the records are trades the person took by hand: on the chart, or
+ * called on Predict. One autopilot opened is left out, because it is already
+ * counted where the rule's executed setups are.
+ */
+export function takenByHand(records: readonly LedgerRecord[]): number {
+  return records.filter((r) => (r.type === 'chart' || r.type === 'timed') && !byAutopilot(r)).length;
+}
+
 export function matchesFilter(record: LedgerRecord, filter: RecordFilter): boolean {
   switch (filter) {
     case 'all':
@@ -113,9 +146,9 @@ export function matchesFilter(record: LedgerRecord, filter: RecordFilter): boole
     case 'chart':
       return record.type === 'chart';
     case 'predictions':
-      return record.type === 'timed' || record.type === 'stake';
+      return (record.type === 'timed' && !byAutopilot(record)) || record.type === 'stake';
     case 'executed':
-      return record.type === 'trade' && record.item.kind === 'executed';
+      return (record.type === 'trade' && record.item.kind === 'executed') || byAutopilot(record);
     case 'refused':
       return record.type === 'trade' && record.item.kind === 'refused';
   }
@@ -132,7 +165,9 @@ export function recordTotals(records: readonly LedgerRecord[]): RecordTotals {
   const totals: RecordTotals = { all: records.length, chart: 0, predictions: 0, executed: 0, refused: 0 };
   for (const r of records) {
     if (r.type === 'chart') totals.chart += 1;
-    else if (r.type === 'timed' || r.type === 'stake') totals.predictions += 1;
+    // The rule's trade, whoever pressed nothing for it: counted once, where the rule's setups are.
+    else if (r.type === 'timed') totals[r.trade.origin === 'autopilot' ? 'executed' : 'predictions'] += 1;
+    else if (r.type === 'stake') totals.predictions += 1;
     else if (r.item.kind === 'executed') totals.executed += 1;
     else if (r.item.kind === 'refused') totals.refused += 1;
   }

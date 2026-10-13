@@ -25,6 +25,9 @@ const KIND_BADGE: Record<ActivityItem['kind'], { tone: Tone; icon: IconName }> =
   undone: { tone: 'neutral', icon: 'undo' },
 };
 
+/** A proposal autopilot wrote and nothing was opened for: nobody undid it, so it does not take the undo glyph. */
+const NOT_OPENED_BADGE: { tone: Tone; icon: IconName } = { tone: 'neutral', icon: 'minus' };
+
 /** The time on a row. Its own leaf on the shared clock, so a tick re-renders this and not the row. */
 function When({ at }: { at: number }) {
   const now = useNowMs();
@@ -35,7 +38,7 @@ function When({ at }: { at: number }) {
 const ActivityRow = memo(function ActivityRow({ item, divider }: { item: ActivityItem; divider: boolean }) {
   const { tap } = useHaptics();
   const copy = activityCopy(item);
-  const badge = KIND_BADGE[item.kind];
+  const badge = item.origin === 'autopilot' && item.kind === 'undone' ? NOT_OPENED_BADGE : KIND_BADGE[item.kind];
   const long = item.direction === 'long';
   return (
     <Link
@@ -77,7 +80,8 @@ function DayLabel({ label }: { label: string }) {
 
 /**
  * The last eight things the rule did: trades taken, entries it held back,
- * proposals, undos. Grouped by day like a ledger. Eight rows at most, so a plain
+ * proposals, undos, by a press or by autopilot at a candle close (a row says
+ * which). Grouped by day like a ledger. Eight rows at most, so a plain
  * column rather than a virtualised list; the page around it is the scroller.
  */
 export function ActivitySection() {

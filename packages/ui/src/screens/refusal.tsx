@@ -1,6 +1,8 @@
 import { Text, View } from 'react-native';
 import { formatBps, formatDecimal, type Decimal } from '@kanon/spec';
+import { AutopilotMark } from '../components/autopilot';
 import { Body, BrandBar, Footer, NavBar, Screen, StatusBar } from '../components/chrome';
+import { FiguredText } from '../components/figured-text';
 import { Enter } from '../components/motion';
 import { Dot, EvidenceLink, GhostButton, Meta, Num, Panel } from '../components/ui';
 import { useKanonData } from '../lib/data';
@@ -12,6 +14,9 @@ import { routes, tradeRoute } from '../lib/routes';
  * Full-bleed, never a toast. It names the predicate that failed and the number
  * that failed it. Refusal is a success state: nothing here apologises, and
  * nothing here is styled as an error.
+ *
+ * A setup autopilot judged says so under the predicate: nobody tried to trade,
+ * the rule was consulted at a candle close and held the entry.
  */
 export function RefusalScreen() {
   const { refusal: REFUSAL, rule: RULE, latestTradeId: TRADE_ID, mode } = useKanonData();
@@ -55,7 +60,7 @@ export function RefusalScreen() {
           </View>
 
           <Text className="mt-3.5 font-sans text-34 font-medium tracking-t25 text-bone leading-[1.06]">
-            Trade blocked by your own rule.
+            {REFUSAL.autopilot ? 'Entry blocked by your own rule.' : 'Trade blocked by your own rule.'}
           </Text>
 
           <View className="mt-8.5 gap-2.5 border-t border-hairline pt-3.5">
@@ -70,6 +75,12 @@ export function RefusalScreen() {
             <Text className="font-mono text-13 text-ash leading-[1.5]">
               {REFUSAL.reason}
             </Text>
+            {REFUSAL.autopilot ? (
+              <View className="gap-1.5 pt-1">
+                <AutopilotMark className="self-start" />
+                <FiguredText text={REFUSAL.autopilot.line} className="font-sans text-12 leading-[18px] text-ash" />
+              </View>
+            ) : null}
           </View>
 
           <Panel className="mt-7.5">

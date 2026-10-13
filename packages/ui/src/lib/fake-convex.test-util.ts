@@ -4,12 +4,16 @@ import { useEffect, useSyncExternalStore } from 'react';
  * A fake Convex for render tests: a store of query results keyed by function
  * name, `emit` to push a new result (as a live query would), and a count of
  * which queries are subscribed at the moment and which actions were called.
+ * A mutation records what it was called with and answers `{}` unless
+ * `onMutation` gives it something else to do, a throw included.
  */
 export function createFakeConvex() {
   const results = new Map<string, unknown>();
   const listeners = new Set<() => void>();
   const subscribed = new Map<string, number>();
   const actionCalls: Record<string, number> = {};
+  const mutationCalls: Array<{ name: string; args: unknown }> = [];
+  const mutationAnswers = new Map<string, (args: any) => unknown>();
 
   const subscribe = (l: () => void) => {
     listeners.add(l);
@@ -39,7 +43,7 @@ export function createFakeConvex() {
 
   // Convex returns the same function for the same reference on every render; so does this,
   // or every consumer of one would look like it had changed.
-  const mutations = new Map<string, () => Promise<unknown>>();
+  const mutations = new Map<string, (args?: unknown) => Promise<unknown>>();
   const actions = new Map<string, () => Promise<unknown>>();
 
   return {
@@ -47,7 +51,13 @@ export function createFakeConvex() {
     hooks: {
       useQuery,
       useMutation: (ref: any) => {
-        if (!mutations.has(ref.__name)) mutations.set(ref.__name, async () => ({}));
+        if (!mutations.has(ref.__name)) {
+          mutations.set(ref.__name, async (args) => {
+            mutationCalls.push({ name: ref.__name, args });
+            const answer = mutationAnswers.get(ref.__name);
+            return answer ? answer(args) : {};
+          });
+        }
         return mutations.get(ref.__name)!;
       },
       useAction: (ref: any) => {
@@ -67,5 +77,11 @@ export function createFakeConvex() {
     /** Queries with at least one live subscriber, sorted. */
     subscribedQueries: () => [...subscribed].filter(([, n]) => n > 0).map(([k]) => k).sort(),
     actionCalls,
+    /** Every mutation call so far, in order, with its arguments. */
+    mutationCalls,
+    /** What a mutation answers from now on: a value, or a throw. */
+    onMutation(name: string, answer: (args: any) => unknown) {
+      mutationAnswers.set(name, answer);
+    },
   };
 }

@@ -64,6 +64,13 @@ export interface ActivityItem {
   refusedBy?: string;
   /** Milliseconds. */
   at: number;
+  /**
+   * `autopilot` when the rule was judged at a candle close with nobody pressing
+   * anything. Its `executed` is a timed trade the gateway opened, its `proposed`
+   * is waiting for the gateway, and its `undone` is one that was not opened.
+   * `entry` and `size` are then the rule's own sizing, not what was sent.
+   */
+  origin?: 'autopilot' | undefined;
 }
 
 export type ActivityState =
@@ -116,6 +123,10 @@ export interface RuleHistoryItem {
   active: boolean;
   /** The pin transaction: the on-chain evidence for the hash. Absent for a draft and in the demo. */
   pinTxHash?: string | undefined;
+  /** Autopilot is on for this rule: it is judged on every closed candle with nobody pressing anything. */
+  autopilot: boolean;
+  /** Seconds one candle of the rule lasts: what autopilot judges it on. Null when the stored spec no longer parses. */
+  candleSeconds: number | null;
 }
 
 export interface ProfileFollow {

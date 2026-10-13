@@ -5,6 +5,7 @@ import { useKanonSelector } from '../../lib/data';
 import type { HomeRule } from '../../lib/domain-types';
 import { routes } from '../../lib/routes';
 import { shallowEqual } from '../../lib/store';
+import { AutopilotRow } from '../autopilot';
 import { Badge } from '../badge';
 import { Card } from '../card';
 import { Chip } from '../chip';
@@ -27,8 +28,20 @@ function CoolingClock({ endsAtMs }: { endsAtMs: number }) {
  * whether it is pinned or cooling off, and the hash it was pinned under. The
  * card opens the rule; the hash is the evidence one tap away. With no rule
  * pinned, the same slot is the way to build one.
+ *
+ * Under the rule are the two ways it is consulted: autopilot, which judges it
+ * at every candle close with nobody pressing anything, and the check by hand.
+ * The autopilot row opens its terms (the screen holds the sheet); it is shown
+ * signed out too, where the terms can be read and the switch asks for sign-in.
  */
-export const RuleSection = memo(function RuleSection({ rule }: { rule: HomeRule }) {
+export const RuleSection = memo(function RuleSection({
+  rule,
+  onAutopilot,
+}: {
+  rule: HomeRule;
+  /** Opens autopilot's terms and its switch for the rule in force. */
+  onAutopilot: () => void;
+}) {
   const nav = useNavigator();
   const extra = useKanonSelector(
     (s) => ({
@@ -37,6 +50,8 @@ export const RuleSection = memo(function RuleSection({ rule }: { rule: HomeRule 
       pinnedOn: s.rule.pinnedOn,
       endsAt: s.coolingOff?.endsAt ?? null,
       live: s.mode === 'live',
+      autopilot: s.rule.autopilot,
+      candleSeconds: s.rule.bucketSeconds,
     }),
     shallowEqual,
   );
@@ -136,6 +151,13 @@ export const RuleSection = memo(function RuleSection({ rule }: { rule: HomeRule 
             </View>
           ) : null}
         </Link>
+
+        <AutopilotRow
+          on={extra.autopilot}
+          candleSeconds={extra.candleSeconds}
+          onPress={onAutopilot}
+          className="border-t border-hairline"
+        />
 
         {extra.live ? (
           <View className="gap-2 border-t border-hairline p-3">

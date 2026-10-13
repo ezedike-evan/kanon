@@ -148,6 +148,7 @@ export function useConvexKanonSource(input: {
   const blockedReport = hooks.useAction(api.proposer.blockedReport);
   const undoTrade = hooks.useMutation(api.trades.undoTrade);
   const confirmTrade = hooks.useMutation(api.trades.confirmTrade);
+  const setAutopilot = hooks.useMutation(api.strategies.setAutopilot);
 
   const actions = useMemo<LiveActions>(
     () => ({
@@ -161,6 +162,7 @@ export function useConvexKanonSource(input: {
       blockedReport: (args) => blockedReport(args),
       undoTrade: (args) => undoTrade(args),
       confirmTrade: (args) => confirmTrade(args),
+      setAutopilot: (args) => setAutopilot(args),
     }),
     [
       compile,
@@ -173,6 +175,7 @@ export function useConvexKanonSource(input: {
       blockedReport,
       undoTrade,
       confirmTrade,
+      setAutopilot,
     ],
   );
 

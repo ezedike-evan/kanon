@@ -9,6 +9,7 @@ import { useCountdownClock, useDue } from '../../lib/use-clock';
 import { useNowMs } from '../../lib/use-now';
 import type { TimedTicket, TimedTradesStatus } from '../../lib/use-timed-ticket';
 import { useHaptics } from '../../platform';
+import { AutopilotEvidenceLink, AutopilotEvidenceRow, AutopilotMark } from '../autopilot';
 import { Badge } from '../badge';
 import { BottomSheet } from '../bottom-sheet';
 import { EmptyState } from '../empty-state';
@@ -25,6 +26,10 @@ import { DirectionMark, FOCUS, Facts, MoveMark, TxLink, TxMissing } from './trad
  * the detail of one. A slide shows the trade on its own pair; this is where the
  * ones on other pairs are, one press from any slide (the rail), and always in
  * view on a wide desktop (the right panel).
+ *
+ * A trade the person's rule opened on autopilot is among them, and says so: its
+ * mark is the way to the proposal that is its evidence, one press from a running
+ * row and one from a finished trade's details.
  *
  * A running row is the trade's countdown and how far the price is from its
  * entry, with its own "End now"; a press on it goes to its slide. A finished
@@ -129,22 +134,32 @@ const RunningRow = memo(function RunningRow({
   const live = liveMove(trade, price);
   return (
     <View className={cx('min-h-14 flex-row items-center gap-3 pl-3.5 pr-2.5', !last && 'border-b border-hairline')}>
-      <Pressable
-        role="button"
-        aria-label={`Go to the ${row.asset} slide. ${row.word}, ${row.terms}, ${row.label.toLowerCase()}`}
-        onPress={() => onGo(trade)}
-        className={cx('min-w-0 flex-1 justify-center gap-1.5 self-stretch py-2.5 hover:opacity-80 active:opacity-70', FOCUS)}
-      >
-        <View className="flex-row flex-wrap items-center gap-x-2 gap-y-0.5">
-          <DirectionMark direction={row.direction} />
-          <Text className="font-mono-medium text-12 text-bone">{row.asset}</Text>
-          <Num className="text-11 text-ash">{row.terms}</Num>
-        </View>
-        <View className="flex-row flex-wrap items-center gap-x-2.5 gap-y-0.5">
-          <RowCountdown expiresAt={trade.expiresAt} />
-          {live ? <MoveMark move={live.move} /> : <Num className="text-11 text-ash">Reading the price</Num>}
-        </View>
-      </Pressable>
+      <View className="min-w-0 flex-1 self-stretch">
+        <Pressable
+          role="button"
+          aria-label={`Go to the ${row.asset} slide. ${row.word}, ${row.terms}, ${row.label.toLowerCase()}${trade.origin === 'autopilot' ? ', opened by autopilot' : ''}`}
+          onPress={() => onGo(trade)}
+          className={cx('grow justify-center gap-1.5 py-2.5 hover:opacity-80 active:opacity-70', FOCUS)}
+        >
+          <View className="flex-row flex-wrap items-center gap-x-2 gap-y-0.5">
+            <DirectionMark direction={row.direction} />
+            <Text className="font-mono-medium text-12 text-bone">{row.asset}</Text>
+            <Num className="text-11 text-ash">{row.terms}</Num>
+          </View>
+          <View className="flex-row flex-wrap items-center gap-x-2.5 gap-y-0.5">
+            <RowCountdown expiresAt={trade.expiresAt} />
+            {live ? <MoveMark move={live.move} /> : <Num className="text-11 text-ash">Reading the price</Num>}
+          </View>
+        </Pressable>
+        {/* Its own press, under the row's: the proposal the rule passed is this trade's evidence. */}
+        {trade.origin === 'autopilot' ? (
+          trade.proposalId ? (
+            <AutopilotEvidenceLink proposalId={trade.proposalId} className="mb-2" />
+          ) : (
+            <AutopilotMark className="mb-2.5 self-start" />
+          )
+        ) : null}
+      </View>
       <Pressable
         role="button"
         aria-label={row.end.accessibilityLabel}
@@ -238,7 +253,7 @@ const HistoryRow = memo(function HistoryRow({
   return (
     <Pressable
       role="button"
-      aria-label={view.accessibilityLabel}
+      aria-label={trade.origin === 'autopilot' ? `Opened by autopilot. ${view.accessibilityLabel}` : view.accessibilityLabel}
       onPress={() => onOpen(trade.id)}
       className={cx(
         'min-h-14 justify-center gap-1.5 px-3.5 py-2.5 hover:bg-raised/60 active:bg-raised',
@@ -251,6 +266,8 @@ const HistoryRow = memo(function HistoryRow({
           <DirectionMark direction={view.direction} />
           <Text className="font-mono-medium text-12 text-bone">{view.asset}</Text>
           <Num className="text-11 text-ash">{view.terms}</Num>
+          {/* The row opens the details, where the way to its evidence is. */}
+          {trade.origin === 'autopilot' ? <AutopilotMark label="Autopilot" /> : null}
         </View>
         <Badge label={view.ended} className="self-center" />
       </View>
@@ -380,7 +397,9 @@ export function TradesSheet({
 /**
  * Everything about one finished trade, as a bottom sheet. The headline is the
  * direction called and what the price did. Its figures follow as a table, the
- * result among them, then the opening and the closing transaction.
+ * result among them, then the opening and the closing transaction. One the
+ * rule opened on autopilot says so first, with the proposal that is its
+ * evidence one press away.
  */
 export function TradeSheet({ trade, onClose }: { trade: TimedTrade | null; onClose: () => void }) {
   if (!trade) return null;
@@ -409,6 +428,8 @@ export function TradeSheet({ trade, onClose }: { trade: TimedTrade | null; onClo
           </Text>
           <Text className="font-sans text-13 leading-5 text-ash">{view.endedLine}</Text>
         </View>
+
+        {trade.origin === 'autopilot' ? <AutopilotEvidenceRow proposalId={trade.proposalId} /> : null}
 
         <Facts rows={detail.facts} />
 

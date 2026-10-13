@@ -12,8 +12,10 @@ import {
   type ShareCardData,
   type TranscriptTurn,
 } from './data';
+import { switchAutopilot } from './autopilot';
 import type {
   AmendOutcome,
+  AutopilotOutcome,
   CompilerStatus,
   EditOutcome,
   PinOutcome,
@@ -114,6 +116,8 @@ export interface LiveActions {
   }): Promise<{ outcomes: Record<string, LiveModelled> }>;
   undoTrade(args: { tradeId: string }): Promise<{ ok: boolean; reason?: string }>;
   confirmTrade(args: { tradeId: string }): Promise<{ ok: boolean; reason?: string }>;
+  /** `strategies:setAutopilot`. Throws unless the strategy is pinned or cooling off. */
+  setAutopilot(args: { strategyId: string; on: boolean }): Promise<{ autopilot: boolean }>;
 }
 
 export interface LiveBackend {
@@ -448,6 +452,8 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
       fn: (a: { tradeId: string }) => Promise<{ ok: boolean; reason?: string }>,
     ): Promise<TradeActionOutcome> {
       if (!userId || !proposalTrade) return { ok: false, reason: 'no_trade' };
+      // An autopilot proposal is the gateway's to open: there is nothing to confirm and no window to undo it in.
+      if (proposalTrade.origin === 'autopilot') return { ok: false, reason: 'autopilot' };
       try {
         const out = await fn({ tradeId: proposalTrade._id });
         return out.ok ? { ok: true } : { ok: false, reason: out.reason ?? 'unavailable' };
@@ -455,6 +461,12 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
         return { ok: false, reason: errorText(err, 'failed') };
       }
     }
+
+    // --- Autopilot ----------------------------------------------------------
+    // By id, not for the active rule alone: a rule that was replaced while autopilot was on for it
+    // is still being judged, and its owner has to be able to turn that off.
+    const setAutopilot = (strategyId: string, on: boolean): Promise<AutopilotOutcome> =>
+      switchAutopilot({ userId, strategyId, on, setAutopilot: actions.setAutopilot });
 
     // --- Cooling-off --------------------------------------------------------
     const finalizeCoolingOff = () => runFinalizeFlow({ userId, strategy, pinClient, actions });
@@ -507,6 +519,7 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
       requestProposal,
       confirmProposal: () => tradeAction(actions.confirmTrade),
       undoProposal: () => tradeAction(actions.undoTrade),
+      setAutopilot,
       tradeDetail(id: string) {
         const found = list.find((t) => String(t._id) === id);
         return found && activeSpec ? tradeDetailFromTrade(found, activeSpec) : null;

@@ -57,6 +57,7 @@ import type {
   TradeDetailData,
   TranscriptTurn,
 } from './data';
+import { autopilotNote, autopilotState, AUTOPILOT_STATE_LABEL } from './autopilot';
 import type { AmendmentPreview, PinAvailability, ReviewMode } from './flow-types';
 import type { PinTargetResult } from './pin';
 
@@ -81,6 +82,12 @@ export interface LiveStrategy {
   /** What is active on-chain next to the spec hash. */
   predicatesCommitment?: string;
   seriesAddress?: string;
+  /**
+   * On: the rule is judged on every closed candle with nobody pressing anything
+   * (`strategies:setAutopilot`). The schema makes it required; it is read as it
+   * arrives all the same, and anything but `true` is off.
+   */
+  autopilot?: boolean;
 }
 
 export interface LiveOutcome {
@@ -119,6 +126,26 @@ export interface LiveTrade {
   specHash?: string;
   executedAt?: number;
   executionMode?: 'paper' | 'live';
+  /** Who asked for the evaluation. Absent: its owner pressed the button. `autopilot`: the sweep, on a closed candle. */
+  origin?: 'autopilot';
+  /**
+   * Only on a proposal autopilot wrote: where it stands with the venue.
+   * `pending` is waiting for the gateway, `opened` has a timed trade
+   * (`timedTradeId`), `not_opened` has a reason (`handoffReason`).
+   */
+  handoff?: 'pending' | 'opened' | 'not_opened';
+  /**
+   * Whole dollars, and the seconds the position is held: what the gateway is
+   * asked to open. The row's `size` and `stop` stay the rule's own sizing and
+   * are not what was sent.
+   */
+  stakeUsd?: number;
+  holdSeconds?: number;
+  openOrderId?: string;
+  /** The timed trade opened for it: where the real fill is. */
+  timedTradeId?: string;
+  /** Why nothing was opened, in the server's words. */
+  handoffReason?: string;
 }
 
 /** What `blockedReport` returns per refusal. */
@@ -217,6 +244,7 @@ export function ruleFromStrategy(input: {
     predicates: predicateHeadlines(spec),
     bucketSeconds: spec.series.bucketSeconds,
     symbol: spec.series.asset,
+    autopilot: strategy.autopilot === true,
   };
 }
 
@@ -235,6 +263,7 @@ export function emptyRule(ordinal: string): RuleData {
     predicates: [],
     bucketSeconds: 900,
     symbol: 'BTC/USD',
+    autopilot: false,
   };
 }
 
@@ -368,6 +397,7 @@ export function refusalFromTrade(trade: LiveTrade, spec: StrategySpec): RefusalD
   const shortfallBps =
     unit === 'bps' ? Number(shortfall.atoms) : roundedBps(shortfall, trade.requiredValue);
   const copy = refusalCopy(p, trade.requiredValue, assetLabel(spec), timeframeLabel(spec));
+  const autopilot = autopilotNote(trade);
 
   return {
     predicate: trade.failedSymbol ?? p.id,
@@ -385,6 +415,7 @@ export function refusalFromTrade(trade: LiveTrade, spec: StrategySpec): RefusalD
     actualLabel: copy.actualLabel,
     actualSub: copy.actualSub,
     tradeId: trade._id,
+    ...(autopilot ? { autopilot } : {}),
   };
 }
 
@@ -412,6 +443,8 @@ export function proposalFromTrade(
     trade.status === 'proposed' && trade.undoExpiresAt !== undefined
       ? Math.max(0, Math.ceil((trade.undoExpiresAt - nowMs) / 1000))
       : 0;
+  // An autopilot proposal has no undo window and is not executed on paper: the gateway opens it.
+  const autopilot = autopilotNote(trade);
 
   return {
     entry: trade.entry,
@@ -434,6 +467,7 @@ export function proposalFromTrade(
       trade.equity && trade.equitySource
         ? `${formatDecimal(trade.equity)} ${trade.equitySource === 'paper' ? 'PAPER EQUITY' : 'ACCOUNT EQUITY'}`
         : 'ACCOUNT EQUITY',
+    ...(autopilot ? { autopilot } : {}),
   };
 }
 
@@ -480,14 +514,18 @@ export function tradeDetailFromTrade(trade: LiveTrade, spec: StrategySpec): Trad
     };
   });
 
+  // `EXECUTED` and `UNDONE` are a person's words: autopilot's row was opened by the gateway, or was not.
+  const state = autopilotState(trade);
+  const autopilot = autopilotNote(trade);
   return {
     id: trade._id,
-    side: `${trade.direction.toUpperCase()} · ${STATUS_LABEL[trade.status]}`,
+    side: `${trade.direction.toUpperCase()} · ${state ? AUTOPILOT_STATE_LABEL[state] : STATUS_LABEL[trade.status]}`,
     result: null,
     entry: trade.entry,
     exit: null,
     returnBps: null,
     claims,
+    ...(autopilot ? { autopilot } : {}),
   };
 }
 
@@ -517,6 +555,7 @@ export function blockedRow(trade: LiveTrade, spec: StrategySpec): BlockedRow {
     at: utcShort(trade.createdAt),
     detail,
     tradeId: trade._id,
+    ...(trade.origin === 'autopilot' ? { autopilot: true } : {}),
   };
 }
 
