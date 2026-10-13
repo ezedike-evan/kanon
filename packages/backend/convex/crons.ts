@@ -25,6 +25,12 @@ crons.interval("ingest pyth ticks", { minutes: ingestMinutes }, ingestTicks, {})
 const sweepMarkets = makeFunctionReference<"action", Record<string, never>>("markets:sweep");
 crons.interval("sweep predict markets", { minutes: sweepMinutes }, sweepMarkets, {});
 
+// Autopilot: judge each strategy it is on for once per closed candle of its own timeframe
+// (`autopilot.ts`). Every minute whatever the override above says, because the shortest candle
+// a spec can be written on closes every minute. With autopilot on for nothing it is one read.
+const sweepAutopilot = makeFunctionReference<"action", Record<string, never>>("autopilot:sweep");
+crons.interval("sweep autopilot", { minutes: 1 }, sweepAutopilot, {});
+
 // Retention: drop ticks past `TICK_RETENTION_DAYS` (candles are kept).
 const pruneTicks = makeFunctionReference<"mutation", Record<string, never>>("ticks:pruneTicks");
 crons.daily("prune old ticks", { hourUTC: 3, minuteUTC: 17 }, pruneTicks, {});

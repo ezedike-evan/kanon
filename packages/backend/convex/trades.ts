@@ -11,6 +11,8 @@ import {
   viewOwnedTrade,
   viewerUser,
 } from "./authz";
+import { hasOpenTrade } from "./autopilotData";
+import { sweepStep } from "./autopilotLogic";
 import {
   UNDO_WINDOW_MS,
   confirmTransition,
@@ -44,9 +46,18 @@ const finalizeTradeRef = makeFunctionReference<
 >("trades:finalizeTrade");
 
 /**
- * Written only by the proposer action. Not callable by a client: a browser
- * must never be able to insert an "executed" trade, or a refusal that did not
- * happen.
+ * Written only by `evaluateStrategy` (`proposer.ts`), for a button press or for
+ * autopilot's sweep. Not callable by a client: a browser must never be able to
+ * insert an "executed" trade, or a refusal that did not happen.
+ *
+ * With `autopilot`, the write also settles what only one transaction can: that
+ * this candle has not been judged already, and that the strategy has no
+ * autopilot trade still open. It returns null when it wrote no row:
+ *
+ *   - autopilot was turned off, or another sweep judged this candle first;
+ *   - every predicate passed while the strategy's last autopilot trade was
+ *     waiting to be opened or still running. The candle counts as judged and
+ *     nothing is recorded for it. A refusal is recorded either way.
  */
 export const recordEvaluation = internalMutation({
   args: {
@@ -71,15 +82,43 @@ export const recordEvaluation = internalMutation({
     riskBps: v.number(),
     feed: v.string(),
     undoExpiresAt: v.optional(v.number()),
+    /** The sweep's: the closed candle being judged (its start, unix seconds) and what a pass asks the gateway to open. */
+    autopilot: v.optional(v.object({ bucket: v.number(), stakeUsd: v.number(), holdSeconds: v.number() })),
   },
-  handler: async (ctx, args) => {
-    const tradeId = await ctx.db.insert("trades", { ...args, createdAt: Date.now() });
-    if (args.status === "proposed" && args.undoExpiresAt !== undefined) {
-      // The trade executes on its own once the undo window has run. A little
-      // slack keeps the scheduler from firing a hair before the window closes.
-      await ctx.scheduler.runAfter(UNDO_WINDOW_MS + 250, finalizeTradeRef, { tradeId });
+  handler: async (ctx, args): Promise<Id<"trades"> | null> => {
+    const { autopilot, ...row } = args;
+    const createdAt = Date.now();
+
+    if (!autopilot) {
+      const tradeId = await ctx.db.insert("trades", { ...row, createdAt });
+      if (row.status === "proposed" && row.undoExpiresAt !== undefined) {
+        // The trade executes on its own once the undo window has run. A little
+        // slack keeps the scheduler from firing a hair before the window closes.
+        await ctx.scheduler.runAfter(UNDO_WINDOW_MS + 250, finalizeTradeRef, { tradeId });
+      }
+      return tradeId;
     }
-    return tradeId;
+
+    const strategy = await ctx.db.get(row.strategyId);
+    if (!strategy || !strategy.autopilot || sweepStep(strategy.autopilotBucket, autopilot.bucket) !== "judge") {
+      return null;
+    }
+    await ctx.db.patch(strategy._id, { autopilotBucket: autopilot.bucket });
+
+    if (row.status === "refused") {
+      return await ctx.db.insert("trades", { ...row, createdAt, origin: "autopilot" });
+    }
+    if (await hasOpenTrade(ctx.db, strategy._id)) return null;
+    // No undo window and no paper execution: the gateway opens this, and reports what became of it.
+    const { undoExpiresAt: _noWindow, ...proposal } = row;
+    return await ctx.db.insert("trades", {
+      ...proposal,
+      createdAt,
+      origin: "autopilot",
+      handoff: "pending",
+      stakeUsd: autopilot.stakeUsd,
+      holdSeconds: autopilot.holdSeconds,
+    });
   },
 });
 
@@ -145,6 +184,8 @@ export const listRecentActivity = query({
         createdAt: t.createdAt,
         executedAt: t.executedAt,
         failedSymbol: t.failedSymbol,
+        // `autopilot` when the sweep wrote the row. Absent for a button press.
+        origin: t.origin,
       }));
   },
 });
@@ -197,11 +238,18 @@ export const undoTrade = mutation({
   },
 });
 
-/** Executes a proposed trade before its window has run. */
+/**
+ * Executes a proposed trade before its window has run. An autopilot proposal is
+ * not confirmed from here: the gateway opens it, and marking it executed on
+ * paper while its order may be on its way would leave one row telling two stories.
+ */
 export const confirmTrade = mutation({
   args: { tradeId: v.id("trades") },
   handler: async (ctx, args) => {
     const { trade } = await requireOwnedTrade(ctx, args.tradeId);
+    if (trade.origin === "autopilot" && trade.status === "proposed") {
+      return { ok: false as const, reason: "not_proposed" as const, status: trade.status };
+    }
     const next = confirmTransition(trade, Date.now());
     if (!next.ok) return { ok: false as const, reason: next.reason, status: trade.status };
     if (trade.status !== next.status) {

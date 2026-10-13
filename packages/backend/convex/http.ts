@@ -26,6 +26,18 @@
  * `begin-close` is vouched for by the trade's id and the recorder key, not by a
  * sign-in token: the person may have left by then.
  *
+ * `/autopilot/*` is how a proposal the rule passed with nobody there becomes a
+ * timed trade (`autopilot.ts`). Nobody signs in for one, so none of these takes
+ * a token: the proposal vouches for its owner, as a timed trade does for the
+ * owner of its closing order. The gateway asks what is waiting, opens each
+ * through the same runner a person's timed trade goes through, and says what
+ * became of it.
+ *
+ *   POST /autopilot/pending  the proposals not yet handed to the venue, and the trade each asks for
+ *   POST /autopilot/begin    the lock and the order row for a proposal's own order
+ *   POST /autopilot/start    a trade has opened for a proposal: write its row
+ *   POST /autopilot/report   what became of a proposal. After it, the proposal is finished.
+ *
  * Anyone on the internet can reach these addresses, so each is held by two
  * things. `X-Kanon-Recorder` must carry `VENUE_RECORDER_KEY`, which only the
  * gateway has: without it a signed-in user could write fills into their own
@@ -41,6 +53,11 @@ import { httpAction } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import type { Decimal } from "@kanon/spec";
 import { requireSubject, type AuthCtx } from "./authz";
+import {
+  BeginBody as AutopilotBeginBody,
+  ReportBody as AutopilotReportBody,
+  StartBody as AutopilotStartBody,
+} from "./autopilotLogic";
 import { checkRateLimit } from "./rateLimit";
 import { describeEnvProblem, parseVenueRecorderEnv } from "./serverEnv";
 import { BeginCloseBody, OwnsBody, StartBody, UpdateBody } from "./timedLogic";
@@ -299,6 +316,83 @@ const timedOwns = httpAction(async (ctx, request) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Autopilot
+// ---------------------------------------------------------------------------
+
+const autopilotPendingRef = makeFunctionReference<"query", { nowMs: number }, unknown[]>("autopilotData:pending");
+
+const autopilotBeginRef = makeFunctionReference<
+  "mutation",
+  Omit<AutopilotBeginBody, "proposalId"> & { proposalId: Id<"trades"> },
+  { ok: true; orderId: string } | { ok: false; code: "not_pending" | "no_user" | "busy" }
+>("autopilotData:begin");
+
+const autopilotStartRef = makeFunctionReference<
+  "mutation",
+  Omit<AutopilotStartBody, "proposalId"> & { proposalId: Id<"trades"> },
+  { ok: true; tradeId: string } | { ok: false; code: "not_pending" | "no_user" }
+>("autopilotData:start");
+
+const autopilotReportRef = makeFunctionReference<
+  "mutation",
+  { proposalId: Id<"trades">; outcome: "opened" | "not_opened"; timedTradeId?: Id<"timedTrades">; reason?: string },
+  { ok: true } | { ok: false; code: "not_found" }
+>("autopilotData:report");
+
+const autopilotPending = httpAction(async (ctx, request) => {
+  const refused = gate(request, "autopilot.pending");
+  if (refused) return refused;
+  return json(200, { ok: true, proposals: await ctx.runQuery(autopilotPendingRef, { nowMs: Date.now() }) });
+});
+
+const autopilotBegin = httpAction(async (ctx, request) => {
+  const refused = gate(request, "autopilot.begin");
+  if (refused) return refused;
+  const body = AutopilotBeginBody.safeParse(await bodyOf(request));
+  if (!body.success) return json(400, { ok: false, code: "bad_request" });
+  try {
+    const { proposalId, ...order } = present(body.data);
+    // Checked as an id of this table by the mutation's own validator.
+    return json(200, await ctx.runMutation(autopilotBeginRef, { proposalId: proposalId as Id<"trades">, ...order }));
+  } catch (err) {
+    console.error("autopilot.begin: the order could not be recorded", err);
+    return json(500, { ok: false, code: "failed" });
+  }
+});
+
+const autopilotStart = httpAction(async (ctx, request) => {
+  const refused = gate(request, "autopilot.start");
+  if (refused) return refused;
+  const body = AutopilotStartBody.safeParse(await bodyOf(request));
+  if (!body.success) return json(400, { ok: false, code: "bad_request" });
+  try {
+    const { proposalId, ...trade } = present(body.data);
+    return json(200, await ctx.runMutation(autopilotStartRef, { proposalId: proposalId as Id<"trades">, ...trade }));
+  } catch (err) {
+    console.error("autopilot.start: the trade could not be written", err);
+    return json(500, { ok: false, code: "failed" });
+  }
+});
+
+const autopilotReport = httpAction(async (ctx, request) => {
+  const refused = gate(request, "autopilot.report");
+  if (refused) return refused;
+  const body = AutopilotReportBody.safeParse(await bodyOf(request));
+  if (!body.success) return json(400, { ok: false, code: "bad_request" });
+  try {
+    const proposalId = body.data.proposalId as Id<"trades">;
+    const said =
+      body.data.outcome === "opened"
+        ? { proposalId, outcome: body.data.outcome, timedTradeId: body.data.timedTradeId as Id<"timedTrades"> }
+        : { proposalId, outcome: body.data.outcome, reason: body.data.reason };
+    return json(200, await ctx.runMutation(autopilotReportRef, said));
+  } catch (err) {
+    console.error("autopilot.report: the outcome could not be written", err);
+    return json(500, { ok: false, code: "failed" });
+  }
+});
+
 const http = httpRouter();
 http.route({ path: "/venue/admit", method: "POST", handler: admit });
 http.route({ path: "/venue/begin", method: "POST", handler: begin });
@@ -309,5 +403,9 @@ http.route({ path: "/timed/begin-close", method: "POST", handler: timedBeginClos
 http.route({ path: "/timed/update", method: "POST", handler: timedUpdate });
 http.route({ path: "/timed/running", method: "POST", handler: timedRunning });
 http.route({ path: "/timed/owns", method: "POST", handler: timedOwns });
+http.route({ path: "/autopilot/pending", method: "POST", handler: autopilotPending });
+http.route({ path: "/autopilot/begin", method: "POST", handler: autopilotBegin });
+http.route({ path: "/autopilot/start", method: "POST", handler: autopilotStart });
+http.route({ path: "/autopilot/report", method: "POST", handler: autopilotReport });
 
 export default http;

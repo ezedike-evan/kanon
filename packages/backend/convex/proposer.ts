@@ -1,4 +1,4 @@
-import { action } from "./_generated/server";
+import { action, type ActionCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
@@ -10,6 +10,7 @@ import {
   type StrategySpec,
 } from "@kanon/spec";
 import { requireSubject } from "./authz";
+import { AUTOPILOT_STAKE_USD, holdSecondsFor } from "./autopilotLogic";
 import {
   PAPER_EQUITY,
   bucketsNeeded,
@@ -26,6 +27,10 @@ import {
  * The action around `proposeTrade`. It does the I/O the pure function may not:
  * reads the strategy and the price series, calls the proposer, and writes the
  * `trades` row. It never calls a model and never decides anything itself.
+ *
+ * `evaluateStrategy` is that I/O. A button press reaches it through
+ * `runProposer`; autopilot reaches it from its sweep (`autopilot.ts`), once per
+ * closed candle. Both get the same reads, the same arithmetic and the same row.
  *
  * Functions are referenced by name because `_generated/api.d.ts` is stale until
  * `npx convex dev` regenerates it (see convex/README.md).
@@ -54,10 +59,12 @@ const listRefused = makeFunctionReference<
   Doc<"trades">[]
 >("trades:refusedForSubject");
 
+// Null only for autopilot: the candle was already judged, or it passed while the strategy's last
+// autopilot trade was still open. A button press is always written.
 const recordEvaluation = makeFunctionReference<
   "mutation",
   Record<string, unknown>,
-  Id<"trades">
+  Id<"trades"> | null
 >("trades:recordEvaluation");
 
 export type RunProposerResult =
@@ -65,9 +72,113 @@ export type RunProposerResult =
   | { status: "unavailable"; reason: string; message: string }
   | { status: "blocked"; message: string };
 
+/** What one evaluation came to. `unavailable` wrote nothing and claims nothing: a gap in the data is not a rule failing. */
+export type Evaluated =
+  | { status: "proposed" | "refused"; tradeId: Id<"trades"> }
+  | { status: "unavailable"; reason: string; message: string }
+  /** Autopilot only: the verdict was reached and no row was written for it (`trades:recordEvaluation` says when). */
+  | { status: "skipped"; verdict: "proposed" | "refused" };
+
+export interface EvaluateInput {
+  /** A strategy with an enforced spec. The caller has already settled whose it is. */
+  strategy: Doc<"strategies">;
+  /** The owner's account collateral, or null to size against paper equity. */
+  collateral: Decimal | null;
+  /** Set by the sweep: the start of the closed candle being judged, unix seconds. */
+  autopilot?: { bucket: number };
+}
+
 /** The candle-coordinate evidence pointer for one predicate's deciding candle. */
 function evidenceRef(feed: string, bucketSeconds: number, o: PredicateOutcome): string {
   return `${feed}#${bucketSeconds}s@${o.at}`;
+}
+
+/**
+ * One evaluation of a pinned rule, start to finish: reads the series each
+ * predicate is written on, hands them to `proposeTrade`, and writes the row
+ * for the verdict. The verdict is `proposeTrade`'s alone. Who asked changes
+ * only what is written beside it.
+ */
+export async function evaluateStrategy(ctx: ActionCtx, input: EvaluateInput): Promise<Evaluated> {
+  const { strategy, autopilot } = input;
+  const spec: StrategySpec = parseSpec(strategy.spec);
+
+  const source: Record<number, Series> = {};
+  for (const bucketSeconds of bucketsNeeded(spec)) {
+    const series = await ctx.runQuery(getSeries, {
+      asset: spec.series.asset,
+      bucketSeconds,
+      limit: requiredCandles(spec, bucketSeconds),
+    });
+    source[bucketSeconds] = series;
+  }
+
+  const equity = input.collateral ?? undefined;
+
+  const now = Date.now();
+  const out = proposeTrade(spec, source, now, {
+    equity: equity ?? PAPER_EQUITY,
+    equitySource: equity ? "account" : "paper",
+  });
+
+  if (out.kind === "unavailable") {
+    return { status: "unavailable", reason: out.reason, message: out.message };
+  }
+
+  const bucketOf = (o: PredicateOutcome): number => {
+    const tf = spec.predicates.find((p) => p.id === o.predicateId)?.timeframe.value;
+    return tf ? TIMEFRAME_SECONDS[tf] : spec.series.bucketSeconds;
+  };
+
+  const common = {
+    strategyId: strategy._id,
+    direction: out.setup.direction,
+    asset: out.setup.asset,
+    entry: out.setup.entry,
+    size: out.setup.size,
+    stop: out.setup.stop,
+    results: out.results,
+    specHash: strategy.specHash,
+    scan: out.scan,
+    equity: out.setup.equity,
+    equitySource: out.setup.equitySource,
+    riskBps: out.setup.riskBps,
+    feed: spec.series.feed,
+    evidenceRefs: out.results.map((r) => evidenceRef(spec.series.feed, bucketOf(r), r)),
+    // What the gateway is asked to open if this passes, stated on the row from the backend's own table.
+    ...(autopilot
+      ? {
+          autopilot: {
+            bucket: autopilot.bucket,
+            stakeUsd: AUTOPILOT_STAKE_USD,
+            holdSeconds: holdSecondsFor(spec.series.bucketSeconds),
+          },
+        }
+      : {}),
+  };
+
+  if (out.kind === "proposal") {
+    const tradeId = await ctx.runMutation(recordEvaluation, {
+      ...common,
+      status: "proposed",
+      satisfiedPredicateIds: out.results.map((r) => r.predicateId),
+      // The undo window is for the person who pressed the button. Nobody is there for an autopilot
+      // proposal, and it does not run on paper when a window lapses: the gateway opens it.
+      ...(autopilot ? {} : { undoExpiresAt: out.undoExpiresAt }),
+    });
+    return tradeId ? { status: "proposed", tradeId } : { status: "skipped", verdict: "proposed" };
+  }
+
+  const tradeId = await ctx.runMutation(recordEvaluation, {
+    ...common,
+    status: "refused",
+    satisfiedPredicateIds: out.results.filter((r) => r.satisfied).map((r) => r.predicateId),
+    failedPredicateId: out.failed.predicateId,
+    failedSymbol: out.failed.symbol,
+    failingValue: out.failed.decidingValue,
+    requiredValue: out.failed.referenceValue,
+  });
+  return tradeId ? { status: "refused", tradeId } : { status: "skipped", verdict: "refused" };
 }
 
 export const runProposer = action({
@@ -81,72 +192,10 @@ export const runProposer = action({
     if (strategy.status === "draft" || strategy.spec === undefined) {
       return { status: "blocked", message: "Pin the rule before it can judge a trade." };
     }
-    const spec: StrategySpec = parseSpec(strategy.spec);
-
-    const source: Record<number, Series> = {};
-    for (const bucketSeconds of bucketsNeeded(spec)) {
-      const series = await ctx.runQuery(getSeries, {
-        asset: spec.series.asset,
-        bucketSeconds,
-        limit: requiredCandles(spec, bucketSeconds),
-      });
-      source[bucketSeconds] = series;
-    }
-
-    const equity = owned.collateral ?? undefined;
-
-    const now = Date.now();
-    const out = proposeTrade(spec, source, now, {
-      equity: equity ?? PAPER_EQUITY,
-      equitySource: equity ? "account" : "paper",
-    });
-
-    if (out.kind === "unavailable") {
-      return { status: "unavailable", reason: out.reason, message: out.message };
-    }
-
-    const bucketOf = (o: PredicateOutcome): number => {
-      const tf = spec.predicates.find((p) => p.id === o.predicateId)?.timeframe.value;
-      return tf ? TIMEFRAME_SECONDS[tf] : spec.series.bucketSeconds;
-    };
-
-    const common = {
-      strategyId: args.strategyId,
-      direction: out.setup.direction,
-      asset: out.setup.asset,
-      entry: out.setup.entry,
-      size: out.setup.size,
-      stop: out.setup.stop,
-      results: out.results,
-      specHash: strategy.specHash,
-      scan: out.scan,
-      equity: out.setup.equity,
-      equitySource: out.setup.equitySource,
-      riskBps: out.setup.riskBps,
-      feed: spec.series.feed,
-      evidenceRefs: out.results.map((r) => evidenceRef(spec.series.feed, bucketOf(r), r)),
-    };
-
-    if (out.kind === "proposal") {
-      const tradeId = await ctx.runMutation(recordEvaluation, {
-        ...common,
-        status: "proposed",
-        satisfiedPredicateIds: out.results.map((r) => r.predicateId),
-        undoExpiresAt: out.undoExpiresAt,
-      });
-      return { status: "proposed", tradeId };
-    }
-
-    const tradeId = await ctx.runMutation(recordEvaluation, {
-      ...common,
-      status: "refused",
-      satisfiedPredicateIds: out.results.filter((r) => r.satisfied).map((r) => r.predicateId),
-      failedPredicateId: out.failed.predicateId,
-      failedSymbol: out.failed.symbol,
-      failingValue: out.failed.decidingValue,
-      requiredValue: out.failed.referenceValue,
-    });
-    return { status: "refused", tradeId };
+    const out = await evaluateStrategy(ctx, { strategy, collateral: owned.collateral });
+    // Only autopilot's write can be skipped. A button press is always written.
+    if (out.status === "skipped") return { status: "blocked", message: "The verdict was not recorded. Try again." };
+    return out;
   },
 });
 

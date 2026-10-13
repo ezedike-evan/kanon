@@ -12,6 +12,7 @@ import {
 } from "@kanon/spec";
 import { decimal } from "./schema";
 import { requireOwnedStrategy, requireUser, viewOwnedStrategy, viewerUser } from "./authz";
+import { withdrawWaiting } from "./autopilotData";
 
 /**
  * A strategy's life: draft -> pinned -> (cooling_off -> pinned)*.
@@ -147,6 +148,17 @@ export const pinStrategy = mutation({
       predicatesCommitment: args.predicatesCommitment,
       seriesAddress: args.series,
     });
+    // The rule this one replaces stops trading by itself: autopilot is turned on for a rule by
+    // its owner, never inherited, and never left running on one they have moved on from.
+    const others = await ctx.db
+      .query("strategies")
+      .withIndex("by_owner", (q) => q.eq("ownerUserId", strategy.ownerUserId))
+      .take(MAX_LIST_ROWS);
+    for (const other of others) {
+      if (other._id === strategy._id || !other.autopilot) continue;
+      await ctx.db.patch(other._id, { autopilot: false, autopilotBucket: undefined });
+      await withdrawWaiting(ctx, other._id);
+    }
     return { specHash: hash };
   },
 });
@@ -278,6 +290,37 @@ export const withdrawAmendment = mutation({
       amendTxHash: args.txHash,
     });
     return null;
+  },
+});
+
+/**
+ * Turns autopilot on or off for the caller's own strategy. On, the rule is
+ * judged on every closed candle of its own timeframe with nobody pressing
+ * anything, and a candle that passes opens a timed trade (`autopilot.ts`).
+ *
+ * It can only be turned on for a rule that is enforced: a draft is judged by
+ * nothing. Turning it on judges no candle that has already closed; the first
+ * sweep after it only notes where it starts. Turning it off withdraws any
+ * proposal still waiting to be opened. A trade already running runs to its
+ * time, or until its owner ends it.
+ *
+ * This changes when the rule is consulted, never what the rule is: no predicate
+ * is loosened by it, so it does not wait out a cooling-off period.
+ */
+export const setAutopilot = mutation({
+  args: {
+    strategyId: v.id("strategies"),
+    on: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const { strategy } = await requireOwnedStrategy(ctx, args.strategyId);
+    if (strategy.autopilot === args.on) return { autopilot: strategy.autopilot };
+    if (args.on && (strategy.spec === undefined || (strategy.status !== "pinned" && strategy.status !== "cooling_off"))) {
+      throw new Error("autopilot runs a pinned rule; pin this one first");
+    }
+    await ctx.db.patch(strategy._id, { autopilot: args.on, autopilotBucket: undefined });
+    if (!args.on) await withdrawWaiting(ctx, strategy._id);
+    return { autopilot: args.on };
   },
 });
 

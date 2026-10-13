@@ -94,6 +94,7 @@ describe("public Convex surface", () => {
     for (const expected of [
       "strategies:saveDraft",
       "strategies:pinStrategy",
+      "strategies:setAutopilot",
       "trades:undoTrade",
       "vaults:recordVault",
       "copyRelationships:recordFollow",
@@ -164,6 +165,16 @@ describe("public Convex surface", () => {
       "accounts:createAccount",
       "accounts:updateAccountLedger",
       "positions:createPosition",
+      // Autopilot acts for a strategy's owner with nobody signed in. None of it is a client's to call.
+      "autopilot:sweep",
+      "autopilotData:snapshot",
+      "autopilotData:context",
+      "autopilotData:arm",
+      "autopilotData:expire",
+      "autopilotData:pending",
+      "autopilotData:begin",
+      "autopilotData:start",
+      "autopilotData:report",
     ]) {
       expect(names.has(internal), `${internal} must be internal`).toBe(false);
     }

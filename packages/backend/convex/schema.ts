@@ -72,7 +72,14 @@ export default defineSchema({
     ),
     pinnedAt: v.optional(v.number()),
     bondAtoms: v.optional(decimal),
+    /** On: the rule is judged on every closed candle with nobody pressing anything (`autopilot.ts`). */
     autopilot: v.boolean(),
+    /**
+     * Unix seconds: the start of the last closed candle autopilot judged. Absent
+     * from the moment autopilot is turned on until its first sweep, which only
+     * writes this, so turning it on never replays candles that closed before.
+     */
+    autopilotBucket: v.optional(v.number()),
     pendingSpec: v.optional(v.any()),
     cooldownEndsAt: v.optional(v.number()),
     /** StrategyRegistry anchor. A strategy is `pinned` only once this exists. */
@@ -95,7 +102,8 @@ export default defineSchema({
   })
     .index("by_owner", ["ownerUserId"])
     .index("by_status", ["status"])
-    .index("by_specHash", ["specHash"]),
+    .index("by_specHash", ["specHash"])
+    .index("by_autopilot", ["autopilot"]),
 
   trades: defineTable({
     strategyId: v.id("strategies"),
@@ -151,10 +159,33 @@ export default defineSchema({
      */
     executionMode: v.optional(v.union(v.literal("paper"), v.literal("live"))),
     feed: v.optional(v.string()),
+    /** Who asked for the evaluation. Absent: its owner pressed the button. `autopilot`: the sweep, on a closed candle. */
+    origin: v.optional(v.literal("autopilot")),
+    /**
+     * Only on a proposal autopilot wrote: where it stands with the venue. The
+     * gateway opens a timed trade for it (`http.ts`, `/autopilot/*`).
+     *
+     *   pending     waiting for the gateway, or its opening order is on its way
+     *   opened      a timed trade is running or has run for it: `timedTradeId`
+     *   not_opened  nothing was opened and nothing will be: `handoffReason`
+     *
+     * The row's `size` and `stop` stay the rule's own sizing. What was sent to
+     * the venue is `stakeUsd` for `holdSeconds`, and its fill is on the timed trade.
+     */
+    handoff: v.optional(v.union(v.literal("pending"), v.literal("opened"), v.literal("not_opened"))),
+    /** Whole dollars, and the seconds the position is held: what the gateway is asked to open. Stated here so neither is hidden. */
+    stakeUsd: v.optional(v.number()),
+    holdSeconds: v.optional(v.number()),
+    /** The opening order, once the lock was taken for it. A proposal is handed to the venue once. */
+    openOrderId: v.optional(v.id("venueOrders")),
+    timedTradeId: v.optional(v.id("timedTrades")),
+    /** Why nothing was opened, in the venue's words. */
+    handoffReason: v.optional(v.string()),
   })
     .index("by_strategy", ["strategyId"])
     .index("by_status", ["status"])
-    .index("by_strategy_and_status", ["strategyId", "status"]),
+    .index("by_strategy_and_status", ["strategyId", "status"])
+    .index("by_handoff_and_strategy", ["handoff", "strategyId"]),
 
   predictions: defineTable({
     userId: v.id("users"),
@@ -506,6 +537,10 @@ export default defineSchema({
     openTx: v.optional(v.string()),
     closeTx: v.optional(v.string()),
     reason: v.optional(v.string()),
+    /** Absent: somebody called it on Predict. `autopilot`: opened for a proposal the rule passed, with nobody there. */
+    origin: v.optional(v.literal("autopilot")),
+    /** The proposal an autopilot trade was opened for: the evidence that the rule passed. */
+    proposalId: v.optional(v.id("trades")),
   })
     .index("by_user", ["userId"])
     .index("by_status", ["status"]),
