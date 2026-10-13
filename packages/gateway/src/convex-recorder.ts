@@ -6,6 +6,11 @@
  * sign-in token on, the backend verifies it, and the answer comes back as a
  * yes or a typed no. The recorder key in `X-Kanon-Recorder` tells the backend
  * the request comes from this service and not from a client.
+ *
+ * An autopilot trade has no token: nobody is signed in when the rule passes.
+ * Its caller is the proposal the backend wrote, named by id, and the backend
+ * reads the owner from that proposal (`/autopilot/*`). This service still
+ * decides nothing about who that is.
  */
 
 import { z } from 'zod';
@@ -17,6 +22,7 @@ import type {
   VenueRecorder,
 } from '@kanon/execution/venue-service';
 import type { TimedRecord, TimedStore } from '@kanon/execution/timed-runner';
+import type { AutopilotProposal, AutopilotStore } from './autopilot';
 import type { Logger } from './log';
 
 export const RECORDER_HEADER = 'x-kanon-recorder';
@@ -32,8 +38,12 @@ export interface ConvexRecorder {
   admit(token: string): Promise<Admission>;
   /** The recorder for one caller's order: `begin` and `settle` on that caller's behalf. */
   forCaller(token: string): VenueRecorder;
+  /** The recorder for a proposal's own order: the lock and the row are taken for the proposal's owner, with no token. */
+  forProposal(proposalId: string): VenueRecorder;
   /** The record of timed trades (`/timed/*`): whose each is, what became of it, and what is still running. */
   timed: TimedStore;
+  /** Autopilot's proposals (`/autopilot/*`): what is waiting to be opened, and what became of each. */
+  autopilot: AutopilotStore;
 }
 
 const RateLimited = z.looseObject({
@@ -51,6 +61,17 @@ const Dec = z.object({ atoms: z.string().regex(/^-?\d+$/), decimals: z.number().
 const Running = z.looseObject({
   ok: z.literal(true),
   trades: z.array(z.unknown()),
+});
+const Waiting = z.looseObject({
+  ok: z.literal(true),
+  proposals: z.array(z.unknown()),
+});
+const WaitingProposal = z.object({
+  proposalId: z.string().min(1),
+  asset: z.string().min(1),
+  direction: z.enum(['up', 'down']),
+  stakeUsd: z.number(),
+  seconds: z.number(),
 });
 const RunningTrade = z.object({
   id: z.string().min(1),
@@ -167,12 +188,30 @@ export function createConvexRecorder(opts: {
       };
     },
 
+    forProposal(proposalId) {
+      return {
+        // No token: the proposal's id and the recorder key vouch for the order. A proposal the
+        // backend will not open (finished, too old, another market) is read as an order that
+        // could not be recorded, so nothing is sent.
+        async begin(order: OrderRecord): Promise<BeginResult> {
+          return readBegin('/autopilot/begin', await post('/autopilot/begin', null, { proposalId, ...order }));
+        },
+        settle,
+        amend,
+      };
+    },
+
     timed: {
-      async start(token, trade) {
-        const res = await post('/timed/start', token, trade);
+      async start(caller, trade) {
+        // A person's trade is written under their own token. A proposal's names the proposal and carries none.
+        const [path, token, body] =
+          'token' in caller
+            ? (['/timed/start', caller.token, trade] as const)
+            : (['/autopilot/start', null, { proposalId: caller.proposalId, ...trade }] as const);
+        const res = await post(path, token, body);
         const started = res?.status === 200 ? Started.safeParse(res.body) : null;
         if (started?.success) return started.data.tradeId;
-        if (res) unexpected('/timed/start', res);
+        if (res) unexpected(path, res);
         return null;
       },
 
@@ -220,6 +259,31 @@ export function createConvexRecorder(opts: {
         if (answer?.success) return answer.data.owns;
         if (res) unexpected('/timed/owns', res);
         throw new Error('ownership of the timed trade could not be checked');
+      },
+    },
+
+    autopilot: {
+      async pending() {
+        const res = await post('/autopilot/pending', null, {});
+        const list = res?.status === 200 ? Waiting.safeParse(res.body) : null;
+        if (!list?.success) {
+          if (res) unexpected('/autopilot/pending', res);
+          throw new Error('the waiting autopilot proposals could not be read');
+        }
+        // A row this service cannot read is left out, not guessed at.
+        const proposals: AutopilotProposal[] = [];
+        for (const row of list.data.proposals) {
+          const read = WaitingProposal.safeParse(row);
+          if (read.success) proposals.push(read.data);
+        }
+        return proposals;
+      },
+
+      async report(outcome) {
+        const res = await post('/autopilot/report', null, outcome);
+        if (res?.status === 200 && Ok.safeParse(res.body).success) return;
+        if (res) unexpected('/autopilot/report', res);
+        throw new Error(`what became of autopilot proposal ${outcome.proposalId} could not be written`);
       },
     },
   };

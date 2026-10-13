@@ -3,6 +3,7 @@ import type { PerplMarketInfo } from './perpl-trade';
 import {
   TIMED_MESSAGES,
   createTimedRunner,
+  type TimedCaller,
   type TimedRecord,
   type TimedRunnerDeps,
   type TimedStore,
@@ -22,6 +23,9 @@ const BTC: PerplMarketInfo = { id: 16, symbol: 'BTC', priceDecimals: 1, sizeDeci
 const MON: PerplMarketInfo = { id: 64, symbol: 'MON', priceDecimals: 5, sizeDecimals: 1, maxLeverage: 300, open: true };
 const TX = `0x${'ab'.repeat(32)}`;
 const TOKEN = 'aaa.bbb.ccc';
+/** A person, by their sign-in token; and the rule on autopilot, by the proposal it passed. */
+const PERSON: TimedCaller = { token: TOKEN };
+const PROPOSAL: TimedCaller = { proposalId: 'k57proposal' };
 
 /** The entry fill: 0.00030 BTC at 82,847.1, fee 0.008575 AUSD. */
 const FILLED: VenueOrderResult = {
@@ -83,6 +87,9 @@ function setup(over: Partial<World> = {}, depsOver: Partial<TimedRunnerDeps> = {
   const placed: Array<[OrderRequest, PlaceOptions | undefined]> = [];
   const closed: string[] = [];
   const started: Array<Record<string, unknown>> = [];
+  /** Who each order's recorder was asked for, and which trades a closing recorder was asked for. */
+  const recorders: TimedCaller[] = [];
+  const closers: string[] = [];
   const updates: TimedUpdate[] = [];
   const errors: string[] = [];
   /** The recorder the service was handed for the last closing order, so a test can deliver a late fill. */
@@ -108,11 +115,11 @@ function setup(over: Partial<World> = {}, depsOver: Partial<TimedRunnerDeps> = {
   };
   const plain: VenueRecorder = { begin: async () => ({ ok: true, orderId: 'o' }), settle: async () => {}, amend: async () => {} };
   const store: TimedStore = {
-    start: async (token, trade) => {
-      started.push({ token, ...trade });
+    start: async (caller, trade) => {
+      started.push({ caller, ...trade });
       return world.startFails ? null : `trade-${started.length}`;
     },
-    closerFor: () => plain,
+    closerFor: (tradeId) => (closers.push(tradeId), plain),
     update: async (update) => {
       updates.push(update);
     },
@@ -122,7 +129,7 @@ function setup(over: Partial<World> = {}, depsOver: Partial<TimedRunnerDeps> = {
   const runner = createTimedRunner({
     network: 'testnet',
     service,
-    recorderFor: () => plain,
+    recorderFor: (caller) => (recorders.push(caller), plain),
     store,
     loadMarkets: async () => [BTC, MON],
     readMarkPrice: async () => world.mark,
@@ -161,7 +168,7 @@ function setup(over: Partial<World> = {}, depsOver: Partial<TimedRunnerDeps> = {
   const amendClose = async (details: FillDetailsRecord): Promise<void> => {
     await (closer as VenueRecorder | null)?.amend?.(details);
   };
-  return { world, runner, placed, closed, started, updates, errors, advance, flush, liveTimers, amendClose, now: () => clock };
+  return { world, runner, placed, closed, started, recorders, closers, updates, errors, advance, flush, liveTimers, amendClose, now: () => clock };
 }
 
 const ask = { asset: 'BTC/USD', direction: 'up', stakeUsd: 25, seconds: 60 } as const;
@@ -169,7 +176,7 @@ const ask = { asset: 'BTC/USD', direction: 'up', stakeUsd: 25, seconds: 60 } as 
 describe('open', () => {
   it('opens the position a call stands for, and starts its clock at the fill', async () => {
     const t = setup();
-    const result = await t.runner.open(ask, TOKEN);
+    const result = await t.runner.open(ask, PERSON);
 
     // Up is a long; the size is the stake times the market's leverage; the market must be free.
     expect(t.placed).toEqual([
@@ -180,7 +187,7 @@ describe('open', () => {
     ]);
     expect(t.started).toEqual([
       {
-        token: TOKEN,
+        caller: { token: TOKEN },
         network: 'testnet',
         asset: 'BTC/USD',
         direction: 'up',
@@ -214,15 +221,15 @@ describe('open', () => {
 
   it('opens a short for a call down, at the leverage the market allows', async () => {
     const t = setup();
-    await t.runner.open({ asset: 'MON/USD', direction: 'down', stakeUsd: 10, seconds: 300 }, TOKEN);
+    await t.runner.open({ asset: 'MON/USD', direction: 'down', stakeUsd: 10, seconds: 300 }, PERSON);
     expect(t.placed[0]?.[0]).toEqual({ asset: 'MON/USD', side: 'short', usd: 30, leverage: 3 });
   });
 
   it('refuses what is not on offer before anything is sent', async () => {
     const t = setup();
-    expect(await t.runner.open({ ...ask, stakeUsd: 7 }, TOKEN)).toEqual({ status: 'refused', reason: 'A stake here is one of $10, $25, $50, $100.' });
-    expect(await t.runner.open({ ...ask, seconds: 30 }, TOKEN)).toEqual({ status: 'refused', reason: 'A trade here runs for one of 1m, 5m, 15m, 1h.' });
-    expect(await t.runner.open({ ...ask, asset: 'DOGE/USD' }, TOKEN)).toEqual({ status: 'refused', reason: 'Perpl lists no market for DOGE/USD.' });
+    expect(await t.runner.open({ ...ask, stakeUsd: 7 }, PERSON)).toEqual({ status: 'refused', reason: 'A stake here is one of $10, $25, $50, $100.' });
+    expect(await t.runner.open({ ...ask, seconds: 30 }, PERSON)).toEqual({ status: 'refused', reason: 'A trade here runs for one of 1m, 5m, 15m, 1h.' });
+    expect(await t.runner.open({ ...ask, asset: 'DOGE/USD' }, PERSON)).toEqual({ status: 'refused', reason: 'Perpl lists no market for DOGE/USD.' });
     expect(t.placed).toEqual([]);
   });
 
@@ -236,7 +243,7 @@ describe('open', () => {
     ];
     for (const open of answers) {
       const t = setup({ open });
-      expect(await t.runner.open(ask, TOKEN)).toEqual(open);
+      expect(await t.runner.open(ask, PERSON)).toEqual(open);
       expect(t.started).toEqual([]);
       expect(t.liveTimers()).toBe(0);
     }
@@ -244,35 +251,136 @@ describe('open', () => {
 
   it('takes one timed trade per market at a time, and says when it frees', async () => {
     const t = setup();
-    await t.runner.open(ask, TOKEN);
+    await t.runner.open(ask, PERSON);
     await t.advance(20_000);
-    expect(await t.runner.open({ ...ask, direction: 'down' }, TOKEN)).toEqual({
+    expect(await t.runner.open({ ...ask, direction: 'down' }, PERSON)).toEqual({
       status: 'refused',
       reason: 'BTC is in a timed trade on the shared account. It ends in about 40 seconds.',
     });
     expect(t.placed).toHaveLength(1);
     // Another market is free.
-    expect((await t.runner.open({ ...ask, asset: 'MON/USD' }, TOKEN)).status).toBe('opened');
+    expect((await t.runner.open({ ...ask, asset: 'MON/USD' }, PERSON)).status).toBe('opened');
   });
 
   it('closes a position it could not record, rather than leave it open with nobody timing it', async () => {
     const t = setup({ startFails: true });
-    expect(await t.runner.open(ask, TOKEN)).toEqual({ status: 'unavailable', message: TIMED_MESSAGES.notRecorded });
+    expect(await t.runner.open(ask, PERSON)).toEqual({ status: 'unavailable', message: TIMED_MESSAGES.notRecorded });
     expect(t.closed).toEqual(['BTC/USD']);
     expect(t.liveTimers()).toBe(0);
   });
 
   it('runs nothing when the fill came back without a price', async () => {
     const t = setup({ open: { ...FILLED, price: null } });
-    expect(await t.runner.open(ask, TOKEN)).toEqual({ status: 'pending', message: TIMED_MESSAGES.noPrice });
+    expect(await t.runner.open(ask, PERSON)).toEqual({ status: 'pending', message: TIMED_MESSAGES.noPrice });
     expect(t.started).toEqual([]);
+  });
+});
+
+describe('a trade opened for a proposal, with nobody signed in', () => {
+  // What autopilot asks for: the smallest stake, for the hold its candle maps to.
+  const asked = { asset: 'BTC/USD', direction: 'up', stakeUsd: 10, seconds: 900 } as const;
+
+  it('goes through the same order, at the same limits, and is recorded for the proposal and not for a token', async () => {
+    const t = setup();
+    const result = await t.runner.open(asked, PROPOSAL);
+
+    expect(t.placed).toEqual([
+      [
+        { asset: 'BTC/USD', side: 'long', usd: 50, leverage: 5 },
+        { limits: { minNotionalUsd: 1, maxNotionalUsd: 500, maxLeverage: 5, slippageBps: 100, maxPositionUsd: 500 }, freshOnly: true },
+      ],
+    ]);
+    // The opening order's lock and record are asked for in the proposal's name.
+    expect(t.recorders).toEqual([PROPOSAL]);
+    expect(t.started).toHaveLength(1);
+    expect(t.started[0]).toMatchObject({ caller: { proposalId: 'k57proposal' }, stakeUsd: 10, seconds: 900, expiresAt: 1_900_000 });
+    expect(JSON.stringify(t.started)).not.toContain('token');
+    expect(result).toMatchObject({ status: 'opened', trade: { id: 'trade-1', stakeUsd: 10, leverage: 5, seconds: 900 } });
+  });
+
+  it('is refused whatever a person would be refused, before anything is sent', async () => {
+    const t = setup();
+    expect(await t.runner.open({ ...asked, stakeUsd: 1000 }, PROPOSAL)).toEqual({ status: 'refused', reason: 'A stake here is one of $10, $25, $50, $100.' });
+    expect(await t.runner.open({ ...asked, seconds: 14_400 }, PROPOSAL)).toEqual({ status: 'refused', reason: 'A trade here runs for one of 1m, 5m, 15m, 1h.' });
+    expect(await t.runner.open({ ...asked, asset: 'DOGE/USD' }, PROPOSAL)).toEqual({ status: 'refused', reason: 'Perpl lists no market for DOGE/USD.' });
+    expect(t.placed).toEqual([]);
+    expect(t.recorders).toEqual([]);
+  });
+
+  it('waits its turn on a market like anyone: one timed trade at a time, whoever opened it', async () => {
+    const t = setup();
+    await t.runner.open(ask, PERSON);
+    expect(await t.runner.open(asked, PROPOSAL)).toEqual({
+      status: 'refused',
+      reason: 'BTC is in a timed trade on the shared account. It ends in about 60 seconds.',
+    });
+    // And the other way round: a person cannot open over autopilot's trade.
+    const other = setup();
+    await other.runner.open(asked, PROPOSAL);
+    expect((await other.runner.open(ask, PERSON)).status).toBe('refused');
+    expect(other.placed).toHaveLength(1);
+  });
+
+  it('runs on testnet only, for a proposal as for a person', async () => {
+    for (const caller of [PERSON, PROPOSAL]) {
+      const t = setup({}, { network: 'mainnet' });
+      expect(await t.runner.open(asked, caller)).toEqual({ status: 'unavailable', message: TIMED_MESSAGES.testnetOnly });
+      expect(t.placed).toEqual([]);
+    }
+  });
+
+  it('is closed when its time is up exactly as any other trade is, by its own id', async () => {
+    const t = setup();
+    await t.runner.open(asked, PROPOSAL);
+    await t.advance(899_000);
+    expect(t.closed).toEqual([]);
+    await t.advance(1_000);
+    expect(t.closed).toEqual(['BTC/USD']);
+    expect(t.closers).toEqual(['trade-1']);
+    expect(t.updates.slice(0, 2)).toEqual([
+      { tradeId: 'trade-1', status: 'closing' },
+      { tradeId: 'trade-1', status: 'closed', endedBy: 'time', closedAt: 1_900_000 },
+    ]);
+    expect(t.liveTimers()).toBe(0);
+  });
+
+  it('is cut when it has lost its stake, as any other trade is', async () => {
+    const big = { ...FILLED, size: { atoms: '5000', decimals: 5 }, price: { atoms: '800000', decimals: 1 } };
+    const t = setup({ open: big, mark: 800_000 });
+    await t.runner.open({ ...asked, seconds: 3600 }, PROPOSAL);
+    t.world.mark = 798_000;
+    await t.advance(5_000);
+    expect(t.closed).toEqual(['BTC/USD']);
+    expect(t.updates[1]).toMatchObject({ status: 'closed', endedBy: 'cut' });
+  });
+
+  it("takes back a position it could not record, on the proposal's own recorder", async () => {
+    const t = setup({ startFails: true });
+    expect(await t.runner.open(asked, PROPOSAL)).toEqual({ status: 'unavailable', message: TIMED_MESSAGES.notRecorded });
+    expect(t.closed).toEqual(['BTC/USD']);
+    // Once for the opening order, once for the close that takes it back. Never a token.
+    expect(t.recorders).toEqual([PROPOSAL, PROPOSAL]);
+    expect(t.liveTimers()).toBe(0);
+  });
+
+  it("passes on the order's own answer when it did not fill, so the poller can say why", async () => {
+    const answers: VenueOrderResult[] = [
+      { status: 'refused', reason: 'The shared account already holds a BTC position.' },
+      { status: 'busy', message: 'Another order is on its way to this account. Try again in a moment.' },
+      { status: 'unavailable', message: 'The order could not be recorded, so it was not sent.' },
+    ];
+    for (const open of answers) {
+      const t = setup({ open });
+      expect(await t.runner.open(asked, PROPOSAL)).toEqual(open);
+      expect(t.started).toEqual([]);
+    }
   });
 });
 
 describe('ending a trade', () => {
   it('closes the position when its time is up, and writes the result of the two fills', async () => {
     const t = setup();
-    await t.runner.open(ask, TOKEN);
+    await t.runner.open(ask, PERSON);
     await t.advance(59_000);
     expect(t.closed).toEqual([]);
     await t.advance(1_000);
@@ -294,7 +402,7 @@ describe('ending a trade', () => {
 
   it('writes the result when the venue lists the exit fill, if that is after the close', async () => {
     const t = setup({ closes: [{ ...CLOSED, price: null, fee: null, block: null, txHash: null }] });
-    await t.runner.open({ ...ask, direction: 'down' }, TOKEN);
+    await t.runner.open({ ...ask, direction: 'down' }, PERSON);
     await t.advance(60_000);
     expect(t.updates).toEqual([
       { tradeId: 'trade-1', status: 'closing' },
@@ -319,7 +427,7 @@ describe('ending a trade', () => {
     // 0.0003 BTC cannot lose $25 on any real move, so this one is sized to: 0.05 BTC, stake $10.
     const big = { ...FILLED, size: { atoms: '5000', decimals: 5 }, price: { atoms: '800000', decimals: 1 } };
     const t = setup({ open: big, mark: 800_000 });
-    await t.runner.open({ ...ask, stakeUsd: 10, seconds: 3600 }, TOKEN);
+    await t.runner.open({ ...ask, stakeUsd: 10, seconds: 3600 }, PERSON);
     await t.advance(5_000);
     expect(t.closed).toEqual([]);
     // $200 down on 0.05 BTC is $10: the stake.
@@ -331,13 +439,13 @@ describe('ending a trade', () => {
 
   it("ends the caller's own trade when they ask, and nobody else's", async () => {
     const t = setup();
-    await t.runner.open(ask, TOKEN);
+    await t.runner.open(ask, PERSON);
     expect(await t.runner.close('trade-1', TOKEN)).toEqual({ status: 'closing', tradeId: 'trade-1' });
     await t.flush();
     expect(t.updates[1]).toMatchObject({ status: 'closed', endedBy: 'owner' });
 
     const other = setup({ owner: false });
-    await other.runner.open(ask, TOKEN);
+    await other.runner.open(ask, PERSON);
     expect(await other.runner.close('trade-1', 'xxx.yyy.zzz')).toEqual({ status: 'refused', reason: TIMED_MESSAGES.notYours });
     expect(await other.runner.close('trade-9', TOKEN)).toEqual({ status: 'refused', reason: TIMED_MESSAGES.notYours });
     expect(other.closed).toEqual([]);
@@ -345,7 +453,7 @@ describe('ending a trade', () => {
 
   it('records a trade as ended elsewhere when its position is already gone', async () => {
     const t = setup({ closes: [{ status: 'refused', reason: 'The account holds no BTC position.' }], held: [] });
-    await t.runner.open(ask, TOKEN);
+    await t.runner.open(ask, PERSON);
     await t.advance(60_000);
     expect(t.updates.at(-1)).toEqual({ tradeId: 'trade-1', status: 'closed', endedBy: 'venue', closedAt: 1_060_000 });
     expect(t.liveTimers()).toBe(0);
@@ -361,7 +469,7 @@ describe('ending a trade', () => {
         CLOSED,
       ],
     });
-    await t.runner.open(ask, TOKEN);
+    await t.runner.open(ask, PERSON);
     await t.advance(60_000);
     expect(t.closed).toHaveLength(4);
     expect(t.updates.map((u) => u.reason ?? u.status)).toEqual([
@@ -379,7 +487,7 @@ describe('ending a trade', () => {
 describe('a close that fills in part', () => {
   it('closes what is left before calling the trade closed, and says it took more than one fill', async () => {
     const t = setup({ held: ['BTC/USD'], partFills: 1 });
-    await t.runner.open(ask, TOKEN);
+    await t.runner.open(ask, PERSON);
     await t.advance(60_000);
 
     // Two closing orders: the first left part of the position on the account.
@@ -402,7 +510,7 @@ describe('a close that fills in part', () => {
 
   it('is never marked closed while a remainder is on the account, and comes back to it', async () => {
     const t = setup({ held: ['BTC/USD'], partFills: 99 });
-    await t.runner.open(ask, TOKEN);
+    await t.runner.open(ask, PERSON);
     await t.advance(60_000);
     expect(t.closed).toHaveLength(8);
     expect(t.world.held).toEqual(['BTC/USD']);
@@ -424,7 +532,7 @@ describe('a close that fills in part', () => {
 describe('state and restarts', () => {
   it('lists every market with its leverage, and which are taken and until when', async () => {
     const t = setup({ held: ['MON/USD'] });
-    await t.runner.open(ask, TOKEN);
+    await t.runner.open(ask, PERSON);
     expect(await t.runner.state()).toEqual({
       status: 'ready',
       venue: 'perpl',
@@ -487,7 +595,7 @@ describe('state and restarts', () => {
 
   it('stops its timers, and leaves running trades in the store', async () => {
     const t = setup();
-    await t.runner.open(ask, TOKEN);
+    await t.runner.open(ask, PERSON);
     t.runner.stop();
     await t.advance(120_000);
     expect(t.closed).toEqual([]);

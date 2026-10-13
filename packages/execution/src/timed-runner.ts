@@ -11,6 +11,12 @@
  *
  * The closing order is not sent on anybody's sign-in token: the person may
  * have left by then. The store vouches for it by the trade's own id.
+ *
+ * A trade is opened for a caller (`TimedCaller`): a person, by their own
+ * sign-in token, or the rule on autopilot, by the proposal it passed. Which one
+ * decides only whose trade the backend records it as. The limits, the one trade
+ * per market, the close, the cut and the pick-up after a restart are the same
+ * for both, and nothing here lets either past them.
  */
 
 import type { Decimal } from '@kanon/spec';
@@ -48,6 +54,15 @@ export const TIMED_MESSAGES = {
   manyFills: 'Closed in more than one fill. The exit shown is the first fill.',
 } as const;
 
+/**
+ * Who a trade is opened for. `token` is a person's own sign-in token, which the
+ * backend verifies. `proposalId` names a proposal autopilot wrote when every
+ * predicate passed with nobody there: the backend holds it, and it vouches for
+ * its strategy's owner. The runner judges neither. It hands whichever it was
+ * given to the store and the recorder, and they answer for it.
+ */
+export type TimedCaller = { token: string } | { proposalId: string };
+
 /** A running trade as the store keeps it. */
 export interface TimedRecord {
   id: string;
@@ -83,8 +98,8 @@ export interface TimedUpdate {
 
 /** The backend, as the runner needs it. */
 export interface TimedStore {
-  /** Writes the row for a trade that has just opened, for the holder of `token`. Null when it could not be written. */
-  start(token: string, trade: Omit<TimedRecord, 'id'> & { openTx?: string }): Promise<string | null>;
+  /** Writes the row for a trade that has just opened, for the caller it was opened for. Null when it could not be written. */
+  start(caller: TimedCaller, trade: Omit<TimedRecord, 'id'> & { openTx?: string }): Promise<string | null>;
   /** The recorder for a trade's closing order, vouched for by the trade's id instead of a sign-in token. */
   closerFor(tradeId: string): VenueRecorder;
   update(update: TimedUpdate): Promise<void>;
@@ -99,8 +114,8 @@ type Timer = ReturnType<typeof setTimeout>;
 export interface TimedRunnerDeps {
   network: PerplNetwork;
   service: VenueService;
-  /** The recorder for an order placed on a caller's own sign-in token: the opening order. */
-  recorderFor(token: string): VenueRecorder;
+  /** The recorder for an order placed for a caller: the opening order, and the close that takes back a trade that could not be recorded. */
+  recorderFor(caller: TimedCaller): VenueRecorder;
   store: TimedStore;
   loadMarkets(): Promise<PerplMarketInfo[]>;
   readMarkPrice(marketId: number): Promise<number>;
@@ -119,7 +134,8 @@ export interface TimedRunnerDeps {
 export interface TimedRunner {
   /** The markets a trade can be opened on, which are taken, and every limit. */
   state(): Promise<TimedStateView>;
-  open(request: TimedRequest, token: string): Promise<TimedOpenResult>;
+  /** Opens a trade for a caller. Every caller is held to the same limits. */
+  open(request: TimedRequest, caller: TimedCaller): Promise<TimedOpenResult>;
   /** Ends the caller's own trade before its time. */
   close(tradeId: string, token: string): Promise<TimedCloseResult>;
   /** Picks up the trades an earlier process left running. */
@@ -382,7 +398,7 @@ export function createTimedRunner(deps: TimedRunnerDeps): TimedRunner {
       };
     },
 
-    async open(request, token) {
+    async open(request, caller) {
       if (network !== 'testnet') return { status: 'unavailable', message: TIMED_MESSAGES.testnetOnly };
       let market: PerplMarketInfo | null;
       try {
@@ -408,7 +424,7 @@ export function createTimedRunner(deps: TimedRunnerDeps): TimedRunner {
       // Captured for the trade once it exists: the opening order's fee can arrive after its answer.
       let opened: Running | null = null;
       let openFee: Decimal | undefined;
-      const mine = deps.recorderFor(token);
+      const mine = deps.recorderFor(caller);
       const recorder: VenueRecorder = {
         begin: (order) => mine.begin(order),
         settle: (outcome) => mine.settle(outcome),
@@ -451,13 +467,13 @@ export function createTimedRunner(deps: TimedRunnerDeps): TimedRunner {
       };
       let tradeId: string | null = null;
       try {
-        tradeId = await store.start(token, { ...record, ...(result.txHash ? { openTx: result.txHash } : {}) });
+        tradeId = await store.start(caller, { ...record, ...(result.txHash ? { openTx: result.txHash } : {}) });
       } catch (err) {
         report('timed.start', err);
       }
       if (!tradeId) {
         // A position nobody is timing must not be left open.
-        await service.closePosition(asset, deps.recorderFor(token)).catch((err: unknown) => report('timed.unwind', err));
+        await service.closePosition(asset, deps.recorderFor(caller)).catch((err: unknown) => report('timed.unwind', err));
         return { status: 'unavailable', message: TIMED_MESSAGES.notRecorded };
       }
       opened = track({ ...record, id: tradeId });

@@ -154,7 +154,7 @@ describe('timed trades', () => {
 
   it("writes a trade that has opened under the caller's own token", async () => {
     const { recorder, calls } = setup(() => json(200, { ok: true, tradeId: 'k27trade' }));
-    expect(await recorder.timed.start(TOKEN, trade)).toBe('k27trade');
+    expect(await recorder.timed.start({ token: TOKEN }, trade)).toBe('k27trade');
     expect(calls[0]).toMatchObject({ url: `${SITE}/timed/start`, body: trade });
     expect(calls[0]?.headers.authorization).toBe(`Bearer ${TOKEN}`);
     // Whose trade it is comes from the token. The body names nobody.
@@ -163,7 +163,7 @@ describe('timed trades', () => {
 
   it('answers null when the trade could not be written, whatever the reason', async () => {
     for (const answer of [() => json(401, { ok: false, code: 'unauthenticated' }), () => json(200, { ok: false, code: 'no_user' }), () => { throw new Error('down'); }]) {
-      expect(await setup(answer).recorder.timed.start(TOKEN, trade)).toBeNull();
+      expect(await setup(answer).recorder.timed.start({ token: TOKEN }, trade)).toBeNull();
     }
   });
 
@@ -207,5 +207,109 @@ describe('timed trades', () => {
     expect(await setup(() => json(200, { ok: true, owns: false })).recorder.timed.owns(TOKEN, 'k27trade')).toBe(false);
     expect(await setup(() => json(401, { ok: false, code: 'unauthenticated' })).recorder.timed.owns(TOKEN, 'k27trade')).toBe(false);
     await expect(setup(() => json(500, {})).recorder.timed.owns(TOKEN, 'k27trade')).rejects.toThrow();
+  });
+});
+
+describe('autopilot: a trade opened for a proposal, with nobody signed in', () => {
+  const PROPOSAL = 'k57proposal';
+  const trade = {
+    network: 'testnet',
+    asset: 'BTC/USD',
+    direction: 'up',
+    stakeUsd: 10,
+    leverage: 5,
+    seconds: 900,
+    openedAt: 1_000_000,
+    expiresAt: 1_900_000,
+    size: { atoms: '60', decimals: 5 },
+    entryPrice: { atoms: '828471', decimals: 1 },
+  } as const;
+  const order = { network: 'testnet', asset: 'BTC/USD', action: 'open', side: 'long', notionalUsd: 50, leverage: 5 } as const;
+
+  it('reads the proposals that are waiting, and leaves out a row it cannot read', async () => {
+    const row = { proposalId: PROPOSAL, asset: 'BTC/USD', direction: 'up', stakeUsd: 10, seconds: 900 };
+    const { recorder, calls } = setup(() =>
+      json(200, { ok: true, proposals: [row, { proposalId: 'broken' }, { ...row, proposalId: 'k57other', direction: 'sideways' }] }),
+    );
+    expect(await recorder.autopilot.pending()).toEqual([row]);
+    expect(calls[0]).toMatchObject({ url: `${SITE}/autopilot/pending`, body: {} });
+    expect(calls[0]?.headers[RECORDER_HEADER]).toBe(KEY);
+    expect(calls[0]?.headers.authorization).toBeUndefined();
+  });
+
+  it('throws when what is waiting could not be read, so a round is skipped and not taken as empty', async () => {
+    for (const answer of [
+      () => json(403, { ok: false, code: 'forbidden' }),
+      () => json(200, { ok: true }),
+      () => {
+        throw new Error('connect ECONNREFUSED');
+      },
+    ]) {
+      await expect(setup(answer).recorder.autopilot.pending()).rejects.toThrow(/could not be read/);
+    }
+  });
+
+  it("takes the lock for a proposal's order with the key and the proposal's id, and no token", async () => {
+    const { recorder, calls } = setup(() => json(200, { ok: true, orderId: 'k17open' }));
+    const mine = recorder.forProposal(PROPOSAL);
+    expect(await mine.begin(order)).toEqual({ ok: true, orderId: 'k17open' });
+    expect(calls[0]).toMatchObject({ url: `${SITE}/autopilot/begin`, body: { proposalId: PROPOSAL, ...order } });
+    expect(calls[0]?.headers.authorization).toBeUndefined();
+    expect(calls[0]?.headers[RECORDER_HEADER]).toBe(KEY);
+    // Who the order is for is the proposal's to say. The body names nobody.
+    expect(Object.keys(calls[0]?.body as object).sort()).toEqual(['action', 'asset', 'leverage', 'network', 'notionalUsd', 'proposalId', 'side']);
+    // The order's own record goes where every order's does.
+    await mine.settle({ orderId: 'k17open', status: 'filled' });
+    expect(calls[1]?.url).toBe(`${SITE}/venue/settle`);
+  });
+
+  it('sends nothing for a proposal the backend will not open, and waits on a lock that is taken', async () => {
+    const refused = setup(() => json(200, { ok: false, code: 'not_pending' }));
+    // Read as an order that could not be recorded: the order service then sends nothing.
+    expect(await refused.recorder.forProposal(PROPOSAL).begin(order)).toEqual({ ok: false, code: 'unreachable' });
+    expect(refused.logs).toEqual([{ level: 'error', event: 'recorder_refused', path: '/autopilot/begin', status: 200, code: 'not_pending' }]);
+
+    const busy = setup(() => json(200, { ok: false, code: 'busy' }));
+    expect(await busy.recorder.forProposal(PROPOSAL).begin(order)).toEqual({ ok: false, code: 'busy' });
+  });
+
+  it('writes a trade that has opened in the name of its proposal, with no token', async () => {
+    const { recorder, calls } = setup(() => json(200, { ok: true, tradeId: 'k27timed' }));
+    expect(await recorder.timed.start({ proposalId: PROPOSAL }, trade)).toBe('k27timed');
+    expect(calls[0]).toMatchObject({ url: `${SITE}/autopilot/start`, body: { proposalId: PROPOSAL, ...trade } });
+    expect(calls[0]?.headers.authorization).toBeUndefined();
+    expect(Object.keys(calls[0]?.body as object)).not.toContain('userId');
+  });
+
+  it('answers null when that trade could not be written, so the position is taken back', async () => {
+    for (const answer of [() => json(200, { ok: false, code: 'not_pending' }), () => json(500, { ok: false, code: 'failed' }), () => { throw new Error('down'); }]) {
+      expect(await setup(answer).recorder.timed.start({ proposalId: PROPOSAL }, trade)).toBeNull();
+    }
+  });
+
+  it("never sends a person's trade to the proposal's route, or a proposal's to the person's", async () => {
+    const { recorder, calls } = setup(() => json(200, { ok: true, tradeId: 'k27timed' }));
+    await recorder.timed.start({ token: TOKEN }, trade);
+    await recorder.timed.start({ proposalId: PROPOSAL }, trade);
+    expect(calls.map((c) => [c.url, c.headers.authorization, 'proposalId' in (c.body as object)])).toEqual([
+      [`${SITE}/timed/start`, `Bearer ${TOKEN}`, false],
+      [`${SITE}/autopilot/start`, undefined, true],
+    ]);
+  });
+
+  it('says what became of a proposal, and throws when that was not written', async () => {
+    const opened = { proposalId: PROPOSAL, outcome: 'opened', timedTradeId: 'k27timed' } as const;
+    const not = { proposalId: PROPOSAL, outcome: 'not_opened', reason: 'The BTC market is closed.' } as const;
+    const { recorder, calls } = setup(() => json(200, { ok: true }));
+    await recorder.autopilot.report(opened);
+    await recorder.autopilot.report(not);
+    expect(calls.map((c) => [c.url, c.body])).toEqual([
+      [`${SITE}/autopilot/report`, opened],
+      [`${SITE}/autopilot/report`, not],
+    ]);
+    expect(calls[0]?.headers.authorization).toBeUndefined();
+    for (const answer of [() => json(500, { ok: false, code: 'failed' }), () => json(200, { ok: false, code: 'not_found' })]) {
+      await expect(setup(answer).recorder.autopilot.report(not)).rejects.toThrow(/k57proposal could not be written/);
+    }
   });
 });

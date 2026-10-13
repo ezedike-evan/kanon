@@ -23,6 +23,10 @@
  * Every answer the ticket is meant to show comes back as HTTP 200 with a typed
  * body, a refusal included: a refusal is an answer, not a fault. Other statuses
  * are for requests that are not one of the three above.
+ *
+ * Autopilot has no path here. Nobody calls it: this process asks the backend
+ * what the rule passed and opens it (`autopilot.ts`), starting and stopping
+ * with the timed trades it shares a runner with.
  */
 
 import { createHash } from 'node:crypto';
@@ -44,6 +48,7 @@ import {
   type VenueOrderResult,
   type VenueService,
 } from '@kanon/execution/venue-service';
+import { createAutopilotPoller, type AutopilotPoller } from './autopilot';
 import type { TradeConfig } from './config';
 import { createConvexRecorder, type Admission, type ConvexRecorder } from './convex-recorder';
 import type { Logger } from './log';
@@ -106,9 +111,9 @@ export interface TradeAnswer {
 
 export interface TradeRoutes {
   handle(req: IncomingMessage, path: string): Promise<TradeAnswer>;
-  /** Picks up the timed trades an earlier process left running. Does nothing when none are served. */
+  /** Picks up the timed trades an earlier process left running, then starts asking for autopilot's proposals. Does nothing when none are served. */
   resume(): Promise<void>;
-  /** Stops the timers of running timed trades. They stay in the backend for the next process. */
+  /** Stops asking for proposals, and the timers of running timed trades. They stay in the backend for the next process. */
   stop(): void;
 }
 
@@ -161,8 +166,10 @@ export function createTradeRoutes(deps: {
   now?: () => number;
   /** Runs Predict's timed trades. Without it the `/predict` routes say trading is not connected. */
   timed?: TimedRunner;
+  /** Opens the proposals autopilot wrote, through the same runner. Without it none are opened. */
+  autopilot?: AutopilotPoller;
 }): TradeRoutes {
-  const { service, recorder, log, timed } = deps;
+  const { service, recorder, log, timed, autopilot } = deps;
   const now = deps.now ?? Date.now;
   const answer = (body: VenueAccountView | VenueOrderResult): TradeAnswer => ({ status: 200, body });
 
@@ -241,7 +248,7 @@ export function createTradeRoutes(deps: {
       const body = TimedOpenBody.safeParse(json);
       if (!body.success) return { status: 400, body: { error: 'not a timed trade: { asset, direction, stakeUsd, seconds }' } };
       if (!token) return say(unavailable(VENUE_MESSAGES.signIn));
-      const result = await timed.open(body.data, token);
+      const result = await timed.open(body.data, { token });
       held = null;
       stateHeld = null;
       log({ level: 'info', event: 'timed_open', ...body.data, result: result.status });
@@ -259,8 +266,15 @@ export function createTradeRoutes(deps: {
   }
 
   return {
-    resume: () => timed?.resume() ?? Promise.resolve(),
-    stop: () => timed?.stop(),
+    async resume() {
+      // The runner first: it has to know which markets its own running trades hold before anything new is opened.
+      await timed?.resume();
+      autopilot?.start();
+    },
+    stop() {
+      autopilot?.stop();
+      timed?.stop();
+    },
 
     async handle(req, path) {
       const wrong = routeOf(req, path);
@@ -356,12 +370,14 @@ export async function connectTrade(config: TradeConfig, log: Logger, fetchImpl?:
   const timed = createTimedRunner({
     network: config.network,
     service,
-    recorderFor: (token) => recorder.forCaller(token),
+    // A person's order is recorded on their own token; a proposal's, in the proposal's name.
+    recorderFor: (caller) => ('token' in caller ? recorder.forCaller(caller.token) : recorder.forProposal(caller.proposalId)),
     store: recorder.timed,
     loadMarkets,
     readMarkPrice: (marketId) => readPerplMarkPrice(publicOpts, marketId),
     onError: (scope, err) =>
       log({ level: 'error', event: 'timed_error', scope, error: err instanceof Error ? err.message : String(err) }),
   });
-  return createTradeRoutes({ service, recorder, log, timed });
+  const autopilot = createAutopilotPoller({ runner: timed, store: recorder.autopilot, log });
+  return createTradeRoutes({ service, recorder, log, timed, autopilot });
 }

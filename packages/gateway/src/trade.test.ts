@@ -1,4 +1,5 @@
 import type { TimedOpenResult, TimedRunner, TimedStateView } from '@kanon/execution/timed-runner';
+import type { AutopilotPoller } from './autopilot';
 import type { VenueAccountView, VenueOrderResult, VenueRecorder, VenueService } from '@kanon/execution/venue-service';
 import { loadConfig } from './config';
 import type { Admission, ConvexRecorder } from './convex-recorder';
@@ -30,7 +31,7 @@ let timedCalls: unknown[];
 const STATE = { status: 'ready', venue: 'perpl', network: 'testnet', markets: [] } as unknown as TimedStateView;
 const OPENED = { status: 'opened', trade: { id: 'trade-1' } } as unknown as TimedOpenResult;
 
-async function start(withTrade: boolean, withTimed = false): Promise<void> {
+async function start(withTrade: boolean, withTimed = false, withAutopilot = false): Promise<void> {
   const venue = new FakeVenue();
   seen = { admitted: [], callers: [], accounts: 0, orders: [], closes: [] };
   admission = { ok: true };
@@ -38,17 +39,29 @@ async function start(withTrade: boolean, withTimed = false): Promise<void> {
   timedCalls = [];
   const timed: TimedRunner = {
     state: async () => (timedCalls.push('state'), STATE),
-    open: async (request, token) => (timedCalls.push(['open', request, token]), OPENED),
+    open: async (request, caller) => (timedCalls.push(['open', request, caller]), OPENED),
     close: async (tradeId, token) => (timedCalls.push(['close', tradeId, token]), { status: 'closing', tradeId }),
-    resume: async () => void timedCalls.push('resume'),
+    // Slow on purpose: what starts after it must be seen to have waited.
+    resume: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      timedCalls.push('resume');
+    },
     stop: () => void timedCalls.push('stop'),
+  };
+  const autopilot: AutopilotPoller = {
+    start: () => void timedCalls.push('autopilot start'),
+    stop: () => void timedCalls.push('autopilot stop'),
   };
   const callerRecorder = {} as VenueRecorder;
   const recorder: ConvexRecorder = {
     admit: async (token) => (seen.admitted.push(token), admission),
     forCaller: (token) => (seen.callers.push(token), callerRecorder),
-    // The ticket's routes never touch the timed store.
+    // The ticket's routes never touch a proposal's recorder, the timed store or autopilot's.
+    forProposal: () => {
+      throw new Error('no route records an order for a proposal');
+    },
     timed: {} as ConvexRecorder['timed'],
+    autopilot: {} as ConvexRecorder['autopilot'],
   };
   const service: VenueService = {
     account: async () => (seen.accounts++, READY),
@@ -61,11 +74,22 @@ async function start(withTrade: boolean, withTimed = false): Promise<void> {
     socketFactory: venue.factory,
     fetchImpl: (async () => new Response(JSON.stringify({ markets: [{ id: 16 }] }))) as typeof fetch,
     ...(withTrade
-      ? { trade: createTradeRoutes({ service, recorder, log: silentLogger, now: () => clock, ...(withTimed ? { timed } : {}) }) }
+      ? {
+          trade: createTradeRoutes({
+            service,
+            recorder,
+            log: silentLogger,
+            now: () => clock,
+            ...(withTimed ? { timed } : {}),
+            ...(withAutopilot ? { autopilot } : {}),
+          }),
+        }
       : {}),
   });
   port = await gateway.listen();
   venue.last.open();
+  // The gateway picks up running trades without waiting on it; a test does.
+  if (withTimed) await vi.waitFor(() => expect(timedCalls).toContain('resume'));
 }
 
 afterEach(async () => {
@@ -284,7 +308,7 @@ describe('predict: timed trades', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual(OPENED);
       await call('/predict/state', { headers: auth });
-      expect(timedCalls).toEqual(['resume', 'state', ['open', timedOrder, TOKEN], 'state']);
+      expect(timedCalls).toEqual(['resume', 'state', ['open', timedOrder, { token: TOKEN }], 'state']);
     });
 
     it("ends the caller's trade when asked", async () => {
@@ -301,6 +325,41 @@ describe('predict: timed trades', () => {
       expect((await call('/predict/open', { headers: auth })).status).toBe(405);
       expect((await call('/predict/settle', { headers: auth })).status).toBe(404);
       expect(timedCalls).toEqual(['resume']);
+    });
+  });
+
+  describe('with autopilot', () => {
+    beforeEach(() => start(true, true, true));
+
+    it('starts asking for proposals once running trades are in hand, and stops before their timers do', async () => {
+      await vi.waitFor(() => expect(timedCalls).toContain('autopilot start'));
+      expect(timedCalls).toEqual(['resume', 'autopilot start']);
+      await gateway.close();
+      expect(timedCalls).toEqual(['resume', 'autopilot start', 'autopilot stop', 'stop']);
+      await start(true, true, true);
+    });
+
+    it('has no path of its own: nobody can ask the gateway to open a proposal', async () => {
+      const paths: Array<[string, number]> = [
+        // Not an order path at all: the rest of the gateway is read-only.
+        ['/autopilot/pending', 405],
+        ['/autopilot/open', 405],
+        ['/predict/autopilot', 404],
+        ['/trade/autopilot', 404],
+      ];
+      for (const [path, status] of paths) {
+        expect((await post(path, { proposalId: 'k57proposal' })).status, path).toBe(status);
+      }
+      // A person's timed trade is still opened on their own token, and on nothing else.
+      await post('/predict/open', timedOrder);
+      expect(timedCalls.filter((c) => Array.isArray(c))).toEqual([['open', timedOrder, { token: TOKEN }]]);
+    });
+
+    it('cannot be handed a proposal in place of a token by a caller', async () => {
+      const res = await post('/predict/open', { ...timedOrder, proposalId: 'k57proposal' });
+      expect(res.status).toBe(400);
+      expect(await (await post('/predict/open', timedOrder, {})).json()).toEqual({ status: 'unavailable', message: 'Sign in to trade.' });
+      expect(timedCalls.filter((c) => Array.isArray(c))).toEqual([]);
     });
   });
 });
