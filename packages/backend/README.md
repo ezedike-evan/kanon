@@ -46,6 +46,8 @@ client `.env`.
 | `NANSEN_API_KEY` | optional | Smart-money flow. Unset, the card reports `not_connected`. |
 | `NANSEN_BASE_URL` | optional | Override for the Nansen API base URL. |
 | `MONAD_RPC_URL` | optional | Pyth read for tick ingestion. Default `https://rpc.monad.xyz`. |
+| `STRATEGY_REGISTRY_ADDRESS` | to pin or change a rule | The deployed StrategyRegistry. A pin, a change and an applied loosening are written only after the backend reads the transaction's receipt and finds this contract's own event in it (`strategies.ts`, `chainLogic.ts`). Unset, nothing is pinned. |
+| `STRATEGY_REGISTRY_RPC_URL`, `STRATEGY_REGISTRY_CHAIN_ID` | with the address | The chain the registry is on. Set both or neither: unset, `MONAD_RPC_URL` and `MONAD_CHAIN_ID` are used as a pair. They are separate because tick ingestion reads Pyth through `MONAD_RPC_URL`, and the registry can be on another chain (it is on testnet 10143 today). |
 | `HERMES_API_KEY` | optional | Switches tick ingestion to Pyth Hermes. |
 | `HERMES_URL` | optional | Default `https://hermes.pyth.network`. |
 | `HERMES_API_KEY_HEADER` | optional | Default `Authorization` (sent as Bearer). |

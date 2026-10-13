@@ -80,6 +80,56 @@ export function parseChainEnv(
   };
 }
 
+export interface RegistryEnv {
+  rpcUrl: string;
+  chainId: number;
+  registryAddress: string;
+}
+
+/**
+ * Where a rule's pin is checked before its row says `pinned`.
+ * `STRATEGY_REGISTRY_ADDRESS` is the deployed StrategyRegistry. Its chain is
+ * `STRATEGY_REGISTRY_RPC_URL` with `STRATEGY_REGISTRY_CHAIN_ID` when those are
+ * set, and `MONAD_RPC_URL` with `MONAD_CHAIN_ID` otherwise.
+ *
+ * The registry has its own pair because `MONAD_RPC_URL` is also where the tick
+ * ingest reads Pyth (`ticks.ts`): with the registry on testnet and prices read
+ * from mainnet, one variable cannot serve both. The pair is never mixed: an
+ * RPC of one chain is not used with the id of the other.
+ */
+export function parseRegistryEnv(env: Env): EnvResult<RegistryEnv> {
+  const r = report(
+    z.object({
+      STRATEGY_REGISTRY_ADDRESS: address,
+      STRATEGY_REGISTRY_RPC_URL: httpUrl.optional(),
+      STRATEGY_REGISTRY_CHAIN_ID: chainId.optional(),
+      MONAD_RPC_URL: httpUrl.optional(),
+      MONAD_CHAIN_ID: chainId.optional(),
+    }),
+    pick(env, [
+      "STRATEGY_REGISTRY_ADDRESS",
+      "STRATEGY_REGISTRY_RPC_URL",
+      "STRATEGY_REGISTRY_CHAIN_ID",
+      "MONAD_RPC_URL",
+      "MONAD_CHAIN_ID",
+    ]),
+  );
+  if (!r.ok) return r;
+  const v = r.value;
+  const registryAddress = v.STRATEGY_REGISTRY_ADDRESS.toLowerCase();
+  if (v.STRATEGY_REGISTRY_RPC_URL !== undefined || v.STRATEGY_REGISTRY_CHAIN_ID !== undefined) {
+    if (v.STRATEGY_REGISTRY_RPC_URL === undefined) return { ok: false, invalid: ["STRATEGY_REGISTRY_RPC_URL"] };
+    if (v.STRATEGY_REGISTRY_CHAIN_ID === undefined) return { ok: false, invalid: ["STRATEGY_REGISTRY_CHAIN_ID"] };
+    return { ok: true, value: { rpcUrl: v.STRATEGY_REGISTRY_RPC_URL, chainId: v.STRATEGY_REGISTRY_CHAIN_ID, registryAddress } };
+  }
+  const missing = [
+    ...(v.MONAD_RPC_URL === undefined ? ["STRATEGY_REGISTRY_RPC_URL"] : []),
+    ...(v.MONAD_CHAIN_ID === undefined ? ["STRATEGY_REGISTRY_CHAIN_ID"] : []),
+  ];
+  if (v.MONAD_RPC_URL === undefined || v.MONAD_CHAIN_ID === undefined) return { ok: false, invalid: missing };
+  return { ok: true, value: { rpcUrl: v.MONAD_RPC_URL, chainId: v.MONAD_CHAIN_ID, registryAddress } };
+}
+
 export function parseDashscopeEnv(env: Env): EnvResult<{ apiKey: string }> {
   const r = report(z.object({ DASHSCOPE_API_KEY: z.string().min(8) }), pick(env, ["DASHSCOPE_API_KEY"]));
   return r.ok ? { ok: true, value: { apiKey: r.value.DASHSCOPE_API_KEY } } : r;
@@ -88,8 +138,9 @@ export function parseDashscopeEnv(env: Env): EnvResult<{ apiKey: string }> {
 /**
  * Where the compiler's model is called. By default that is Alibaba Cloud Model
  * Studio (DashScope) with `DASHSCOPE_API_KEY`. `COMPILER_BASE_URL` with
- * `COMPILER_API_KEY` sends it to another OpenAI-compatible host of the same
- * model, and `COMPILER_MODEL` is that host's name for it.
+ * `COMPILER_API_KEY` sends it to another OpenAI-compatible host, and
+ * `COMPILER_MODEL` names the model to call there. Another host can be another
+ * model: whichever it is must support a forced tool call (`compiler.ts`).
  *
  * The two keys are never mixed: a base URL without its own key is a fault, so
  * the DashScope key is never sent to a host that is not DashScope, and a

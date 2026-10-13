@@ -17,7 +17,7 @@ import crons from "./crons";
 import http from "./http";
 import { runProposer } from "./proposer";
 import * as proposerData from "./proposerData";
-import { pinStrategy, setAutopilot } from "./strategies";
+import { applyVerifiedPin, setAutopilot } from "./strategies";
 import * as timedData from "./timedData";
 import * as trades from "./trades";
 import * as venueData from "./venueData";
@@ -201,6 +201,8 @@ async function seed(w: World, over: Record<string, unknown> = {}) {
     spec: bosSpec,
     specHash: "0xspec",
     status: "pinned",
+    // The pin was read from the chain (`strategies:pinStrategy`): without that, autopilot runs nothing.
+    pinVerified: true,
     autopilot: false,
     ...over,
   });
@@ -298,7 +300,9 @@ describe("turning autopilot on and off", () => {
     });
     const draft = await w.db.insert("strategies", { ownerUserId: alice, pendingSpec: bosSpec, status: "draft", autopilot: false });
 
-    await w.call(pinStrategy, {
+    // The write a checked pin ends in (`strategiesChain.test.ts` covers the check itself).
+    await w.call(applyVerifiedPin, {
+      subject: ALICE,
       strategyId: draft,
       specHash: await specHash(bosSpec),
       predicatesCommitment: predicatesCommitment(bosSpec),
@@ -338,6 +342,18 @@ describe("the sweep", () => {
     expect(w.db.rows("trades")).toEqual([]);
     expect(w.state.seriesReads).toBe(0);
     expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(4));
+  });
+
+  it("judges nothing for a rule whose pin was never read from the chain, even with autopilot on", async () => {
+    // A row left `pinned` by a client's say-so, from before pins were checked, with autopilot already on.
+    const { strategyId } = await seed(w, { pinVerified: undefined, autopilot: true, autopilotBucket: at(3) });
+
+    expect(await sweepAfter(w, 4, PASS)).toMatchObject({ proposed: 0, refused: 0 });
+    expect(w.db.rows("trades")).toEqual([]);
+    expect(w.state.seriesReads).toBe(0);
+    // And it cannot be turned back on once it is off.
+    await w.call(setAutopilot, { strategyId, on: false });
+    await expect(w.call(setAutopilot, { strategyId, on: true })).rejects.toThrow(/pin it again/);
   });
 
   it("judges each closed candle once, however many times it runs before the next close", async () => {
@@ -436,7 +452,7 @@ describe("the sweep", () => {
 
   it("keeps judging the rest when one strategy cannot be read", async () => {
     const { alice } = await seed(w, { autopilot: true, autopilotBucket: at(4), spec: { ...bosSpec, series: { ...bosSpec.series, asset: "ETH/USD" } } });
-    const second = await w.db.insert("strategies", { ownerUserId: alice, spec: bosSpec, specHash: "0xother", status: "pinned", autopilot: true, autopilotBucket: at(4) });
+    const second = await w.db.insert("strategies", { ownerUserId: alice, spec: bosSpec, specHash: "0xother", status: "pinned", pinVerified: true, autopilot: true, autopilotBucket: at(4) });
     w.state.now = at(6) * 1000 + 30_000;
     // The first strategy's read throws; the second's answers.
     w.state.series = (asset) => (asset === "ETH/USD" ? new Error("read failed") : seriesEnding(5, FAIL));
@@ -447,7 +463,7 @@ describe("the sweep", () => {
 
   it("leaves alone a strategy autopilot is off for, and one whose stored spec does not parse", async () => {
     const { alice } = await seed(w, { autopilot: false, autopilotBucket: at(1) });
-    await w.db.insert("strategies", { ownerUserId: alice, spec: { not: "a spec" }, specHash: "0xbad", status: "pinned", autopilot: true, autopilotBucket: at(1) });
+    await w.db.insert("strategies", { ownerUserId: alice, spec: { not: "a spec" }, specHash: "0xbad", status: "pinned", pinVerified: true, autopilot: true, autopilotBucket: at(1) });
     expect(await sweepAfter(w, 5, PASS)).toEqual({ armed: 0, proposed: 0, refused: 0, skipped: 0, unavailable: 0, failed: 0, expired: 0 });
     expect(w.db.rows("trades")).toEqual([]);
   });

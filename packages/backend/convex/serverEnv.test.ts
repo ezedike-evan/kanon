@@ -5,6 +5,7 @@ import {
   parseCompilerEnv,
   parseDashscopeEnv,
   parseNansenEnv,
+  parseRegistryEnv,
   parseVenueRecorderEnv,
 } from "./serverEnv";
 
@@ -38,6 +39,55 @@ describe("parseChainEnv", () => {
   it("never echoes a value in its report", () => {
     const r = parseChainEnv({ ...good, MONAD_CHAIN_ID: "secret-ish" }, []);
     expect(JSON.stringify(r)).not.toContain("secret");
+  });
+});
+
+describe("parseRegistryEnv", () => {
+  const REGISTRY = "0x" + "Ef".repeat(20);
+  const own = {
+    STRATEGY_REGISTRY_ADDRESS: REGISTRY,
+    STRATEGY_REGISTRY_RPC_URL: "https://testnet.example/key",
+    STRATEGY_REGISTRY_CHAIN_ID: "10143",
+  };
+
+  it("fails closed when nothing is set, and names what to set", () => {
+    expect(parseRegistryEnv({})).toEqual({ ok: false, invalid: ["STRATEGY_REGISTRY_ADDRESS"] });
+    expect(parseRegistryEnv({ STRATEGY_REGISTRY_ADDRESS: REGISTRY })).toEqual({
+      ok: false,
+      invalid: ["STRATEGY_REGISTRY_RPC_URL", "STRATEGY_REGISTRY_CHAIN_ID"],
+    });
+  });
+  it("reads the registry's own chain, and lower-cases its address", () => {
+    expect(parseRegistryEnv({ ...own, MONAD_RPC_URL: "https://rpc.monad.xyz", MONAD_CHAIN_ID: "143" })).toEqual({
+      ok: true,
+      value: { rpcUrl: own.STRATEGY_REGISTRY_RPC_URL, chainId: 10143, registryAddress: "0x" + "ef".repeat(20) },
+    });
+  });
+  it("falls back to the deployment's chain only as a pair", () => {
+    expect(parseRegistryEnv({ STRATEGY_REGISTRY_ADDRESS: REGISTRY, MONAD_RPC_URL: good.MONAD_RPC_URL, MONAD_CHAIN_ID: "143" })).toEqual({
+      ok: true,
+      value: { rpcUrl: good.MONAD_RPC_URL, chainId: 143, registryAddress: "0x" + "ef".repeat(20) },
+    });
+    expect(parseRegistryEnv({ STRATEGY_REGISTRY_ADDRESS: REGISTRY, MONAD_RPC_URL: good.MONAD_RPC_URL })).toEqual({
+      ok: false,
+      invalid: ["STRATEGY_REGISTRY_CHAIN_ID"],
+    });
+  });
+  it("never pairs one chain's RPC with the other's id", () => {
+    const { STRATEGY_REGISTRY_CHAIN_ID: _id, ...noId } = own;
+    expect(parseRegistryEnv({ ...noId, MONAD_RPC_URL: "https://rpc.monad.xyz", MONAD_CHAIN_ID: "143" })).toEqual({
+      ok: false,
+      invalid: ["STRATEGY_REGISTRY_CHAIN_ID"],
+    });
+    const { STRATEGY_REGISTRY_RPC_URL: _url, ...noUrl } = own;
+    expect(parseRegistryEnv({ ...noUrl, MONAD_RPC_URL: "https://rpc.monad.xyz", MONAD_CHAIN_ID: "143" })).toEqual({
+      ok: false,
+      invalid: ["STRATEGY_REGISTRY_RPC_URL"],
+    });
+  });
+  it("rejects a malformed address without echoing it", () => {
+    const r = parseRegistryEnv({ ...own, STRATEGY_REGISTRY_ADDRESS: "0x12" });
+    expect(r).toEqual({ ok: false, invalid: ["STRATEGY_REGISTRY_ADDRESS"] });
   });
 });
 

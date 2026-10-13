@@ -88,6 +88,14 @@ export default defineSchema({
     chainStrategyId: v.optional(v.string()),
     pinTxHash: v.optional(v.string()),
     /**
+     * True once the backend itself read the pin's receipt and found the
+     * registry's `StrategyPinned` for this strategy id, from the owner's linked
+     * wallet, with this spec's hash (`strategies:pinStrategy`). Absent on a row
+     * pinned before pins were checked: such a rule is not run on autopilot and
+     * cannot be amended, because nothing ties it to the registry entry it names.
+     */
+    pinVerified: v.optional(v.boolean()),
+    /**
      * What the registry holds next to `specHash`: the commitment to the
      * predicates the gate checks (`keccak256(encodePredicates(spec))`) and the
      * CanonicalSeries address it reads. Both describe `spec`, the enforced one.

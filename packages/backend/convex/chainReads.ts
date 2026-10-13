@@ -14,7 +14,7 @@ import {
 import type { ChainEnv } from "./serverEnv";
 
 /** Reads from the configured Monad RPC. Everything returned is what the chain said. */
-export function rpcFor(env: ChainEnv, fetchImpl: FetchLike = fetch as unknown as FetchLike): RpcConfig {
+export function rpcFor(env: Pick<ChainEnv, "rpcUrl">, fetchImpl: FetchLike = fetch as unknown as FetchLike): RpcConfig {
   return { url: env.rpcUrl, fetch: fetchImpl, retries: DEFAULT_RPC_RETRIES };
 }
 
@@ -26,6 +26,24 @@ export async function rpcIsOnChain(cfg: RpcConfig, chainId: number): Promise<boo
 
 export async function getReceipt(cfg: RpcConfig, txHash: string): Promise<RpcReceipt | null> {
   return await rpcRequest<RpcReceipt | null>(cfg, "eth_getTransactionReceipt", [txHash]);
+}
+
+/** How many times a receipt is asked for, and how long between, before it is taken as not confirmed. */
+export const RECEIPT_TRIES = 4;
+export const RECEIPT_WAIT_MS = 1_500;
+
+/**
+ * A receipt the caller has just seen mined. Another node can be a block behind
+ * the one the wallet used, so a missing receipt is asked for again a few times
+ * before the answer is "not confirmed". Still null after that.
+ */
+export async function getReceiptSoon(cfg: RpcConfig, txHash: string): Promise<RpcReceipt | null> {
+  const sleep = cfg.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  for (let attempt = 1; ; attempt++) {
+    const receipt = await getReceipt(cfg, txHash);
+    if (receipt || attempt >= RECEIPT_TRIES) return receipt;
+    await sleep(RECEIPT_WAIT_MS);
+  }
 }
 
 export async function ethCall(cfg: RpcConfig, to: string, data: string): Promise<string> {

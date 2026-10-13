@@ -121,6 +121,8 @@ export const context = internalQuery({
     const strategy = await ctx.db.get(args.strategyId);
     // An unpinned draft is judged by nothing, by a button or by a sweep.
     if (!strategy || !strategy.autopilot || strategy.status === "draft" || strategy.spec === undefined) return null;
+    // A pass here sends an order to the venue, so the sweep judges only a pin the backend read from the chain.
+    if (strategy.pinVerified !== true) return null;
     return { strategy, collateral: await firstCollateral(ctx.db, strategy.ownerUserId) };
   },
 });
