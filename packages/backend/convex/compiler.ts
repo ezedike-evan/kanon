@@ -17,17 +17,22 @@
  * see `compilerLogic.test.ts` and the "Compiler drift" failure mode in
  * `docs/ARCHITECTURE.md`.
  *
- * Provider: Alibaba Cloud Model Studio (DashScope), Qwen3.8-Max, via its
- * OpenAI-compatible `chat.completions` endpoint. Chosen over Moonshot Kimi
- * K3 and Tencent Hunyuan because DashScope is the only one of the three with
- * an officially documented, schema-*enforced* structured-output mode
- * (`response_format: {type: "json_schema", json_schema: {..., strict: true}}`,
- * per https://www.alibabacloud.com/help/en/model-studio/json-mode) — Kimi's
- * "JSON Mode" only guarantees syntactically valid JSON, not a specific
- * shape, and Hunyuan's English documentation does not clearly specify
- * structured-output behavior at all. All three are OpenAI-API-compatible,
- * so this module uses the `openai` package pointed at DashScope's base URL
- * rather than a bespoke client or raw `fetch`.
+ * How the shape is held. The model is made to answer with one tool call,
+ * forced by name (`tool_choice`), whose arguments are the candidate spec.
+ * Those arguments are then validated here with Zod against `StrategySpec`, and
+ * a candidate that fails is sent back with the validation error, up to
+ * `MAX_ATTEMPTS` (3) times. That validation is the guarantee. No provider's
+ * schema-enforced output mode (`response_format: json_schema`) is used or
+ * relied on, so the compiler does not depend on a host that offers one.
+ *
+ * Provider: any OpenAI-compatible `chat.completions` host that supports tool
+ * calls with a forced tool choice, through the `openai` package pointed at
+ * that host's base URL. With nothing else set it is Alibaba Cloud Model Studio
+ * (DashScope) and the model pinned below, on `DASHSCOPE_API_KEY`.
+ * `COMPILER_BASE_URL` with `COMPILER_API_KEY` sends it to another host, and
+ * `COMPILER_MODEL` names the model there (`serverEnv.ts`). Which host and
+ * model a deployment actually calls is a fact about that deployment's
+ * settings, stated in the README, not here.
  *
  * This module is action-only ("use node" — the OpenAI SDK needs the Node
  * runtime), so it exports nothing but the action below.
@@ -62,9 +67,8 @@ const DASHSCOPE_BASE_URL = 'https://dashscope-intl.aliyuncs.com/compatible-mode/
  * itself released 2026-08-03 — see
  * https://openrouter.ai/qwen/qwen3.8-max-0902 and
  * https://www.marktechpost.com/2026/08/03/alibaba-qwen-releases-qwen3-8-max/).
- * It is one of the model families DashScope's JSON Schema structured-output
- * mode explicitly supports
- * (https://www.alibabacloud.com/help/en/model-studio/json-mode).
+ * It is the default only: a deployment that sets `COMPILER_MODEL` calls that
+ * model instead.
  */
 const COMPILER_MODEL = 'qwen3.8-max-0902';
 
@@ -126,7 +130,7 @@ export const compileStrategy = action({
       console.error(describeEnvProblem('compileStrategy', env.invalid));
       return { status: 'failed', error: 'The compiler is unavailable right now.' };
     }
-    // DashScope and the pinned model unless the deployment names another host of the same model.
+    // DashScope and the pinned model unless the deployment names another host and its model.
     const { apiKey } = env.value;
     const baseURL = env.value.baseUrl ?? DASHSCOPE_BASE_URL;
     const model = env.value.model ?? COMPILER_MODEL;
