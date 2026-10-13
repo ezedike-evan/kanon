@@ -67,6 +67,12 @@ Track: Onchain Finance & Trading ($30,000).
 | Envio | $1,000 | HyperIndex for trade history |
 | Qwen / Kimi / Hunyuan | credits | Compiler |
 
+Kuru, as of 13 October: the requirement is not met and the bounty is not
+claimed. `packages/execution/src/kuru.ts` is a client library for markets that
+already exist on Kuru. Nothing outside `packages/execution` imports it; inside,
+only the venue router calls it, and no running process builds that router. It
+has never run against Kuru.
+
 Perpl's analytics bounty is under-contested and maps directly onto work the
 product needs anyway. Claim it.
 

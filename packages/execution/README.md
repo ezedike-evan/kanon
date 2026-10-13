@@ -12,6 +12,11 @@ below. Prices and sizes are `Decimal` (integer atoms plus explicit
 decimals) end to end; a `number` appears only where a venue's own wire format is
 a JSON integer.
 
+Kuru is not integrated into Kanon. `kuru.ts` is a client library for markets
+that already exist on Kuru. Nothing outside this package imports it; inside,
+only `router.ts` calls it, and no running process builds that router. It has
+never run against Kuru.
+
 ## Layout
 
 | File | What it is |

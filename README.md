@@ -19,19 +19,20 @@ live.
 
 | Piece | State |
 |---|---|
-| Contracts: price series, strategy registry, refusal gate, predicate engine | Deployed on Monad testnet. 277 Foundry tests pass. |
-| Contracts: threshold market (Predict), guarded vault, copy vault, margin account, insurance fund | Deployed on Monad testnet. Covered by the same test suite. |
+| Contracts: price series, strategy registry, refusal gate, predicate engine | Deployed on Monad testnet. 277 Foundry tests pass. The testnet series reads a mock Pyth whose price anyone can set, so an approval or a refusal on testnet shows the arithmetic running, not a market price (see Limitations). |
+| Contracts: threshold market (Predict), guarded vault, copy vault, margin account, insurance fund | Deployed on Monad testnet. Covered by the same test suite. The two vaults act on figures their executor reports, and the margin account cannot close or liquidate a position while the series is stale (see Limitations). |
 | Strategy spec, evaluators, hashing, on-chain encoding (`packages/spec`) | Built, 285 tests pass. |
 | Compiler (plain language to spec, Qwen 3.8 Max) | Built in the Convex backend. Rejects anything it cannot express as arithmetic. **Not answering on the hosted backend on 13 October: its model key is not set there, so a compile says the compiler is unavailable.** The host it reaches the model through can be set (`COMPILER_BASE_URL`, `COMPILER_API_KEY`, `COMPILER_MODEL`); unset, it is Alibaba Cloud's own endpoint. |
 | Web and mobile clients | Built from one shared UI package. The web client is public at https://kanon-three.vercel.app (Vercel, Next 15.5.27, deployed with `pnpm deploy:web`), and since 12 October it is connected to the hosted gateway. On 13 October the owner signed in there and placed a real order on Perpl testnet from it. A visitor who does not sign in sees the app on a labelled demo account. The mobile client is not distributed. |
-| Pinning from the app | Wired to the registry. Not yet exercised against the current deployment. |
+| Pinning from the app | Wired to the registry. The backend writes a rule as pinned only after it reads the transaction's receipt and finds the registry's own `StrategyPinned` for that strategy id, from the user's linked wallet, with the draft's hash; a change and an applied loosening are checked the same way. Not yet exercised against the current deployment. |
 | Refusal in the app | Decided off-chain by the backend today. Calling the on-chain gate from the app is in progress. |
-| Order execution (Perpl perps, Kuru spot) | **Perpl:** the chart's order ticket (desktop panel and phone sheet) places market orders through the gateway's `/trade` routes: one shared testnet account, $10 to $100 per order, up to 5x, adding to a position on the same side, no rule check. The backend checks who is asking and records each order; it cannot send one itself, because Perpl refuses its trading API to the region the backend is hosted in. Opened and closed from a browser by the owner on a developer's machine on 10 October and on the hosted site on 13 October. The two transactions of an earlier scripted order are in `packages/execution/README.md`. **Kuru:** a spot client is written and unit-tested against a fake; there is no screen for it and it has never been run against Kuru. Trades proposed by a rule are still paper fills and labelled so. |
+| Order execution (Perpl perps; Kuru spot is not integrated) | **Perpl:** the chart's order ticket (desktop panel and phone sheet) places market orders through the gateway's `/trade` routes: one shared testnet account, $10 to $100 per order, up to 5x, adding to a position on the same side, no rule check. The backend checks who is asking and records each order; it cannot send one itself, because Perpl refuses its trading API to the region the backend is hosted in. Opened and closed from a browser by the owner on a developer's machine on 10 October and on the hosted site on 13 October. The two transactions of an earlier scripted order are in `packages/execution/README.md`. **Kuru:** not integrated. `packages/execution/src/kuru.ts` is a client library for markets that already exist on Kuru, written and unit-tested against a fake. Nothing outside `packages/execution` imports it; inside, only the venue router calls it, and no running process builds that router. There is no screen for it and it has never been run against Kuru. Trades proposed by a rule at a button press are still paper fills and labelled so; a rule on autopilot is the exception (see Autopilot). |
 | Predict (timed trades) | A pair called up or down for 1, 5, 15 or 60 minutes is a position the gateway opens at market and closes when the time is up, through the same order code as the chart's ticket, on the shared testnet account. A close that fills in part is followed until nothing of the position is left. Shown as a vertical reel, one pair to a slide. Used with real timed trades by the owner on a developer's machine on 11 October; on the hosted site trading was confirmed for the chart's ticket, and Predict was not separately confirmed. Signed out, the reel is a labelled sample that sends nothing. The earlier price-threshold market on the `ThresholdMarket` contract is still deployed and no longer used by this screen. |
+| Autopilot | Built on 13 October. A switch on a pinned rule: the backend then judges the rule once on every closed candle of its own timeframe, with the arithmetic a button press runs, over the backend's candles and not through the on-chain gate. A refusal is recorded like any other. A pass is handed to the gateway, which opens a timed trade on Perpl testnet in the rule's market and on its side: a $10 stake at the timed-trade leverage (5x, or the market's own maximum where that is lower, so a position of at most $50), held for the shortest of 1, 5, 15 or 60 minutes that is not shorter than the rule's candle (60 minutes for a longer candle), then closed by the gateway, sooner if it has lost its stake. **It does not trade the rule's own entry, size or stop.** The proposal's row shows those and stays labelled paper; what was sent is the timed trade. Every user's trade goes to the one shared testnet account, one at a time per rule, and a pass opens nothing while that account already holds a position in the market or when the gateway does not pick it up within two minutes. **Not yet run end to end on the live deployment.** |
 | Trading records (Profile) | Built on 11 October. Profile lists every trade a signed-in person took in one record: positions from the chart's ticket (paired from their own orders, entry weighted by size), timed trades from Predict, and setups put to their rule. A press opens the trade's figures and its transactions. The pairing and the result arithmetic are unit-tested. The table, the phone list and the detail sheet were checked in a browser with sample data while signed out; they have not yet been checked signed in against real orders. All orders still go to one shared account, so a position another person closed shows as ended elsewhere, with no exit. |
 | Perpl risk (`/risk`) | Every Perpl market with its funding per event and per year, open interest, a day's volume, book width, mark against oracle, the margin the market makes a position keep and the taker fee, read from Perpl's public market data through the gateway and refreshed every few seconds; out-of-line books, marks and funding are listed first. Signed in, each position on the trading account shows the price it is liquidated at (Perpl's published formula, before funding) and how far the mark is from there. The markets were checked in a browser against Perpl testnet. The account half is unit-tested against Perpl's own worked example and has not been checked by the developers with a real position on screen. |
 | Gateway (`packages/gateway`) | Hosted since 12 October at https://kanon-gateway.onrender.com (Render, Frankfurt; Perpl does not serve the US or the UK). It holds the Perpl connection and serves every client from it: live candles, trades, order book and tickers, history from a cache, and the `/trade` and `/predict` routes. 131 tests pass. It runs on a plan that sleeps an idle service, so the backend asks it for `/livez` every five minutes; the first answer after a sleep has taken close to a minute. |
-| Price series keeper | Not running continuously. The testnet series is stale between runs. |
+| Price series keeper | Not running continuously. The testnet series is stale between runs. While it is stale the gate reverts instead of approving, and `MarginAccount` cannot open, close, liquidate or de-leverage a position (see Limitations). |
 | Indexer (Envio HyperIndex) | Written and tested (`packages/indexer`), and able to follow the testnet contracts (the `envio` branch). **Not running:** an indexer was created on Envio's hosted service on 13 October and has not built, because the service has not yet received a push from this repository. The app can read it: Profile, Previous rules has an "On-chain record" of pins, changes and refusals, built against the indexer's schema and not yet run against a live indexer. It does not index the strategy retire events yet. |
 
 Nothing here has been audited.
@@ -54,7 +55,10 @@ Monad testnet, chain id 10143. Deployed 5 October 2026.
 | Pyth (mock) | [`0x7B0564b87Edd57d7BB70550b1FBA3384964862ce`](https://testnet.monadscan.com/address/0x7B0564b87Edd57d7BB70550b1FBA3384964862ce) |
 
 The testnet deployment uses a mock Pyth contract and a mock collateral token,
-both with unrestricted setters. Anyone can move the testnet oracle. It is a
+both with unrestricted setters. Anyone can move the testnet oracle. A price set
+there enters the series at the next `recordSample`, which anyone can call, so
+anyone can decide whether the testnet gate approves or refuses, and what price
+a testnet margin position or threshold market settles on. It is a
 beta for trying the flow, not a market. On Monad mainnet the same series
 contract reads Pyth's real price feed directly; that deployment has not been
 made.
@@ -78,12 +82,47 @@ or two of latency is acceptable for the swing trading this is built for.
   and evaluates break of structure, fair value gap and liquidity sweep as
   integer arithmetic. A refusal names the predicate and the number that failed.
 - Tightening a rule applies immediately. Loosening waits out a cooling-off
-  period. There is no admin key and no override.
+  period. There is no admin key and no override. The contract checks this over
+  the predicates only, not over sizing or stops (see Limitations).
 - The contracts never call a model. The model only translates language into a
   spec, which the user reviews before anything is pinned.
 
 `docs/SECURITY.md` states what is trusted, what is mitigated and what is still
 open. `docs/ARCHITECTURE.md` explains the design.
+
+## Limitations
+
+What the claims above do not cover. Each is stated in full in
+`docs/SECURITY.md`, under Known gaps.
+
+- **The testnet oracle is a mock.** `MockPyth.setPrice` has no access control
+  and `recordSample` is open to anyone, so anyone can set the price the testnet
+  series records, and with it whether the gate approves or refuses. On testnet
+  the gate is arithmetic over a tape anyone can write.
+- **`tighten` proves the predicates are no looser, and nothing else.** It
+  replaces the spec hash in the same call with no cooling-off, and it accepts
+  unchanged predicates. Risk per trade and stop distance are bound only by that
+  hash, which the chain cannot read, so on-chain they can change at once, in
+  either direction. No contract checks a trade's size or stop against the spec.
+- **The vaults act on reported figures.** `GuardedVault.proposeTrade` takes
+  `projectedPnL` from the vault's owner or executor and counts it against the
+  daily drawdown cap. `CopyVault` takes the leader's size and the entry and exit
+  prices from the leader's executor and settles the follower's ledger on them.
+  The gate checks the predicates in the same transaction. It does not check
+  these numbers.
+- **A stale series stops `MarginAccount`.** It prices only from the current
+  bucket of the series. With no sample in that bucket, opening, closing,
+  `liquidate` and `deleverage` revert, and so does `withdraw` for an account
+  with an open position. The keeper is not running continuously, so on testnet
+  that is the usual state between runs.
+- **Autopilot does not trade the rule's own entry, size or stop.** A pass opens
+  a timed trade with a fixed $10 stake, at up to 5x, on the one shared Perpl
+  testnet account. The verdict is the backend's, not the on-chain gate's. It
+  has not yet run end to end on the live deployment.
+- **Kuru is not integrated.** `packages/execution/src/kuru.ts` is a client
+  library for existing markets only. Nothing outside `packages/execution`
+  imports it; inside, only the venue router calls it, and no running process
+  builds that router. It has never run against Kuru.
 
 ## Layout
 
@@ -99,7 +138,7 @@ packages/
   tokens/       Design tokens, built into a Tailwind preset.
   contracts/    Foundry. Series, registry, gate, market, vaults, margin.
   backend/      Convex. Compiler, proposer, price ingestion, markets, auth.
-  execution/    Perpl and Kuru clients, paper client, venue router.
+  execution/    Perpl client, Kuru client library (never run against Kuru), paper client, venue router.
   gateway/      Market data: holds the Perpl connection, serves every client from it.
   relayer/      Pushes price updates and records series samples.
   keeper/       Liquidation and de-leveraging bot for MarginAccount.

@@ -150,6 +150,12 @@ WebSocket with separate trading and market-data servers, rate limits keyed on
 wallet address. Perpl already publishes on-chain safeguards for agents on Monad;
 read that before designing the policy account.
 
+Built state, 13 October: orders reach Perpl only, on testnet. Kuru is not
+integrated. `packages/execution/src/kuru.ts` is a client library for markets
+that already exist on Kuru. Nothing outside `packages/execution` imports it;
+inside, only the venue router calls it, and no running process builds that
+router. It has never run against Kuru.
+
 Latency: verification adds a block or two. SMC swing trading tolerates this
 easily. Do not design for high frequency.
 

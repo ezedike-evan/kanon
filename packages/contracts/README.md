@@ -41,7 +41,8 @@ or, from this directory, `forge build` / `forge test` directly.
   (`keccak256(abi.encode(RefusalGate.PredicateDefinition[]))`, the part the
   chain can check) and the one canonical **series** the predicates run against.
   `pinStrategy(specHash, predicatesCommitment, series)` (payable, bond-gated),
-  `tighten(id, specHash, predicatesCommitment, series)` (applies immediately),
+  `tighten(strategyId, newSpecHash, newPredicatesCommitment, newSeries, oldPredicates, newPredicates)`
+  (applies immediately, and only if the decoded predicates prove a tightening),
   `proposeLoosening(id, specHash, predicatesCommitment, series)` +
   `finalizeLoosening(id)` (cooldown enforced with no override; a new
   commitment or a new series is a spec change and waits out the same
