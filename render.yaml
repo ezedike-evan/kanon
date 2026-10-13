@@ -50,10 +50,10 @@ services:
         sync: false
       - key: VENUE_RECORDER_KEY
         sync: false
-      # Browser origins allowed to connect: the web app on Vercel, then local
-      # development. Add the custom domain here once there is one.
+      # Browser origins allowed to connect: the app's own domain, the web app's
+      # Vercel addresses, then local development.
       - key: GATEWAY_ALLOWED_ORIGINS
-        value: https://kanon-three.vercel.app,https://kanon-tellacash-9675s-projects.vercel.app,http://localhost:3000,http://localhost:8081
+        value: https://kanon.markets,https://www.kanon.markets,https://kanon-three.vercel.app,https://kanon-tellacash-9675s-projects.vercel.app,http://localhost:3000,http://localhost:8081
       # BTC and ETH 15m on testnet, kept in memory from start.
       - key: GATEWAY_WARM_STREAMS
         value: candles@16*900,candles@32*900
