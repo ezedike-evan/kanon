@@ -17,6 +17,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { originAllowed, type GatewayConfig } from './config';
 import { Hub, type HubClient } from './hub';
+import { KURU_MARKET_PATH, createKuruMarketRoute, type KuruMarketRoute } from './kuru-market';
 import type { Logger } from './log';
 import { RestProxy } from './rest';
 import { MT } from './streams';
@@ -43,6 +44,8 @@ export interface GatewayDeps {
   fetchImpl?: typeof fetch;
   /** The order routes, when a key is configured. Without them `/trade` says trading is not connected. */
   trade?: TradeRoutes;
+  /** The market listed on Kuru. Without it `/kuru/market` says nothing is listed. */
+  kuru?: KuruMarketRoute;
 }
 
 export interface Gateway {
@@ -54,6 +57,7 @@ export interface Gateway {
 export function createGateway(deps: GatewayDeps): Gateway {
   const { config, log } = deps;
   const trade = deps.trade ?? disconnectedTrade;
+  const kuru = deps.kuru ?? createKuruMarketRoute({ read: null, log });
 
   let markets: Set<number> | null = null;
   const isKnownMarket = (id: number): boolean | null => (markets === null ? null : markets.has(id));
@@ -154,6 +158,10 @@ export function createGateway(deps: GatewayDeps): Gateway {
         JSON.stringify({ ok, network: config.network, clients: wss.clients.size, ...hub.stats(), upstream: pool.status() }),
         { 'cache-control': 'no-store' },
       );
+      return;
+    }
+    if (url.pathname === KURU_MARKET_PATH) {
+      send(200, JSON.stringify(await kuru.get()), { 'cache-control': 'no-store' });
       return;
     }
     const answer = await rest.get(url.pathname, url.searchParams);

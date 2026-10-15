@@ -16,6 +16,8 @@ import type { CopyLeadsState, SparklineState } from './home-types';
 import type { VaultSource } from './vault-types';
 import type { PerplRiskState } from './perpl-risk-reads';
 import type { OnchainRecordState } from './onchain-record-reads';
+import type { SpotClient } from './spot-client';
+import type { SpotMarketState } from './spot-reads';
 import type { TimedStateRead, TimedTradesState } from './timed-types';
 import type { VenueAccountRead, VenueOrdersState } from './venue-types';
 
@@ -120,6 +122,16 @@ export function useTimedTrades(): TimedTradesState {
 /** Perpl's markets with their terms, funding and newest state. Public data, polled only while mounted. */
 export function usePerplRisk(): PerplRiskState {
   return useKanonSelector((s) => s.usePerplRisk)();
+}
+
+/** The spot market Kanon listed on Kuru testnet, with its book. Public data, polled only while mounted. */
+export function useSpotMarket(): SpotMarketState {
+  return useKanonSelector((s) => s.useSpotMarket)();
+}
+
+/** The seam to the person's own wallet for the spot market: balances, the open mint, a market order. */
+export function useSpotClient(): SpotClient {
+  return useKanonSelector((s) => s.spotClient);
 }
 
 /**

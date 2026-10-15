@@ -262,6 +262,28 @@ NEAR takes `short` with its word, WATCH and CLEAR stay neutral. The foot of the 
 says how the liquidation price is worked out and links to Perpl's formula. Signed out,
 the markets are shown and the account asks for sign-in.
 
+**Spot market (`/spot`, reached from Profile).** The one market Kanon listed on Kuru's testnet
+order book, tkBTC/USDC. tkBTC is a test token and the USDC is a mock, so the pair never appears
+without a `TEST TOKEN` label and its network, and the gateway's one sentence about the two tokens
+sits under the name. Above the fold on a phone: the pair and its labels, the best bid and ask, and
+the book, asks above and bids below with the spread between them, four levels a side (every level
+from `lg`), price and size only. Bid and ask prices take `long` and `short`, each side under its
+arrow and its word. The book's foot gives its block and the time it was read; a read that fails
+keeps the last book, says it is not the current one, and orders wait. Then the ticket: Buy or Sell,
+an amount (a buy is typed in USDC, a sell in tkBTC), the sizes the market takes, what the wallet
+holds of both tokens and of gas, and the open mint for test USDC, said to be test money. The foot
+of the screen states the order in one line, or the one reason there is none (not signed in, no
+wallet, the app set to another chain, no gas, an amount outside the limits), and its action opens
+the confirmation as a bottom sheet. The sheet states the side, the amount, the best price, the
+taker fee, the slippage bound, the least that will be received and how many wallet transactions it
+takes. The bound is chosen there (1.00% unless changed) and the least received moves with it. One
+press sends the order from the person's own wallet, fill or kill. The answer is drawn in place and
+stays on the ticket: what filled and at what average price, with its transaction on the explorer,
+or one neutral sentence. A fill-or-kill order that reverted is the bound working and takes no alarm
+colour. No result in money is shown anywhere. The last section lists the market's terms, its three
+contracts and the listing transactions, each one press from the explorer. Signed out, the book is
+shown and the ticket is the way to sign in.
+
 **One record for three ways of trading.** Trading records lists every trade the person
 took, newest first by the day it was opened: a position from the chart's ticket, a
 timed trade from Predict, and a setup put to their rule (executed or refused). Each row
@@ -410,6 +432,7 @@ begins), `refusal` (heavy impact; felt before it is read). No-op on the web.
 | `app/onboarding` | `onboarding-*.png` | Three screens, ends in a text field |
 | `app/chart`, `app/create`, `app/predict` | none yet | Chart, AI and Predict tabs |
 | `app/profile` | none yet | Profile tab: account, appearance (theme), records, rules, copy trading, security |
+| `app/risk`, `app/spot` | none yet | Reached from Profile: Perpl risk, and the tkBTC/USDC test market on Kuru testnet |
 
 ## Consistency check
 

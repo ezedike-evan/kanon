@@ -86,6 +86,12 @@ const RecordsSection = memo(function RecordsSection() {
           title="Perpl risk"
           subtitle="Liquidation distance, funding, books"
           href={routes.risk}
+        />
+        <ListRow
+          leading="layers"
+          title="Spot market"
+          subtitle="tkBTC test token on Kuru testnet"
+          href={routes.spot}
           divider={false}
         />
       </Card>

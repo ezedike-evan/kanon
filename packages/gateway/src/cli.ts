@@ -14,7 +14,9 @@
 import { setDefaultResultOrder } from 'node:dns';
 import { existsSync } from 'node:fs';
 import { setDefaultAutoSelectFamily } from 'node:net';
+import { createKuruBookReader, kuruMarketView, readKuruListing } from '@kanon/execution/kuru-market-view';
 import { ConfigError, loadConfig } from './config';
+import { createKuruMarketRoute } from './kuru-market';
 import { createJsonLogger } from './log';
 import { createGateway } from './server';
 import { connectTrade, type TradeRoutes } from './trade';
@@ -47,7 +49,15 @@ async function main() {
       process.exit(2);
     }
   }
-  const gateway = createGateway({ config, log, ...(trade ? { trade } : {}) });
+  // The spot market Kanon listed on Kuru's testnet, read-only. It is served whatever network the
+  // perps are on: the listing record says which chain it is, and no key is involved.
+  const listing = readKuruListing();
+  const readBook = listing ? createKuruBookReader({ listing }) : null;
+  const kuru = createKuruMarketRoute({
+    read: listing && readBook ? async () => kuruMarketView(listing, await readBook(), Date.now()) : null,
+    log,
+  });
+  const gateway = createGateway({ config, log, kuru, ...(trade ? { trade } : {}) });
   const port = await gateway.listen();
   log({
     level: 'info',
@@ -58,6 +68,7 @@ async function main() {
     warm: config.warmStreams,
     // The network orders go to, or `off`. Never the key.
     trade: config.trade ? config.trade.network : 'off',
+    kuru: listing ? listing.asset : 'not listed',
   });
 
   let stopping = false;

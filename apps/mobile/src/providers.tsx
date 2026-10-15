@@ -27,7 +27,7 @@ import {
   type ConvexHooks,
   type Signer,
 } from '@kanon/ui';
-import { AccountProvider, assertPublicEnv, type KanonAccount } from '@kanon/ui';
+import { AccountProvider, assertPublicEnv, createViemSpotClient, type KanonAccount } from '@kanon/ui';
 // The generated `api` object only knows about the `users` module until
 // `npx convex dev` has run once against a real deployment and regenerated
 // `_generated/api.d.ts` — see that file's header. At runtime `api` is a
@@ -265,6 +265,26 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
     [address],
   );
 
+  // The spot market on Kuru testnet: orders, approvals and the test mint leave from this same
+  // wallet. The market's addresses come from the gateway at the time of each call, not from here.
+  const spotClient = useMemo(
+    () =>
+      createViemSpotClient({
+        chain: CHAIN,
+        hasWallet: Boolean(address),
+        getSigner: async () => {
+          const current = walletRef.current;
+          if (!current) return null;
+          const provider = await current.getProvider();
+          return {
+            provider: provider as unknown as Signer['provider'],
+            address: current.address as `0x${string}`,
+          };
+        },
+      }),
+    [address],
+  );
+
   const vaultClient = useMemo(
     () =>
       VAULT_CONFIG.status === 'ready'
@@ -300,6 +320,7 @@ function KanonDataBridge({ children }: { children: ReactNode }) {
     marketFeed: MARKET_FEED,
     venueTrade,
     indexer: INDEXER,
+    spotClient,
   });
 
   // Who signed in and how, and the one way out. Convex's session follows Privy's, so `logout`

@@ -14,7 +14,7 @@ against.
 
 ## Status
 
-Stated plainly, as of 13 October 2026. This section is updated as each piece goes
+Stated plainly, as of 15 October 2026. This section is updated as each piece goes
 live.
 
 | Piece | State |
@@ -26,7 +26,7 @@ live.
 | Web and mobile clients | Built from one shared UI package. The web client is public at https://kanon.markets (Vercel, Next 15.5.27, deployed with `pnpm deploy:web`), and since 12 October it is connected to the hosted gateway. On 13 October the owner signed in there and placed a real order on Perpl testnet from it. A visitor who does not sign in sees the app on a labelled demo account. The mobile client is not distributed. |
 | Pinning from the app | Wired to the registry. The backend writes a rule as pinned only after it reads the transaction's receipt and finds the registry's own `StrategyPinned` for that strategy id, from the user's linked wallet, with the draft's hash; a change and an applied loosening are checked the same way. Not yet exercised against the current deployment. |
 | Refusal in the app | Decided off-chain by the backend today. Calling the on-chain gate from the app is in progress. |
-| Order execution (Perpl perps; Kuru spot is not integrated) | **Perpl:** the chart's order ticket (desktop panel and phone sheet) places market orders through the gateway's `/trade` routes: one shared testnet account, $10 to $100 per order, up to 5x, adding to a position on the same side, no rule check. The backend checks who is asking and records each order; it cannot send one itself, because Perpl refuses its trading API to the region the backend is hosted in. Opened and closed from a browser by the owner on a developer's machine on 10 October and on the hosted site on 13 October. The two transactions of an earlier scripted order are in `packages/execution/README.md`. **Kuru:** not integrated. `packages/execution/src/kuru.ts` is a client library for markets that already exist on Kuru, written and unit-tested against a fake. Nothing outside `packages/execution` imports it; inside, only the venue router calls it, and no running process builds that router. There is no screen for it and it has never been run against Kuru. Trades proposed by a rule at a button press are still paper fills and labelled so; a rule on autopilot is the exception (see Autopilot). |
+| Order execution (Perpl perps, Kuru spot) | **Perpl:** the chart's order ticket (desktop panel and phone sheet) places market orders through the gateway's `/trade` routes: one shared testnet account, $10 to $100 per order, up to 5x, adding to a position on the same side, no rule check. The backend checks who is asking and records each order; it cannot send one itself, because Perpl refuses its trading API to the region the backend is hosted in. Opened and closed from a browser by the owner on a developer's machine on 10 October and on the hosted site on 13 October. The two transactions of an earlier scripted order are in `packages/execution/README.md`. **Kuru:** on 15 October Kanon listed a new spot market on Kuru's testnet order book, tkBTC/USDC (addresses under Deployed contracts): a test token it deployed, against its own mock USDC, seeded with liquidity, with one market buy filled through `packages/execution/src/kuru.ts`. The spot screen (`/spot`, reached from Profile) reads that market's book through the gateway's `/kuru/market` route and sends a market order, fill or kill, from the person's own wallet, with an approval when one is needed and the tokens' open mint for test funds. Kanon holds no key for it. The screen's order path is unit-tested against a fake chain; it has not yet been run by a signed-in person on the hosted site. Nothing else in the app trades on Kuru. Trades proposed by a rule at a button press are still paper fills and labelled so; a rule on autopilot is the exception (see Autopilot). |
 | Predict (timed trades) | A pair called up or down for 1, 5, 15 or 60 minutes is a position the gateway opens at market and closes when the time is up, through the same order code as the chart's ticket, on the shared testnet account. A close that fills in part is followed until nothing of the position is left. Shown as a vertical reel, one pair to a slide. Used with real timed trades by the owner on a developer's machine on 11 October; on the hosted site trading was confirmed for the chart's ticket, and Predict was not separately confirmed. Signed out, the reel is a labelled sample that sends nothing. The earlier price-threshold market on the `ThresholdMarket` contract is still deployed and no longer used by this screen. |
 | Autopilot | Built on 13 October. A switch on a pinned rule: the backend then judges the rule once on every closed candle of its own timeframe, with the arithmetic a button press runs, over the backend's candles and not through the on-chain gate. A refusal is recorded like any other. A pass is handed to the gateway, which opens a timed trade on Perpl testnet in the rule's market and on its side: a $10 stake at the timed-trade leverage (5x, or the market's own maximum where that is lower, so a position of at most $50), held for the shortest of 1, 5, 15 or 60 minutes that is not shorter than the rule's candle (60 minutes for a longer candle), then closed by the gateway, sooner if it has lost its stake. **It does not trade the rule's own entry, size or stop.** The proposal's row shows those and stays labelled paper; what was sent is the timed trade. Every user's trade goes to the one shared testnet account, one at a time per rule, and a pass opens nothing while that account already holds a position in the market or when the gateway does not pick it up within two minutes. **Not yet run end to end on the live deployment.** |
 | Trading records (Profile) | Built on 11 October. Profile lists every trade a signed-in person took in one record: positions from the chart's ticket (paired from their own orders, entry weighted by size), timed trades from Predict, and setups put to their rule. A press opens the trade's figures and its transactions. The pairing and the result arithmetic are unit-tested. The table, the phone list and the detail sheet were checked in a browser with sample data while signed out; they have not yet been checked signed in against real orders. All orders still go to one shared account, so a position another person closed shows as ended elsewhere, with no exit. |
@@ -53,6 +53,18 @@ Monad testnet, chain id 10143. Deployed 5 October 2026.
 | InsuranceFund | [`0xbA0ddA7891BAb53AF7a6cCd2f4D12484a00b247f`](https://testnet.monadscan.com/address/0xbA0ddA7891BAb53AF7a6cCd2f4D12484a00b247f) |
 | Collateral token (mock USDC) | [`0x89b928df3A0F929578a3c93E1d6E3Be3433e539C`](https://testnet.monadscan.com/address/0x89b928df3A0F929578a3c93E1d6E3Be3433e539C) |
 | Pyth (mock) | [`0x7B0564b87Edd57d7BB70550b1FBA3384964862ce`](https://testnet.monadscan.com/address/0x7B0564b87Edd57d7BB70550b1FBA3384964862ce) |
+
+The spot market Kanon listed on Kuru's testnet order book on 15 October 2026
+(`pnpm --filter @kanon/execution kuru:list`, record in
+`packages/execution/kuru-listing.testnet.json`):
+
+| Kuru tkBTC/USDC | Address or transaction |
+|---|---|
+| Market (order book) | [`0x03026249435158b7a7Ca0F7419BF7B4EE17C1273`](https://testnet.monadscan.com/address/0x03026249435158b7a7Ca0F7419BF7B4EE17C1273) |
+| tkBTC, Kanon Test BTC (test token, open mint) | [`0x4257E26b9d338F14d66D2Ec12Fe2bAceCc9c9928`](https://testnet.monadscan.com/address/0x4257E26b9d338F14d66D2Ec12Fe2bAceCc9c9928) |
+| Listing | [`0xb1431ae6…0593f`](https://testnet.monadscan.com/tx/0xb1431ae604bf58136d011bdcf0bbece511bad95db221efc70cfdd8c289e0593f) |
+| Liquidity seeded (50 tkBTC, 4,060,000 mock USDC) | [`0x61f0437f…cddb`](https://testnet.monadscan.com/tx/0x61f0437f0284d26c92e2680ecc642b6be6bbb1454750a0593d40de9beb42cddb) |
+| First fill (market buy, 0.001 tkBTC at 81,200) | [`0xfff5f2eb…72b3`](https://testnet.monadscan.com/tx/0xfff5f2ebe385a742270972b9db86e61ee0d445083649af09b2d1ead2913572b3) |
 
 The testnet deployment uses a mock Pyth contract and a mock collateral token,
 both with unrestricted setters. Anyone can move the testnet oracle. A price set
@@ -119,10 +131,11 @@ What the claims above do not cover. Each is stated in full in
   a timed trade with a fixed $10 stake, at up to 5x, on the one shared Perpl
   testnet account. The verdict is the backend's, not the on-chain gate's. It
   has not yet run end to end on the live deployment.
-- **Kuru is not integrated.** `packages/execution/src/kuru.ts` is a client
-  library for existing markets only. Nothing outside `packages/execution`
-  imports it; inside, only the venue router calls it, and no running process
-  builds that router. It has never run against Kuru.
+- **The Kuru market is a test market.** tkBTC is a token Kanon deployed with
+  an open mint; it is not bitcoin and has no value, and the USDC it trades
+  against is Kanon's mock. Its only liquidity is what the listing seeded. The
+  rule is not checked on a spot order, and the venue router still does not
+  build a Kuru client for rule trades.
 
 ## Layout
 
@@ -138,7 +151,7 @@ packages/
   tokens/       Design tokens, built into a Tailwind preset.
   contracts/    Foundry. Series, registry, gate, market, vaults, margin.
   backend/      Convex. Compiler, proposer, price ingestion, markets, auth.
-  execution/    Perpl client, Kuru client library (never run against Kuru), paper client, venue router.
+  execution/    Perpl client, Kuru client and the listing script, paper client, venue router.
   gateway/      Market data: holds the Perpl connection, serves every client from it.
   relayer/      Pushes price updates and records series samples.
   keeper/       Liquidation and de-leveraging bot for MarginAccount.

@@ -113,6 +113,7 @@ export { ProposalScreen } from './screens/proposal';
 export { TradeDetailScreen } from './screens/trade-detail';
 export { BlockedLogScreen } from './screens/blocked-log';
 export { PerplRiskScreen } from './screens/perpl-risk';
+export { SpotScreen } from './screens/spot';
 export { CoolingOffScreen } from './screens/cooling-off';
 export { StrategyCardScreen } from './screens/strategy-card';
 export { OnboardingPasskeyScreen } from './screens/onboarding-passkey';
@@ -188,4 +189,11 @@ export {
   type OnchainRecordState,
 } from './lib/onchain-record-reads';
 export type { IndexerRequest, OnchainKind, OnchainRow } from './lib/onchain-record';
+// The spot market Kanon listed on Kuru testnet: the book comes through the gateway (the same
+// `resolveVenueTrade(...)` calls object), and orders go out from the person's own wallet. An app
+// builds `createViemSpotClient(...)` over its signer and hands it to `useConvexKanonSource`.
+export { SpotError, unavailableSpotClient, type SpotClient } from './lib/spot-client';
+export { createViemSpotClient, kuruOrderBookAbi, spotTokenAbi, type ViemSpotClientOptions } from './lib/spot-viem';
+export type { SpotMarketState } from './lib/spot-reads';
+export type { SpotMarket, SpotOrder, SpotOrderReceipt, SpotFill, SpotWallet, SpotSide } from './lib/spot';
 export type * from './lib/venue-types';

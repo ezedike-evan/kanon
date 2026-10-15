@@ -9,10 +9,12 @@
     ".": "./src/index.ts",
     "./perpl-trade": "./src/perpl-trade.ts",
     "./venue-service": "./src/venue-service.ts",
-    "./timed-runner": "./src/timed-runner.ts"
+    "./timed-runner": "./src/timed-runner.ts",
+    "./kuru-market-view": "./src/kuru-market-view.ts"
   },
   "scripts": {
     "perpl:order": "vite-node src/perpl-order-cli.ts --",
+    "kuru:list": "node --env-file-if-exists=../contracts/.env ../../node_modules/vite-node/vite-node.mjs src/kuru-list-cli.ts --",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

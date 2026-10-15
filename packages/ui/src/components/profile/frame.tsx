@@ -216,6 +216,12 @@ function InlinePane({ section }: { section: InlineSection }) {
                 href={routes.risk}
               />
               <ListRow
+                leading="layers"
+                title="Spot market"
+                subtitle="tkBTC test token on Kuru testnet"
+                href={routes.spot}
+              />
+              <ListRow
                 leading="vault"
                 title="Guarded vault"
                 subtitle="Funds the contract enforces"

@@ -1,0 +1,49 @@
+{
+  "network": "testnet",
+  "chainId": 10143,
+  "asset": "tkBTC/USDC",
+  "note": "tkBTC is a test token with an open mint, deployed by Kanon. It is not bitcoin and has no value. USDC here is Kanon's Mock USDC on Monad testnet, also with an open mint.",
+  "openingPriceUsd": 81200,
+  "base": {
+    "address": "0x4257E26b9d338F14d66D2Ec12Fe2bAceCc9c9928",
+    "name": "Kanon Test BTC",
+    "symbol": "tkBTC",
+    "decimals": 8,
+    "kind": "test token, open mint",
+    "deployTx": "0x32e5f7c21c975d0cbb23ab923063cef073542c1fd9576a833762f13b33ff46ec"
+  },
+  "quote": {
+    "address": "0x89b928df3A0F929578a3c93E1d6E3Be3433e539C",
+    "name": "Mock USDC",
+    "symbol": "USDC",
+    "decimals": 6,
+    "kind": "Kanon's mock collateral token, open mint"
+  },
+  "market": {
+    "address": "0x03026249435158b7a7Ca0F7419BF7B4EE17C1273",
+    "vault": "0xA48B2A732738475bEF99006507186b4C55d6a9d3",
+    "router": "0x7EFbE105Ca7415dE98F96622173458ac1c054630",
+    "type": 0,
+    "deployTx": "0xb1431ae604bf58136d011bdcf0bbece511bad95db221efc70cfdd8c289e0593f",
+    "pricePrecision": "10000",
+    "sizePrecision": "1000000000",
+    "tickSize": "81200",
+    "minSize": "100000",
+    "maxSize": "1000000000",
+    "takerFeeBps": "30",
+    "makerFeeBps": "10",
+    "ammSpreadBps": "100"
+  },
+  "liquidity": {
+    "base": "50",
+    "quote": "4060000.0",
+    "tx": "0x61f0437f0284d26c92e2680ecc642b6be6bbb1454750a0593d40de9beb42cddb"
+  },
+  "order": {
+    "side": "buy",
+    "size": "0.001",
+    "tx": "0xfff5f2ebe385a742270972b9db86e61ee0d445083649af09b2d1ead2913572b3",
+    "filledSize": "0.001000000",
+    "avgFillPrice": "81200.000000000000000000"
+  }
+}

@@ -27,6 +27,8 @@ import { createVenueTradeReads, type VenueTradeActions } from './venue-trade-rea
 import { createTimedTradeReads } from './timed-trade-reads';
 import { DISCONNECTED_RISK_STORE, createRiskStore, useRiskStore, type PerplRiskState } from './perpl-risk-reads';
 import { activeChain } from './monad-chain';
+import { unavailableSpotClient, type SpotClient } from './spot-client';
+import { DISCONNECTED_SPOT_STORE, createSpotStore, useSpotStore, type SpotMarketState } from './spot-reads';
 import { createOnchainRecordReads, createOnchainRecordStores, type IndexerPost } from './onchain-record-reads';
 
 /**
@@ -105,6 +107,12 @@ export function useConvexKanonSource(input: {
    * first render is used.
    */
   indexer?: IndexerPost | undefined;
+  /**
+   * The spot market's wallet client (`createViemSpotClient`), built by the app
+   * over the same signer the pin uses. Absent, the spot screen shows the book
+   * and says there is no wallet to trade from.
+   */
+  spotClient?: SpotClient | undefined;
 }): KanonDataSource {
   const { hooks, api, session, pinClient } = input;
   // Fixed for the life of the source. `useSeries`, `useMarkets` and `useTicker` are hooks that
@@ -343,6 +351,22 @@ export function useConvexKanonSource(input: {
     };
   }, [venueTrade]);
 
+  // The spot market Kanon listed on Kuru testnet, through the gateway's one public route. No session
+  // is involved in the read. The wallet client is the app's own, or one that says there is no wallet.
+  const spotReads = useMemo(() => {
+    const get = venueTrade.publicGet;
+    const store = get ? createSpotStore({ get: (path) => get(path) }) : DISCONNECTED_SPOT_STORE;
+    return {
+      useSpotMarket(): SpotMarketState {
+        return useSpotStore(store);
+      },
+    };
+  }, [venueTrade]);
+  const spotClient = useMemo(
+    () => input.spotClient ?? unavailableSpotClient({ chainId: activeChain().id }),
+    [input.spotClient],
+  );
+
   // Profile's on-chain record, from the Kanon indexer on Envio: public data keyed by the wallet's
   // address, so Convex is not involved. Read only while the record is mounted, and only signed in.
   const onchainRecordReads = useMemo(
@@ -424,6 +448,8 @@ export function useConvexKanonSource(input: {
       ...timedTradeReads,
       ...perplRiskReads,
       ...onchainRecordReads,
+      ...spotReads,
+      spotClient,
       session: kanonSession,
       settings: userId ? settings : live.settings,
       ruleHistory: userId ? history : live.ruleHistory,
@@ -438,6 +464,8 @@ export function useConvexKanonSource(input: {
       timedTradeReads,
       perplRiskReads,
       onchainRecordReads,
+      spotReads,
+      spotClient,
       kanonSession,
       settings,
       history,

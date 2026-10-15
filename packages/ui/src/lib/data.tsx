@@ -80,6 +80,9 @@ import type {
 } from './timed-types';
 import { RISK_NOT_CONNECTED, type PerplRiskState } from './perpl-risk-reads';
 import type { OnchainRecordState } from './onchain-record-reads';
+import { SPOT_NOT_CONNECTED, type SpotMarketState } from './spot-reads';
+import { unavailableSpotClient, type SpotClient } from './spot-client';
+import { activeChain } from './monad-chain';
 export type * from './timed-types';
 
 /**
@@ -531,6 +534,20 @@ export interface KanonDataSource {
    * record is not connected.
    */
   useOnchainRecord(address: string | null): OnchainRecordState;
+
+  /**
+   * The spot market Kanon listed on Kuru's testnet order book: its terms and
+   * its book. Public market data through the gateway: read (one request on a
+   * timer) only while a caller is mounted, and the same signed in or out.
+   * Never a fixture: with no gateway address it says it is not connected.
+   */
+  useSpotMarket(): SpotMarketState;
+  /**
+   * The seam to the person's own wallet for that market: its balances, the
+   * test tokens' open mint, and a market order. With no wallet it reads
+   * nothing and sends nothing, and says why.
+   */
+  spotClient: SpotClient;
 }
 
 const dec = (n: string, decimals = 2): Decimal => parseDecimal(n, decimals);
@@ -626,6 +643,15 @@ const DEMO_TIMED_TRADES: TimedTradesState = { status: 'empty' };
 const DEMO_PERPL_RISK: PerplRiskState = { status: 'unavailable', message: RISK_NOT_CONNECTED };
 /** No indexer behind the demo source either: the on-chain record says it is not connected, and invents no transaction. */
 const DEMO_ONCHAIN_RECORD: OnchainRecordState = { status: 'not_connected' };
+/** No gateway behind the demo source: the spot screen says market data is not connected, and invents no book. */
+const DEMO_SPOT_MARKET: SpotMarketState = { status: 'unavailable', code: 'not_connected', message: SPOT_NOT_CONNECTED };
+/** And no wallet: nothing is read and nothing is sent. The chain is asked for at each use, since an app configures it at start. */
+const DEMO_SPOT_CLIENT: SpotClient = {
+  ...unavailableSpotClient({ chainId: 0 }),
+  get chainId() {
+    return activeChain().id;
+  },
+};
 const demoTimedOpen = async (): Promise<TimedOpenResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 const demoTimedClose = async (): Promise<TimedCloseResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 
@@ -814,6 +840,8 @@ export const demoDataSource: KanonDataSource = {
   useTimedTrades: () => DEMO_TIMED_TRADES,
   usePerplRisk: () => DEMO_PERPL_RISK,
   useOnchainRecord: () => DEMO_ONCHAIN_RECORD,
+  useSpotMarket: () => DEMO_SPOT_MARKET,
+  spotClient: DEMO_SPOT_CLIENT,
 };
 
 /** Re-exported so a real provider can fall back to the demo trade id. */
