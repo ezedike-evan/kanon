@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Linking, Pressable, Text, TextInput, View } from 'react-native';
 import { formatBps } from '@kanon/spec';
 import { cx } from '../../lib/cx';
 import { web } from '../../lib/desktop';
 import {
+  FAUCET_ACTION,
   FILL_OR_KILL_LINE,
   SLIPPAGE_CHOICES_BPS,
   approvalLine,
@@ -258,12 +259,35 @@ export function ActionBar({ ticket, onReview }: { ticket: SpotTicket; onReview: 
           {line}
         </Text>
       ) : null}
+      {gate.kind === 'hold' && gate.faucet ? <FaucetLink url={gate.faucet} /> : null}
       <View className={web('lg:ml-auto lg:w-[320px]')}>
         <PrimaryButton onPress={onReview} disabled={!ticket.canSend}>
           {ticket.side === 'buy' ? 'REVIEW BUY' : 'REVIEW SELL'}
         </PrimaryButton>
       </View>
     </View>
+  );
+}
+
+/**
+ * Where to get gas, under the line that says there is none. Drawn as the app's other links
+ * are, in `verified` with a chevron: the way forward, not a fault.
+ */
+function FaucetLink({ url }: { url: string }) {
+  const { tap } = useHaptics();
+  return (
+    <Pressable
+      role="link"
+      aria-label={FAUCET_ACTION}
+      hitSlop={10}
+      onPressIn={tap}
+      // A device with nothing to open a link with rejects; that is not this screen's to report.
+      onPress={() => void Linking.openURL(url).catch(() => undefined)}
+      className={cx('flex-row items-center gap-1.5 self-start rounded-xs hover:opacity-80 active:opacity-70', FOCUS)}
+    >
+      <Text className="font-mono-medium text-11 leading-4 text-verified">{FAUCET_ACTION}</Text>
+      <Icon name="chevron-right" size={12} color="verified" strokeWidth={2} />
+    </Pressable>
   );
 }
 

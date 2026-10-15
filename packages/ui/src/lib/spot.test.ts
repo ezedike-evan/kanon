@@ -25,6 +25,7 @@ import {
   sizeLimits,
   sizeSpotOrder,
   spotGate,
+  MONAD_TESTNET_FAUCET_URL,
   spotTx,
   summariseFill,
   testMintAmount,
@@ -425,6 +426,16 @@ describe('spotGate', () => {
       'This wallet holds no testnet MON. Every transaction needs a little for gas, so nothing can be sent until it has some.',
     );
     expect(spotGate({ ...ready, wallet: { status: 'ready', wallet: held('1') } })).toMatchObject({ kind: 'open' });
+  });
+
+  it('points a testnet wallet with no gas at the faucet, and only for a no-gas hold', () => {
+    const none = spotGate({ ...ready, wallet: { status: 'ready', wallet: held('0') } });
+    expect(none).toMatchObject({ kind: 'hold', faucet: MONAD_TESTNET_FAUCET_URL });
+    expect(spotGate({ ...ready, wallet: { status: 'loading' } })).not.toHaveProperty('faucet');
+    // A mainnet market has no faucet to offer: the hold stands on its own.
+    const mainnet = spotGate({ ...ready, clientChainId: 143, market: { chainId: 143 }, wallet: { status: 'ready', wallet: held('0') } });
+    expect(mainnet).toMatchObject({ kind: 'hold' });
+    expect(mainnet).not.toHaveProperty('faucet');
   });
 });
 

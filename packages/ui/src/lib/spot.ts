@@ -493,6 +493,12 @@ export function wrongChainLine(marketChainId: number, clientChainId: number): st
   return `This market is on ${chainName(marketChainId)}. This build of the app is set to ${chainName(clientChainId)}, so orders are off here.`;
 }
 
+/** Where a wallet on Monad testnet gets MON for gas: the faucet Monad runs. */
+export const MONAD_TESTNET_FAUCET_URL = 'https://faucet.monad.xyz';
+
+/** The link under the no-gas line, as the person reads it. */
+export const FAUCET_ACTION = 'Get testnet MON from the Monad faucet';
+
 export function noGasLine(nativeSymbol: string): string {
   return `This wallet holds no testnet ${nativeSymbol}. Every transaction needs a little for gas, so nothing can be sent until it has some.`;
 }
@@ -506,8 +512,11 @@ export type SpotWalletRead =
 export type SpotGate =
   /** Nobody is signed in: the book is shown and the ticket is the way to sign in. */
   | { kind: 'sign_in' }
-  /** Signed in, and nothing can be sent yet. The sentence says why, calmly. */
-  | { kind: 'hold'; message: string }
+  /**
+   * Signed in, and nothing can be sent yet. The sentence says why, calmly. With no gas on
+   * testnet, `faucet` is where to get some, so the hold is not a dead end.
+   */
+  | { kind: 'hold'; message: string; faucet?: string }
   | { kind: 'open'; wallet: SpotWallet };
 
 /** Whether the ticket can take an order, and the one sentence that says why not. Checked in the order a person meets them. */
@@ -528,7 +537,11 @@ export function spotGate(input: {
   if (wallet.status === 'unread') return { kind: 'hold', message: wallet.message };
   if (wallet.status !== 'ready') return { kind: 'hold', message: SPOT_READING_WALLET };
   if (BigInt(wallet.wallet.native.atoms) <= BigInt(0)) {
-    return { kind: 'hold', message: noGasLine(wallet.wallet.nativeSymbol) };
+    return {
+      kind: 'hold',
+      message: noGasLine(wallet.wallet.nativeSymbol),
+      ...(input.market.chainId === monadTestnet.id ? { faucet: MONAD_TESTNET_FAUCET_URL } : {}),
+    };
   }
   return { kind: 'open', wallet: wallet.wallet };
 }
