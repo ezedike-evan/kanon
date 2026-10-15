@@ -141,6 +141,10 @@ export function parseDashscopeEnv(env: Env): EnvResult<{ apiKey: string }> {
  * `COMPILER_API_KEY` sends it to another OpenAI-compatible host, and
  * `COMPILER_MODEL` names the model to call there. Another host can be another
  * model: whichever it is must support a forced tool call (`compiler.ts`).
+ * `COMPILER_THINKING` (`enabled` or `disabled`) is sent as that host's
+ * `thinking: { type }` when set: Kimi refuses a forced tool call while its
+ * model is thinking, so `kimi-k2.6` is called with `disabled`. Unset, nothing
+ * is sent.
  *
  * The two keys are never mixed: a base URL without its own key is a fault, so
  * the DashScope key is never sent to a host that is not DashScope, and a
@@ -148,25 +152,34 @@ export function parseDashscopeEnv(env: Env): EnvResult<{ apiKey: string }> {
  */
 export function parseCompilerEnv(
   env: Env,
-): EnvResult<{ apiKey: string; baseUrl: string | undefined; model: string | undefined }> {
+): EnvResult<{
+  apiKey: string;
+  baseUrl: string | undefined;
+  model: string | undefined;
+  thinking: "enabled" | "disabled" | undefined;
+}> {
   const r = report(
     z.object({
       DASHSCOPE_API_KEY: z.string().min(8).optional(),
       COMPILER_API_KEY: z.string().min(8).optional(),
       COMPILER_BASE_URL: httpUrl.optional(),
       COMPILER_MODEL: z.string().min(1).optional(),
+      COMPILER_THINKING: z.enum(["enabled", "disabled"]).optional(),
     }),
-    pick(env, ["DASHSCOPE_API_KEY", "COMPILER_API_KEY", "COMPILER_BASE_URL", "COMPILER_MODEL"]),
+    pick(env, ["DASHSCOPE_API_KEY", "COMPILER_API_KEY", "COMPILER_BASE_URL", "COMPILER_MODEL", "COMPILER_THINKING"]),
   );
   if (!r.ok) return r;
-  const { DASHSCOPE_API_KEY, COMPILER_API_KEY, COMPILER_BASE_URL, COMPILER_MODEL } = r.value;
+  const { DASHSCOPE_API_KEY, COMPILER_API_KEY, COMPILER_BASE_URL, COMPILER_MODEL, COMPILER_THINKING } = r.value;
   if (COMPILER_BASE_URL || COMPILER_API_KEY) {
     if (!COMPILER_API_KEY) return { ok: false, invalid: ["COMPILER_API_KEY"] };
     if (!COMPILER_BASE_URL) return { ok: false, invalid: ["COMPILER_BASE_URL"] };
-    return { ok: true, value: { apiKey: COMPILER_API_KEY, baseUrl: COMPILER_BASE_URL, model: COMPILER_MODEL } };
+    return {
+      ok: true,
+      value: { apiKey: COMPILER_API_KEY, baseUrl: COMPILER_BASE_URL, model: COMPILER_MODEL, thinking: COMPILER_THINKING },
+    };
   }
   if (!DASHSCOPE_API_KEY) return { ok: false, invalid: ["DASHSCOPE_API_KEY"] };
-  return { ok: true, value: { apiKey: DASHSCOPE_API_KEY, baseUrl: undefined, model: COMPILER_MODEL } };
+  return { ok: true, value: { apiKey: DASHSCOPE_API_KEY, baseUrl: undefined, model: COMPILER_MODEL, thinking: COMPILER_THINKING } };
 }
 
 /** Nansen is optional by design: unset means "not connected", not a fault. A malformed base URL is a fault. */

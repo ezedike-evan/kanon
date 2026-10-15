@@ -30,7 +30,8 @@
  * that host's base URL. With nothing else set it is Alibaba Cloud Model Studio
  * (DashScope) and the model pinned below, on `DASHSCOPE_API_KEY`.
  * `COMPILER_BASE_URL` with `COMPILER_API_KEY` sends it to another host, and
- * `COMPILER_MODEL` names the model there (`serverEnv.ts`). Which host and
+ * `COMPILER_MODEL` names the model there, and `COMPILER_THINKING` turns that
+ * host's thinking on or off (`serverEnv.ts`). Which host and
  * model a deployment actually calls is a fact about that deployment's
  * settings, stated in the README, not here.
  *
@@ -131,7 +132,7 @@ export const compileStrategy = action({
       return { status: 'failed', error: 'The compiler is unavailable right now.' };
     }
     // DashScope and the pinned model unless the deployment names another host and its model.
-    const { apiKey } = env.value;
+    const { apiKey, thinking } = env.value;
     const baseURL = env.value.baseUrl ?? DASHSCOPE_BASE_URL;
     const model = env.value.model ?? COMPILER_MODEL;
 
@@ -175,15 +176,19 @@ export const compileStrategy = action({
         },
       };
 
+      // `thinking` is not in the OpenAI types; the SDK sends a body field it does not know as given.
+      const body: OpenAI.ChatCompletionCreateParamsNonStreaming & { thinking?: { type: 'enabled' | 'disabled' } } = {
+        model,
+        max_tokens: 8192,
+        messages,
+        tools: [tool],
+        tool_choice: { type: 'function', function: { name: request.tool.name } },
+        ...(thinking ? { thinking: { type: thinking } } : {}),
+      };
+
       let response: OpenAI.ChatCompletion;
       try {
-        response = await client.chat.completions.create({
-          model,
-          max_tokens: 8192,
-          messages,
-          tools: [tool],
-          tool_choice: { type: 'function', function: { name: request.tool.name } },
-        });
+        response = await client.chat.completions.create(body);
       } catch (err) {
         // Provider detail stays in the server log; the client gets a generic message.
         console.error('compileStrategy: provider call failed', err);

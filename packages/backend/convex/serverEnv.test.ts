@@ -114,6 +114,22 @@ describe("other keys", () => {
       value: { apiKey: "or-87654321", baseUrl: "https://openrouter.ai/api/v1", model: "qwen/qwen3.8-max-0902" },
     });
   });
+  it("passes the host's thinking switch through, and nothing else", () => {
+    expect(
+      parseCompilerEnv({
+        COMPILER_API_KEY: "sk-moonshot1",
+        COMPILER_BASE_URL: "https://api.moonshot.ai/v1",
+        COMPILER_MODEL: "kimi-k2.6",
+        COMPILER_THINKING: "disabled",
+      }),
+    ).toEqual({
+      ok: true,
+      value: { apiKey: "sk-moonshot1", baseUrl: "https://api.moonshot.ai/v1", model: "kimi-k2.6", thinking: "disabled" },
+    });
+    expect(
+      parseCompilerEnv({ COMPILER_API_KEY: "sk-moonshot1", COMPILER_BASE_URL: "https://api.moonshot.ai/v1", COMPILER_THINKING: "off" }),
+    ).toEqual({ ok: false, invalid: ["COMPILER_THINKING"] });
+  });
   it("never sends one provider's key to the other's address", () => {
     // Another host named, but only the DashScope key in hand: a fault, not a silent reuse of that key.
     expect(parseCompilerEnv({ DASHSCOPE_API_KEY: "sk-12345678", COMPILER_BASE_URL: "https://openrouter.ai/api/v1" })).toEqual({
