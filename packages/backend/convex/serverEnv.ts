@@ -192,6 +192,47 @@ export function parseNansenEnv(env: Env): EnvResult<{ apiKey: string | undefined
   return r.ok ? { ok: true, value: { apiKey: r.value.NANSEN_API_KEY, baseUrl: r.value.NANSEN_BASE_URL } } : r;
 }
 
+/** Jev's defaults: a pinned version, and how sure it must be before the chat answers without compiling. */
+export const JEV_DEFAULTS = {
+  baseUrl: "https://api.typesafe.ai/v1",
+  model: "jev-1.13.0",
+  minProbability: 0.9,
+} as const;
+
+/**
+ * Chat triage with Jev (`jevLogic.ts`). Optional like Nansen: with no
+ * `JEV_API_KEY` every message goes to the compiler, as it always did.
+ * `JEV_MIN_PROBABILITY` is a fraction from 0.5 to 1; anything else is a fault.
+ */
+export function parseJevEnv(
+  env: Env,
+): EnvResult<{ apiKey: string | undefined; baseUrl: string; model: string; minProbability: number }> {
+  const r = report(
+    z.object({
+      JEV_API_KEY: z.string().min(8).optional(),
+      JEV_BASE_URL: httpUrl.optional(),
+      JEV_MODEL: z.string().min(1).optional(),
+      JEV_MIN_PROBABILITY: z
+        .string()
+        .regex(/^(0\.\d{1,4}|1(\.0{1,4})?)$/, "must be a fraction such as 0.9")
+        .transform(Number)
+        .refine((n) => n >= 0.5 && n <= 1, "must be from 0.5 to 1")
+        .optional(),
+    }),
+    pick(env, ["JEV_API_KEY", "JEV_BASE_URL", "JEV_MODEL", "JEV_MIN_PROBABILITY"]),
+  );
+  if (!r.ok) return r;
+  return {
+    ok: true,
+    value: {
+      apiKey: r.value.JEV_API_KEY,
+      baseUrl: r.value.JEV_BASE_URL ?? JEV_DEFAULTS.baseUrl,
+      model: r.value.JEV_MODEL ?? JEV_DEFAULTS.model,
+      minProbability: r.value.JEV_MIN_PROBABILITY ?? JEV_DEFAULTS.minProbability,
+    },
+  };
+}
+
 /**
  * The key the gateway presents when it records an order (`http.ts`). It is the
  * same value as `VENUE_RECORDER_KEY` in the gateway's environment, and proves a

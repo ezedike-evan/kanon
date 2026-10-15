@@ -46,7 +46,8 @@ import OpenAI from 'openai';
 import { specHash, diffSpec, parseSpec, type ExitName, type StrategySpec, type SpecDiff } from '@kanon/spec';
 import { requireSubject } from './authz';
 import { checkRateLimit, type RateLimited } from './rateLimit';
-import { describeEnvProblem, parseCompilerEnv } from './serverEnv';
+import { describeEnvProblem, parseCompilerEnv, parseJevEnv } from './serverEnv';
+import { buildJevTriageRequest, jevTriageDecision, readJevTriage } from './jevLogic';
 import { buildCompilerPrompt, parseCompilerResponse, userWordsOf, type CompilerTurn } from './compilerLogic';
 
 /**
@@ -97,6 +98,37 @@ const MAX_HISTORY_TURNS = 20;
 const MAX_TURN_CHARS = 4_000;
 const REQUEST_TIMEOUT_MS = 60_000;
 
+/** Jev answers in well under a second; past this the message simply goes to the compiler. */
+const JEV_TIMEOUT_MS = 4_000;
+
+/** One triage call (`jevLogic.ts`). Never throws and never blocks a compile: every failure is `compile`. */
+async function triageWithJev(message: string, hasRule: boolean): Promise<ReturnType<typeof jevTriageDecision>> {
+  const env = parseJevEnv(process.env);
+  if (!env.ok) {
+    console.error(describeEnvProblem('compileStrategy: Jev triage', env.invalid));
+    return { kind: 'compile' };
+  }
+  const { apiKey, baseUrl, model, minProbability } = env.value;
+  if (!apiKey) return { kind: 'compile' };
+  try {
+    const res = await fetch(`${baseUrl}/systemone`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify(buildJevTriageRequest({ model, message, hasRule })),
+      signal: AbortSignal.timeout(JEV_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      console.error(`compileStrategy: Jev answered HTTP ${res.status}; the message goes to the compiler`);
+      return { kind: 'compile' };
+    }
+    return jevTriageDecision(readJevTriage(await res.json()), minProbability);
+  } catch (err) {
+    // The key is in a header, never in the error: only the error's name is logged.
+    console.error(`compileStrategy: Jev triage failed (${err instanceof Error ? err.name : 'error'}); the message goes to the compiler`);
+    return { kind: 'compile' };
+  }
+}
+
 export const compileStrategy = action({
   args: {
     prompt: v.string(),
@@ -142,6 +174,11 @@ export const compileStrategy = action({
     // Spent after the cheap checks, before the paid call.
     const limited = await checkRateLimit(ctx, subject, 'compile');
     if (limited) return limited;
+
+    // A message Jev is sure is not a rule is answered now, in a sentence that names Jev, and the compiler
+    // model is not called. Anything else, and any trouble reaching Jev, goes on to the compiler.
+    const triage = await triageWithJev(args.prompt, previousSpec !== undefined);
+    if (triage.kind === 'answer') return { status: 'rejected', reply: triage.reply, reason: triage.reason };
     const client = new OpenAI({
       apiKey,
       baseURL,

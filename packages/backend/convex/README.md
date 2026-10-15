@@ -100,6 +100,9 @@ missing value fails closed (the action refuses) and logs the variable name only.
 | `DASHSCOPE_API_KEY` | `compiler:compileStrategy` | required to compile |
 | `COMPILER_BASE_URL`, `COMPILER_API_KEY`, `COMPILER_MODEL` | `compiler:compileStrategy` | optional; send the compiler to another OpenAI-compatible host of the same model (for example OpenRouter, model `qwen/qwen3.8-max-0902`). The base URL and its key go together, and the DashScope key is never sent to that host |
 | `NANSEN_API_KEY`, `NANSEN_BASE_URL` | `nansen:smartMoneyFlow` | optional; unset means "not connected" |
+| `JEV_API_KEY` | `compiler:compileStrategy` | optional; TypeSafe's key for Jev chat triage (`jevLogic.ts`). Unset, every message goes to the compiler |
+| `JEV_MODEL`, `JEV_BASE_URL` | `compiler:compileStrategy` | defaults `jev-1.13.0` (pinned), `https://api.typesafe.ai/v1` |
+| `JEV_MIN_PROBABILITY` | `compiler:compileStrategy` | default `0.9`, from `0.5` to `1`; how sure Jev must be that a message is not a rule before the chat answers it without compiling |
 | `GATEWAY_URL` | `gateway:ping` | optional; the gateway's public address. Set, it is asked for `/livez` every five minutes, which keeps a host from putting it to sleep while it has timed trades to close |
 | `MONAD_RPC_URL`, `MONAD_CHAIN_ID` | `predictions:recordPosition`, `vaults:recordVault`, `vaults:recordBalance` | required; the RPC must report this chain id |
 | `THRESHOLD_MARKET_ADDRESS` | `predictions:recordPosition` | required; must equal the market's linked address |
