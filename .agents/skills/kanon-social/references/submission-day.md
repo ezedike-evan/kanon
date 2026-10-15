@@ -79,7 +79,7 @@ runs from the live site today. The caption in A9 says so.
 
 | # | Time | Where | Do | Hold | Caption | Must be visible |
 |---|---|---|---|---|---|---|
-| A1 | 0:00 to 0:10 | `https://kanon-three.vercel.app`, signed out, top of the page | Nothing. Do not scroll | 10 s | You tested your rule. Then, live, you broke it. Kanon is a trading app on Monad built so the rule wins. | The address bar. The headline "The rule outranks the chart." |
+| A1 | 0:00 to 0:10 | `https://kanon.markets`, signed out, top of the page | Nothing. Do not scroll | 10 s | You tested your rule. Then, live, you broke it. Kanon is a trading app on Monad built so the rule wins. | The address bar. The headline "The rule outranks the chart." |
 | A2 | 0:10 to 0:22 | Same page | Click "Launch App" (top right). In the "Welcome" sheet, sign in. You land on `/home` | Until Home has painted | Sign-in is Privy. It makes a wallet for you. What follows is everything that is live today, all of it on testnet. | The "Welcome" sheet, then Home with your account at the foot of the navigation |
 | A3 | 0:22 to 0:42 | `/predict` | Click Predict. In the left panel, under "Pairs" click ETH and under "Time" click the one-minute option. On the slide pick the $10 stake. Click UP once | Until the badge reads RUNNING and the "Open" TX link shows under "Entry", then 3 s | A timed trade on Perpl testnet. ETH up, one minute, a $10 stake. The server closes it. I will not touch it again. | The question "Which way does ETH move in the next 1 minute?". The row "Closes itself". The line "One testnet account that everyone signed in shares. Not your funds." The "Time left" countdown. The "Open" TX link |
 | A4 | 0:42 to 1:12 | `/chart` | Click Chart. The panel on the right must read "Order · BTC". Pick the $10 size and a leverage. Click LONG. When the result reads FILLED, wait for its "TX 0x..." link and click it. Hold on the explorer, then come back | 5 s on the explorer | A market order from the chart, on Perpl testnet. The fill is a transaction on Monad testnet, settled by Perpl's exchange contract. | In the panel: "Perpl testnet · shared demo account", "Order type: Market, IOC", FILLED. On `testnet.monadscan.com`: the hash, Status Success, To `0x1964...80cc` |
@@ -88,7 +88,7 @@ runs from the live site today. The caption in A9 says so.
 | A7 | 1:46 to 2:04 | `/predict` | Click Predict. The trade ended while you were away, so it is in "History" (the panel on the right): click its ETH row, marked TIME UP. In the sheet click the "Close" transaction, hold on the explorer, come back | 3 s History, 6 s sheet, 4 s explorer | The minute ran out while I was on the chart. The server closed the trade. No button was pressed. | The TIME UP badge. "Its time was up, so the server closed it." The rows "Opened", "Closed" and "Ran for". "Open" and "Close", each with a TX link |
 | A8 | 2:04 to 2:20 | `/profile/records` | Profile, then "Trading records". Hold on the list. Click the BTC chart trade | 5 s list, 6 s sheet | One record of everything taken, from the chart and from Predict, each with its transactions. | The tiles Total, Chart, Predict, Rule. One Chart row and one Predict row from today. The sheet "TRADE · BTC" with entry, exit and its transaction rows |
 | A9 | 2:20 to 2:38 | Two explorer tabs, opened beforehand: StrategyRegistry and RefusalGate (addresses in `README.md`) | Show one, then the other | 6 s each | Kanon's own contracts are deployed on Monad testnet: the registry that pins a rule, and the gate that refuses a trade by arithmetic. 277 Foundry tests pass. The live site has not called them yet. The compiler is built and not switched on. | `0xDB91f547B59A3326f3DB8E8F510E8dbbf4e50852` and `0x388f55962954c5083D885543aF22b1b6EE640ec0` in the address bar |
-| A10 | 2:38 to 2:45 | End card, plain text | None | 7 s | Why Monad: a per-minute on-chain price tape is affordable here. kanon-three.vercel.app. github.com/ezedike-evan/kanon. Testnet. Not audited. | Both addresses, spelled out |
+| A10 | 2:38 to 2:45 | End card, plain text | None | 7 s | Why Monad: a per-minute on-chain price tape is affordable here. kanon.markets. github.com/ezedike-evan/kanon. Testnet. Not audited. | Both addresses, spelled out |
 
 Notes for A:
 
@@ -262,7 +262,7 @@ WHO IT IS FOR
 Traders who backtest a rule by hand and then break it live.
 
 WHAT IS LIVE (Monad testnet, nothing audited)
-- App: https://kanon-three.vercel.app
+- App: https://kanon.markets
 - Code: https://github.com/ezedike-evan/kanon
 - Contracts, chain 10143: StrategyRegistry 0xDB91f547B59A3326f3DB8E8F510E8dbbf4e50852, RefusalGate 0x388f55962954c5083D885543aF22b1b6EE640ec0, more in the README. 277 Foundry tests pass.
 - Chart orders ($10 to $100, up to 5x) and timed trades the server closes itself, on Perpl testnet, on one shared account.
@@ -322,7 +322,7 @@ A market order on Perpl testnet from the chart. A timed trade the server closes 
 
 The rule compiler is not in it: built, not yet live.
 
-kanon-three.vercel.app
+kanon.markets
 ```
 
 With tags, same length limit. The video shows Perpl's product in use, so
@@ -335,7 +335,7 @@ A market order on @perpltrade testnet from the chart. A timed trade the server c
 
 The rule compiler is not in it: built, not yet live.
 
-kanon-three.vercel.app
+kanon.markets
 ```
 
 If version B is what was recorded, replace the third paragraph with only what
@@ -357,7 +357,7 @@ Live on testnet: chart orders and timed trades on Perpl, one trading record, a P
 
 Not live from the app yet: the rule compiler, pinning, the on-chain refusal.
 
-kanon-three.vercel.app
+kanon.markets
 github.com/ezedike-evan/kanon
 ```
 
