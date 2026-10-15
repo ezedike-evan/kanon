@@ -32,6 +32,7 @@ import type * as gateway from "../gateway.js";
 import type * as homeFeed from "../homeFeed.js";
 import type * as homeFeedLogic from "../homeFeedLogic.js";
 import type * as http from "../http.js";
+import type * as jevLogic from "../jevLogic.js";
 import type * as keeper from "../keeper.js";
 import type * as keeperData from "../keeperData.js";
 import type * as keeperLogic from "../keeperLogic.js";
@@ -92,6 +93,7 @@ declare const fullApi: ApiFromModules<{
   homeFeed: typeof homeFeed;
   homeFeedLogic: typeof homeFeedLogic;
   http: typeof http;
+  jevLogic: typeof jevLogic;
   keeper: typeof keeper;
   keeperData: typeof keeperData;
   keeperLogic: typeof keeperLogic;
