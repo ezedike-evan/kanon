@@ -21,9 +21,13 @@ const sweepMinutes = Math.max(1, override || 5);
 
 crons.interval("ingest pyth ticks", { minutes: ingestMinutes }, ingestTicks, {});
 
-// Predict markets: settle what has ended, open what is missing, from the ticks above.
-const sweepMarkets = makeFunctionReference<"action", Record<string, never>>("markets:sweep");
-crons.interval("sweep predict markets", { minutes: sweepMinutes }, sweepMarkets, {});
+// The price-threshold markets Predict used to show: settle what has ended, open what is missing,
+// from the ticks above. Predict is timed trades on the gateway now and nothing reads these, while
+// the sweep was most of the deployment's database I/O. Off unless PREDICT_MARKETS_SWEEP=on.
+if (process.env.PREDICT_MARKETS_SWEEP === "on") {
+  const sweepMarkets = makeFunctionReference<"action", Record<string, never>>("markets:sweep");
+  crons.interval("sweep predict markets", { minutes: sweepMinutes }, sweepMarkets, {});
+}
 
 // Autopilot: judge each strategy it is on for once per closed candle of its own timeframe
 // (`autopilot.ts`). Every minute whatever the override above says, because the shortest candle
