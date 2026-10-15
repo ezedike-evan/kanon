@@ -25,7 +25,7 @@
  * going — only what the user's words compile to.
  */
 
-import { parseSpec, type StrategySpec } from '@kanon/spec';
+import { marketAssets, parseSpec, type StrategySpec } from '@kanon/spec';
 
 // ---------------------------------------------------------------------------
 // Wire types
@@ -175,10 +175,34 @@ const RISK_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/**
+ * The markets a rule can be written on: the pairs with a price feed, and so with
+ * candles. Written as listed ("BTC/USD"), because that is the name the candles,
+ * the proposer and the pin's series lookup all use.
+ */
+const COMPILER_ASSETS: readonly string[] = marketAssets();
+
+/**
+ * A model's asset in the listed form, or null when it is not a listed market.
+ * "BTC" and "btc / usd" are BTC/USD. A bare base is read as its USD pair, the
+ * only quote there is; another quote is not rewritten, so it is not a market.
+ */
+export function canonicalAsset(asset: string): string | null {
+  const n = asset.replace(/\s+/g, '').toUpperCase();
+  if (COMPILER_ASSETS.includes(n)) return n;
+  if (!n.includes('/') && COMPILER_ASSETS.includes(`${n}/USD`)) return `${n}/USD`;
+  return null;
+}
+
+/** Where a listed pair's prices come from: Pyth, named as the spec names it ("pyth/btc-usd"). */
+export function feedFor(asset: string): string {
+  return `pyth/${asset.toLowerCase().replace('/', '-')}`;
+}
+
 const SERIES_SCHEMA = {
   type: 'object',
   properties: {
-    asset: { type: 'string' },
+    asset: { type: 'string', enum: COMPILER_ASSETS },
     feed: { type: 'string' },
     cadenceSeconds: { type: 'integer', minimum: 1 },
     bucketSeconds: { type: 'integer', minimum: 1 },
@@ -297,6 +321,10 @@ Rules, without exception:
 - "reply" is one or two sentences, terse, states what you added or changed.
   Never speculate about where price is headed. Never apologize, never add
   disclaimers — just say what compiled.
+- series.asset is one of ${COMPILER_ASSETS.join(', ')}, written exactly as
+  listed ("BTC/USD", never "BTC"). A rule on any other market is rejected:
+  say which markets there are. series.feed is that pair's Pyth feed, written
+  pyth/<base>-usd (pyth/btc-usd).
 - version is always 1. Give every predicate and the spec itself a short id.
 - Always call the emit_compiled_spec tool. Never respond in plain text.`;
 
@@ -405,7 +433,23 @@ export function parseCompilerResponse(toolInput: unknown): CompilerParseResult {
 
   try {
     const spec = parseSpec(input.spec);
-    return { ok: true, spec, reply: input.reply };
+    const asset = canonicalAsset(spec.series.asset);
+    if (asset === null) {
+      return {
+        ok: false,
+        kind: 'invalid',
+        error: `series.asset "${spec.series.asset}" is not a market with a price series. Use one of ${COMPILER_ASSETS.join(', ')}, or reject the rule.`,
+        raw: toolInput,
+      };
+    }
+    // The feed is a fact about the pair, not the model's to choose: one it names is replaced.
+    const feed = feedFor(asset);
+    return {
+      ok: true,
+      spec:
+        asset === spec.series.asset && feed === spec.series.feed ? spec : { ...spec, series: { ...spec.series, asset, feed } },
+      reply: input.reply,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, kind: 'invalid', error: message, raw: toolInput };

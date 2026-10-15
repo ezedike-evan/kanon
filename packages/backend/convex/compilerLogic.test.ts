@@ -140,6 +140,63 @@ describe('parseCompilerResponse — fixture 1: fresh compile', () => {
   });
 });
 
+describe('parseCompilerResponse — the asset', () => {
+  const withAsset = (asset: string): CompilerToolOutput => ({
+    outcome: 'compiled',
+    reply: 'Compiled.',
+    spec: {
+      version: 1,
+      id: 'rule-asset',
+      name: 'ASSET',
+      direction: 'long',
+      series: { asset, feed: 'default', cadenceSeconds: 900, bucketSeconds: 900 },
+      predicates: [
+        {
+          kind: 'break_of_structure',
+          id: 'p1',
+          direction: 'long',
+          swingLookbackCandles: { value: 20, inferred: false },
+          timeframe: { value: '15m', inferred: false },
+        },
+      ],
+      risk: {
+        riskPerTradeBps: { value: 100, inferred: false },
+        stopDistanceBps: { value: 200, inferred: false },
+      },
+    },
+  });
+
+  it('writes a bare base or a loosely written pair as the listed pair', () => {
+    for (const [given, listed] of [
+      ['BTC', 'BTC/USD'],
+      ['eth', 'ETH/USD'],
+      ['btc / usd', 'BTC/USD'],
+      ['BTC/USD', 'BTC/USD'],
+    ]) {
+      const result = parseCompilerResponse(withAsset(given));
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.spec.series.asset).toBe(listed);
+    }
+  });
+
+  it("names the pair's Pyth feed whatever feed the model wrote", () => {
+    const result = parseCompilerResponse(withAsset('BTC'));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.spec.series.feed).toBe('pyth/btc-usd');
+  });
+
+  it('sends back a market with no price series instead of guessing one', () => {
+    for (const given of ['DOGE', 'BTC/USDT', 'AAPL']) {
+      const result = parseCompilerResponse(withAsset(given));
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.kind).toBe('invalid');
+        if (result.kind === 'invalid') expect(result.error).toContain('BTC/USD');
+      }
+    }
+  });
+});
+
 describe('parseCompilerResponse — fixture 2: follow-up edit to a pinned spec', () => {
   it('validates an edited spec and diffs cleanly against the original', () => {
     const edited: StrategySpec = {
