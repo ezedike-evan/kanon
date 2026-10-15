@@ -9,6 +9,7 @@ export * from './threshold';
 export * from './assets';
 export * from './pyth';
 export * from './pyth-rpc';
+export * from './mirror';
 export * from './review';
 export * from './amend';
 export * from './vault';

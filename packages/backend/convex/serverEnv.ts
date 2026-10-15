@@ -9,6 +9,7 @@
  */
 
 import { z } from "zod";
+import { DEFAULT_MONAD_RPC_URL, parseDecimal } from "@kanon/spec";
 
 const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/, "must be a 0x address");
 const httpUrl = z
@@ -200,6 +201,199 @@ export function parseNansenEnv(env: Env): EnvResult<{ apiKey: string | undefined
 export function parseVenueRecorderEnv(env: Env): EnvResult<{ key: string }> {
   const r = report(z.object({ VENUE_RECORDER_KEY: z.string().min(32) }), pick(env, ["VENUE_RECORDER_KEY"]));
   return r.ok ? { ok: true, value: { key: r.value.VENUE_RECORDER_KEY } } : r;
+}
+
+// ---------------------------------------------------------------------------
+// The signer, the gate and the keeper
+// ---------------------------------------------------------------------------
+
+/** A MON amount, read exactly into wei: "0.2" is 2 * 10^17, never a float on the way. */
+const mon = z
+  .string()
+  .regex(/^\d{1,9}(\.\d{1,18})?$/, "must be a MON amount")
+  .transform((s) => BigInt(parseDecimal(s, 18).atoms));
+/** A gas price in gwei, read exactly into wei. */
+const gwei = z
+  .string()
+  .regex(/^\d{1,6}(\.\d{1,9})?$/, "must be a gwei amount")
+  .transform((s) => BigInt(parseDecimal(s, 9).atoms));
+const gasUnits = z
+  .string()
+  .regex(/^[1-9]\d{0,8}$/, "must be a whole number of gas")
+  .transform((s) => BigInt(s));
+const seconds = z
+  .string()
+  .regex(/^[1-9]\d{0,6}$/, "must be a whole number of seconds")
+  .transform((s) => BigInt(s));
+const hexAddress = address.transform((s) => s.toLowerCase() as `0x${string}`);
+
+const WEI_PER_MON = 10n ** 18n;
+const WEI_PER_GWEI = 10n ** 9n;
+
+/** Every default here is also in convex/README.md's env table, so none of them is hidden. */
+export const SIGNER_DEFAULTS = {
+  minBalanceWei: WEI_PER_MON / 5n,
+  warnBalanceWei: WEI_PER_MON,
+  maxFeePerGasWei: 250n * WEI_PER_GWEI,
+  dailySpendWei: 4n * WEI_PER_MON,
+} as const;
+
+export const GATE_DEFAULTS = {
+  keeperMaxGas: 400_000n,
+  gateMaxGas: 2_000_000n,
+  maxSourceAgeSeconds: 7_200n,
+} as const;
+
+export interface SignerEnv {
+  /** Never logged, never stored, never returned by anything a client can call. */
+  privateKey: `0x${string}`;
+  /** Below this the signer sends nothing. */
+  minBalanceWei: bigint;
+  /** Below this every tick logs a line asking for a top-up. */
+  warnBalanceWei: bigint;
+  /** A network gas price above this sends nothing; it is also the `maxFeePerGas` bid. */
+  maxFeePerGasWei: bigint;
+  /** What the signer may spend in one UTC day, keeper and gate together. */
+  dailySpendWei: bigint;
+}
+
+/**
+ * The one key that signs for Kanon on-chain: the keeper's samples now, and the
+ * gate's judgments after. `KEEPER_PRIVATE_KEY` is required and is reported by
+ * name only, like every other variable here. The amounts default as in
+ * `SIGNER_DEFAULTS`.
+ */
+export function parseSignerEnv(env: Env): EnvResult<SignerEnv> {
+  const r = report(
+    z.object({
+      KEEPER_PRIVATE_KEY: z.string().regex(/^0x[0-9a-fA-F]{64}$/, "must be a 0x-prefixed 32-byte key"),
+      KEEPER_MIN_BALANCE_MON: mon.optional(),
+      KEEPER_WARN_BALANCE_MON: mon.optional(),
+      KEEPER_MAX_FEE_GWEI: gwei.optional(),
+      SIGNER_DAILY_SPEND_MON: mon.optional(),
+    }),
+    pick(env, [
+      "KEEPER_PRIVATE_KEY",
+      "KEEPER_MIN_BALANCE_MON",
+      "KEEPER_WARN_BALANCE_MON",
+      "KEEPER_MAX_FEE_GWEI",
+      "SIGNER_DAILY_SPEND_MON",
+    ]),
+  );
+  if (!r.ok) return r;
+  const v = r.value;
+  return {
+    ok: true,
+    value: {
+      privateKey: v.KEEPER_PRIVATE_KEY as `0x${string}`,
+      minBalanceWei: v.KEEPER_MIN_BALANCE_MON ?? SIGNER_DEFAULTS.minBalanceWei,
+      warnBalanceWei: v.KEEPER_WARN_BALANCE_MON ?? SIGNER_DEFAULTS.warnBalanceWei,
+      maxFeePerGasWei: v.KEEPER_MAX_FEE_GWEI ?? SIGNER_DEFAULTS.maxFeePerGasWei,
+      dailySpendWei: v.SIGNER_DAILY_SPEND_MON ?? SIGNER_DEFAULTS.dailySpendWei,
+    },
+  };
+}
+
+/** The pairs a keeper series is deployed for. */
+export const KEEPER_FEEDS = ["BTC/USD", "ETH/USD"] as const;
+export type KeeperFeed = (typeof KEEPER_FEEDS)[number];
+
+/** `BTC/USD` -> `SERIES_BTCUSD_ADDRESS`. */
+export const seriesEnvName = (feed: KeeperFeed): string => `SERIES_${feed.replace("/", "")}_ADDRESS`;
+
+/**
+ * The CanonicalSeries addresses the keeper keeps fresh, by feed, lower-cased.
+ * Each is optional on its own: a pair without its variable is a pair the keeper
+ * does not serve, and a rule pinned on it is not counted in use. A malformed
+ * address is a fault.
+ */
+export function parseSeriesEnv(env: Env): EnvResult<Partial<Record<KeeperFeed, `0x${string}`>>> {
+  const names = KEEPER_FEEDS.map(seriesEnvName);
+  const r = report(z.object(Object.fromEntries(names.map((n) => [n, hexAddress.optional()]))), pick(env, names));
+  if (!r.ok) return r;
+  const out: Partial<Record<KeeperFeed, `0x${string}`>> = {};
+  for (const feed of KEEPER_FEEDS) {
+    const a = (r.value as Record<string, `0x${string}` | undefined>)[seriesEnvName(feed)];
+    if (a) out[feed] = a;
+  }
+  return { ok: true, value: out };
+}
+
+export interface GateEnv {
+  /** The gate's chain: the registry's own pair (`parseRegistryEnv`). */
+  rpcUrl: string;
+  chainId: number;
+  registryAddress: string;
+  gateAddress: `0x${string}`;
+  /** The testnet `MockPyth` the keeper writes mainnet prices to. */
+  mockPythAddress: `0x${string}`;
+  series: Partial<Record<KeeperFeed, `0x${string}`>>;
+  /** Where mainnet Pyth is read for the mirror: `MONAD_RPC_URL`, as `ticks.ts` reads it. */
+  sourceRpcUrl: string;
+  /** Gas limit ceilings. Monad bills the limit, not the gas used. */
+  keeperMaxGas: bigint;
+  gateMaxGas: bigint;
+  /** A mainnet price older than this is not mirrored. */
+  maxSourceAgeSeconds: bigint;
+}
+
+/**
+ * Where the gate and the keeper act. The chain and the registry come from
+ * `parseRegistryEnv`, so the gate is never on another chain than the rules it
+ * judges. `REFUSAL_GATE_ADDRESS` and `MOCK_PYTH_ADDRESS` are required; the
+ * series are as `parseSeriesEnv` reads them; the limits default as in
+ * `GATE_DEFAULTS`. Every fault is reported, by name, in one list.
+ */
+export function parseGateEnv(env: Env): EnvResult<GateEnv> {
+  const registry = parseRegistryEnv(env);
+  const series = parseSeriesEnv(env);
+  const r = report(
+    z.object({
+      REFUSAL_GATE_ADDRESS: hexAddress,
+      MOCK_PYTH_ADDRESS: hexAddress,
+      MONAD_RPC_URL: httpUrl.optional(),
+      KEEPER_MAX_GAS: gasUnits.optional(),
+      GATE_MAX_GAS: gasUnits.optional(),
+      KEEPER_MAX_SOURCE_AGE_SECONDS: seconds.optional(),
+    }),
+    pick(env, [
+      "REFUSAL_GATE_ADDRESS",
+      "MOCK_PYTH_ADDRESS",
+      "MONAD_RPC_URL",
+      "KEEPER_MAX_GAS",
+      "GATE_MAX_GAS",
+      "KEEPER_MAX_SOURCE_AGE_SECONDS",
+    ]),
+  );
+  const invalid = [
+    ...(registry.ok ? [] : registry.invalid),
+    ...(series.ok ? [] : series.invalid),
+    ...(r.ok ? [] : r.invalid),
+  ];
+  if (!registry.ok || !series.ok || !r.ok) return { ok: false, invalid: [...new Set(invalid)] };
+  const v = r.value;
+  return {
+    ok: true,
+    value: {
+      ...registry.value,
+      gateAddress: v.REFUSAL_GATE_ADDRESS,
+      mockPythAddress: v.MOCK_PYTH_ADDRESS,
+      series: series.value,
+      sourceRpcUrl: v.MONAD_RPC_URL ?? DEFAULT_MONAD_RPC_URL,
+      keeperMaxGas: v.KEEPER_MAX_GAS ?? GATE_DEFAULTS.keeperMaxGas,
+      gateMaxGas: v.GATE_MAX_GAS ?? GATE_DEFAULTS.gateMaxGas,
+      maxSourceAgeSeconds: v.KEEPER_MAX_SOURCE_AGE_SECONDS ?? GATE_DEFAULTS.maxSourceAgeSeconds,
+    },
+  };
+}
+
+/**
+ * `KEEPER_ENABLED`: `on` or `off`, and off when unset, so a deploy alone never
+ * spends anything. Anything else is a fault, and a fault sends nothing either.
+ */
+export function parseKeeperSwitch(env: Env): EnvResult<boolean> {
+  const r = report(z.object({ KEEPER_ENABLED: z.enum(["on", "off"]).optional() }), pick(env, ["KEEPER_ENABLED"]));
+  return r.ok ? { ok: true, value: r.value.KEEPER_ENABLED === "on" } : r;
 }
 
 /** The readable line logged server-side. Names only. */

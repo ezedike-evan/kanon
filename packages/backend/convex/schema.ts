@@ -552,4 +552,33 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_status", ["status"]),
+
+  /**
+   * The keeper's one row (`keeperData.ts`): it keeps the on-chain series of the
+   * pairs pinned rules use sampled once per 15-minute bucket, with Kanon's own
+   * signer. Read once a minute by the tick, written only when something changed.
+   * Wei amounts are base-10 strings; buckets are unix seconds over 900.
+   */
+  keeper: defineTable({
+    /** Who holds the signer, and until when (milliseconds). One transaction at a time is sent under it. */
+    leaseHolder: v.optional(v.string()),
+    leaseUntil: v.optional(v.number()),
+    /** The pairs a pinned rule uses (`recomputeKeeperFeeds`): the only series kept fresh. */
+    feeds: v.array(v.string()),
+    /** Per pair, the last bucket the chain showed recorded. */
+    sampled: v.array(v.object({ feed: v.string(), bucket: v.number() })),
+    /** The last bucket autopilot judged on the gate. */
+    judgedBucket: v.optional(v.number()),
+    /** The signer's address, as the key in the deployment's env derives it. Never the key. */
+    signer: v.optional(v.string()),
+    balanceWei: v.optional(v.string()),
+    balanceAt: v.optional(v.number()),
+    /** What the signer spent since `dayStart` (midnight UTC, milliseconds): gas limit times the price paid. */
+    spentWeiDay: v.string(),
+    dayStart: v.number(),
+    /** Why nothing is being sent right now (`PAUSE_MESSAGES`). Absent while the keeper runs. */
+    paused: v.optional(v.string()),
+    lastError: v.optional(v.string()),
+    lastErrorAt: v.optional(v.number()),
+  }),
 });

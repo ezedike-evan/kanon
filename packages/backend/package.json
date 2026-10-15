@@ -13,6 +13,7 @@
     "@kanon/spec": "workspace:*",
     "convex": "^1.16.2",
     "openai": "^7.17.0",
+    "viem": "^2.56.0",
     "zod": "^4.1.5"
   },
   "devDependencies": {

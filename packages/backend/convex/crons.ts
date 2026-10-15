@@ -35,6 +35,13 @@ if (process.env.PREDICT_MARKETS_SWEEP === "on") {
 const sweepAutopilot = makeFunctionReference<"action", Record<string, never>>("autopilot:sweep");
 crons.interval("sweep autopilot", { minutes: 1 }, sweepAutopilot, {});
 
+// The keeper: samples the on-chain series of every pair a pinned rule uses, once per 15-minute
+// bucket, with Kanon's own signer (`keeper.ts`). Every minute, so a bucket is sampled within a
+// minute of opening. Does nothing unless KEEPER_ENABLED=on; on, a minute with nothing to sample
+// reads one small row.
+const keeperTick = makeFunctionReference<"action", Record<string, never>>("keeper:tick");
+crons.interval("keeper tick", { minutes: 1 }, keeperTick, {});
+
 // Retention: drop ticks past `TICK_RETENTION_DAYS` (candles are kept).
 const pruneTicks = makeFunctionReference<"mutation", Record<string, never>>("ticks:pruneTicks");
 crons.daily("prune old ticks", { hourUTC: 3, minuteUTC: 17 }, pruneTicks, {});

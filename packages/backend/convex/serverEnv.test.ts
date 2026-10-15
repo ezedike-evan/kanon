@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  GATE_DEFAULTS,
+  SIGNER_DEFAULTS,
   describeEnvProblem,
   parseChainEnv,
   parseCompilerEnv,
   parseDashscopeEnv,
+  parseGateEnv,
+  parseKeeperSwitch,
   parseNansenEnv,
   parseRegistryEnv,
+  parseSeriesEnv,
+  parseSignerEnv,
   parseVenueRecorderEnv,
 } from "./serverEnv";
 
@@ -167,5 +173,156 @@ describe("parseVenueRecorderEnv", () => {
 
   it("never puts a value in the report", () => {
     expect(JSON.stringify(parseVenueRecorderEnv({ VENUE_RECORDER_KEY: "short-secret" }))).not.toContain("short-secret");
+  });
+});
+
+describe("parseSignerEnv", () => {
+  // A made-up key for the test. It is checked below never to appear in a report.
+  const KEY = "0x" + "7a".repeat(32);
+
+  it("needs the key, and names it without echoing it", () => {
+    expect(parseSignerEnv({})).toEqual({ ok: false, invalid: ["KEEPER_PRIVATE_KEY"] });
+    const short = "0x" + "7a".repeat(31);
+    const r = parseSignerEnv({ KEEPER_PRIVATE_KEY: short });
+    expect(r).toEqual({ ok: false, invalid: ["KEEPER_PRIVATE_KEY"] });
+    expect(JSON.stringify(r)).not.toContain("7a7a");
+    expect(describeEnvProblem("keeper:tick", r.ok ? [] : r.invalid)).not.toContain("7a7a");
+  });
+
+  it("never echoes the key when another variable is what is wrong", () => {
+    const r = parseSignerEnv({ KEEPER_PRIVATE_KEY: KEY, KEEPER_MAX_FEE_GWEI: "lots" });
+    expect(r).toEqual({ ok: false, invalid: ["KEEPER_MAX_FEE_GWEI"] });
+    expect(JSON.stringify(r)).not.toContain(KEY.slice(2, 12));
+  });
+
+  it("defaults every amount, as the env table says", () => {
+    expect(parseSignerEnv({ KEEPER_PRIVATE_KEY: KEY })).toEqual({
+      ok: true,
+      value: {
+        privateKey: KEY,
+        minBalanceWei: 200_000_000_000_000_000n,
+        warnBalanceWei: 1_000_000_000_000_000_000n,
+        maxFeePerGasWei: 250_000_000_000n,
+        dailySpendWei: 4_000_000_000_000_000_000n,
+      },
+    });
+    expect(SIGNER_DEFAULTS.minBalanceWei).toBe(2n * 10n ** 17n);
+  });
+
+  it("reads MON and gwei exactly into wei, with no float on the way", () => {
+    const r = parseSignerEnv({
+      KEEPER_PRIVATE_KEY: KEY,
+      KEEPER_MIN_BALANCE_MON: "0.1",
+      KEEPER_WARN_BALANCE_MON: "1.000000000000000001",
+      KEEPER_MAX_FEE_GWEI: "102.5",
+      SIGNER_DAILY_SPEND_MON: "0.3",
+    });
+    expect(r.ok && r.value).toMatchObject({
+      minBalanceWei: 100_000_000_000_000_000n,
+      warnBalanceWei: 1_000_000_000_000_000_001n,
+      maxFeePerGasWei: 102_500_000_000n,
+      // 0.1 + 0.2 is not 0.3 in floats; in wei it is.
+      dailySpendWei: 300_000_000_000_000_000n,
+    });
+  });
+
+  it("refuses an amount it would have to round, a negative one, or a word", () => {
+    for (const bad of ["0.0000000000000000001", "-1", "1e18", "four", "1,000"]) {
+      expect(parseSignerEnv({ KEEPER_PRIVATE_KEY: KEY, SIGNER_DAILY_SPEND_MON: bad })).toEqual({
+        ok: false,
+        invalid: ["SIGNER_DAILY_SPEND_MON"],
+      });
+    }
+    expect(parseSignerEnv({ KEEPER_PRIVATE_KEY: KEY, KEEPER_MAX_FEE_GWEI: "0.0000000001" })).toEqual({
+      ok: false,
+      invalid: ["KEEPER_MAX_FEE_GWEI"],
+    });
+  });
+
+  it("treats a blank amount as unset", () => {
+    expect(parseSignerEnv({ KEEPER_PRIVATE_KEY: KEY, KEEPER_MIN_BALANCE_MON: " " }).ok).toBe(true);
+  });
+});
+
+describe("parseGateEnv", () => {
+  const gate = {
+    STRATEGY_REGISTRY_ADDRESS: "0xDB91f547B59A3326f3DB8E8F510E8dbbf4e50852",
+    STRATEGY_REGISTRY_RPC_URL: "https://testnet.example/secret-key",
+    STRATEGY_REGISTRY_CHAIN_ID: "10143",
+    MONAD_RPC_URL: "https://mainnet.example/other-secret",
+    REFUSAL_GATE_ADDRESS: "0x388f55962954c5083D885543aF22b1b6EE640ec0",
+    MOCK_PYTH_ADDRESS: "0x7B0564b87Edd57d7BB70550b1FBA3384964862ce",
+    SERIES_BTCUSD_ADDRESS: "0x74c4b8710Fb83Dcc18c1A5ae2E35A63dc005257a",
+  };
+
+  it("takes the registry's chain, lower-cases every address, and defaults the limits", () => {
+    expect(parseGateEnv(gate)).toEqual({
+      ok: true,
+      value: {
+        rpcUrl: gate.STRATEGY_REGISTRY_RPC_URL,
+        chainId: 10143,
+        registryAddress: gate.STRATEGY_REGISTRY_ADDRESS.toLowerCase(),
+        gateAddress: gate.REFUSAL_GATE_ADDRESS.toLowerCase(),
+        mockPythAddress: gate.MOCK_PYTH_ADDRESS.toLowerCase(),
+        series: { "BTC/USD": gate.SERIES_BTCUSD_ADDRESS.toLowerCase() },
+        sourceRpcUrl: gate.MONAD_RPC_URL,
+        keeperMaxGas: 400_000n,
+        gateMaxGas: 2_000_000n,
+        maxSourceAgeSeconds: 7_200n,
+      },
+    });
+    expect(GATE_DEFAULTS.keeperMaxGas).toBe(400_000n);
+  });
+
+  it("reads mainnet Pyth from the public RPC when MONAD_RPC_URL is unset", () => {
+    const { MONAD_RPC_URL: _unset, ...rest } = gate;
+    const r = parseGateEnv(rest);
+    expect(r.ok && r.value.sourceRpcUrl).toBe("https://rpc.monad.xyz");
+  });
+
+  it("names every fault at once, its own and the registry's, and echoes none of them", () => {
+    const r = parseGateEnv({
+      ...gate,
+      STRATEGY_REGISTRY_CHAIN_ID: undefined,
+      MONAD_CHAIN_ID: undefined,
+      REFUSAL_GATE_ADDRESS: "0x12",
+      MOCK_PYTH_ADDRESS: undefined,
+      SERIES_ETHUSD_ADDRESS: "0xnope",
+      KEEPER_MAX_GAS: "0",
+      GATE_MAX_GAS: "2e6",
+      KEEPER_MAX_SOURCE_AGE_SECONDS: "-5",
+    });
+    expect(r.ok).toBe(false);
+    expect(r.ok ? [] : [...r.invalid].sort()).toEqual(
+      [
+        "STRATEGY_REGISTRY_CHAIN_ID",
+        "SERIES_ETHUSD_ADDRESS",
+        "REFUSAL_GATE_ADDRESS",
+        "MOCK_PYTH_ADDRESS",
+        "KEEPER_MAX_GAS",
+        "GATE_MAX_GAS",
+        "KEEPER_MAX_SOURCE_AGE_SECONDS",
+      ].sort(),
+    );
+    expect(JSON.stringify(r)).not.toMatch(/secret|nope|0x12/);
+  });
+
+  it("serves a pair only when its series is named", () => {
+    expect(parseSeriesEnv({})).toEqual({ ok: true, value: {} });
+    expect(parseSeriesEnv({ SERIES_ETHUSD_ADDRESS: "0x8D2D1b9DAfA8f68ECcfEC9FDEbbe04268b4ffbf3" })).toEqual({
+      ok: true,
+      value: { "ETH/USD": "0x8d2d1b9dafa8f68eccfec9fdebbe04268b4ffbf3" },
+    });
+  });
+});
+
+describe("parseKeeperSwitch", () => {
+  it("is off unless it says on, so a deploy alone spends nothing", () => {
+    expect(parseKeeperSwitch({})).toEqual({ ok: true, value: false });
+    expect(parseKeeperSwitch({ KEEPER_ENABLED: "off" })).toEqual({ ok: true, value: false });
+    expect(parseKeeperSwitch({ KEEPER_ENABLED: " on " })).toEqual({ ok: true, value: true });
+  });
+  it("calls anything else a fault, which sends nothing either", () => {
+    expect(parseKeeperSwitch({ KEEPER_ENABLED: "true" })).toEqual({ ok: false, invalid: ["KEEPER_ENABLED"] });
   });
 });

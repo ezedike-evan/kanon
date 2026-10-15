@@ -105,6 +105,16 @@ missing value fails closed (the action refuses) and logs the variable name only.
 | `THRESHOLD_MARKET_ADDRESS` | `predictions:recordPosition` | required; must equal the market's linked address |
 | `VAULT_FACTORY_ADDRESS` | `vaults:recordVault` | required |
 | `VENUE_RECORDER_KEY` | `http.ts` (`/venue/*`) | optional; unset means no order can be recorded, so none is sent. The same value is set on the gateway |
+| `KEEPER_ENABLED` | `keeper:tick` | `on` or `off`, default `off`: a deploy alone sends nothing |
+| `KEEPER_PRIVATE_KEY` | `keeper:tick` | required to send; the one key that signs for Kanon on-chain. Never logged or returned. Never run `mirror-cli` with the same key |
+| `REFUSAL_GATE_ADDRESS`, `MOCK_PYTH_ADDRESS` | `keeper:tick` | required; the gate's chain and RPC are the registry's (`STRATEGY_REGISTRY_*`) |
+| `SERIES_BTCUSD_ADDRESS`, `SERIES_ETHUSD_ADDRESS` | `keeper:tick`, `strategies:applyVerifiedPin` | optional each; a pair without its series is not kept fresh, and a rule pinned on it is not counted in use. Run `keeperData:recomputeFeeds` once after setting them |
+| `KEEPER_MIN_BALANCE_MON` | `keeper:tick` | default `0.2`; below it the signer sends nothing |
+| `KEEPER_WARN_BALANCE_MON` | `keeper:tick` | default `1`; below it each tick logs `keeper: signer … has X MON, spent Y in 24h; top up` |
+| `KEEPER_MAX_FEE_GWEI` | `keeper:tick` | default `250`; a network gas price above it sends nothing. Also the `maxFeePerGas` bid |
+| `KEEPER_MAX_GAS`, `GATE_MAX_GAS` | `keeper:tick` | defaults `400000`, `2000000`; a gas limit is the estimate plus a tenth, never above these. Monad bills the limit |
+| `SIGNER_DAILY_SPEND_MON` | `keeper:tick` | default `4`; what the signer may spend in a UTC day (gas limit times the price paid) |
+| `KEEPER_MAX_SOURCE_AGE_SECONDS` | `keeper:tick` | default `7200`; a mainnet Pyth price older than this is not mirrored. Mainnet is read from `MONAD_RPC_URL`, or `https://rpc.monad.xyz` |
 
 Chain-mirroring rows are never built from client numbers: stakes come from the
 `SideTaken` log of the receipt, vaults from `VaultFactory.isVault` and the

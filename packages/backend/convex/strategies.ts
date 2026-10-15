@@ -33,6 +33,7 @@ import {
   type RpcReceipt,
 } from "./chainLogic";
 import { getReceiptSoon, rpcFor, rpcIsOnChain } from "./chainReads";
+import { recomputeKeeperFeeds } from "./keeperData";
 import { describeEnvProblem, parseRegistryEnv, type RegistryEnv } from "./serverEnv";
 import { resolveWallet } from "./users";
 
@@ -399,6 +400,8 @@ export const applyVerifiedPin = internalMutation({
       await ctx.db.patch(other._id, { autopilot: false, autopilotBucket: undefined });
       await withdrawWaiting(ctx, other._id);
     }
+    // The keeper keeps this rule's series fresh from now on, and stops for one it replaced.
+    await recomputeKeeperFeeds(ctx);
     return { specHash: hash };
   },
 });
@@ -698,6 +701,10 @@ export const applyVerifiedFinalization = internalMutation({
       status: "pinned",
       amendTxHash: args.txHash,
     });
+    // A loosening can move the rule to another series: the keeper follows it.
+    if (strategy.pendingSeriesAddress !== undefined && strategy.pendingSeriesAddress !== strategy.seriesAddress) {
+      await recomputeKeeperFeeds(ctx);
+    }
     return { specHash: hash };
   },
 });

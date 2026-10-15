@@ -41,6 +41,8 @@ const PUBLIC_BY_DESIGN: Record<string, string> = {
     "Home's copy carousel: listed strategies with counts only. Listing is the owner's opt-in; rows carry no user ids.",
   "copyRelationships:listLeads":
     "The copy marketplace. A strategy appears only after its owner lists it (opt-in); rows carry no user ids.",
+  "keeperData:publicStatus":
+    "The keeper's health: its signer's public address and balance, spend against its cap, the pairs it samples. Chain-public facts; no key, no URL, nothing per-user.",
 };
 
 /** Files under convex/ that hold no client-callable functions, or are not function modules. */
@@ -175,6 +177,14 @@ describe("public Convex surface", () => {
       "autopilotData:begin",
       "autopilotData:start",
       "autopilotData:report",
+      // The keeper signs with the deployment's own key. Only its health is public.
+      "keeper:tick",
+      "keeperData:state",
+      "keeperData:status",
+      "keeperData:acquire",
+      "keeperData:release",
+      "keeperData:noteTick",
+      "keeperData:recomputeFeeds",
     ]) {
       expect(names.has(internal), `${internal} must be internal`).toBe(false);
     }
