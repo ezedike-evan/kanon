@@ -14,6 +14,10 @@ import type { EditOutcome } from '../lib/flow-types';
  * An enum is a list of the only values it may take. A number is a text box with
  * its bounds written under it. A percentage is typed as a percentage and parsed
  * to integer basis points from the string, never through a float.
+ *
+ * A parameter the spec does not hold yet (a target on a rule written before
+ * targets existed) opens empty: no figure is offered, because any figure put in
+ * the box would be one the user did not state.
  */
 export function ParamSheet({
   param,
@@ -32,13 +36,13 @@ export function ParamSheet({
     if (!param) return;
     setError(null);
     setText(
-      param.kind === 'int'
+      param.kind === 'int' && !param.missing
         ? param.unit === 'bps'
           ? bpsToPercentText(Number(param.value))
           : String(param.value)
         : '',
     );
-  }, [param?.key, param?.value]);
+  }, [param?.key, param?.value, param?.missing]);
 
   if (!param) return null;
 
@@ -72,6 +76,11 @@ export function ParamSheet({
         ? `${bpsToPercentText(param.min)} to ${bpsToPercentText(param.max)} percent`
         : `${param.min} to ${param.max} ${param.unit ?? ''}`.trim()
       : null;
+  // An exit is a distance from entry, never a price level: say so where it is typed.
+  const exitHint =
+    param.name === 'target_distance' || param.name === 'stop_distance'
+      ? `Distance from entry to the ${param.name === 'target_distance' ? 'target' : 'stop'}, as a percentage of the entry price.`
+      : null;
 
   return (
     <View className="absolute inset-0 justify-end" pointerEvents="box-none">
@@ -89,8 +98,10 @@ export function ParamSheet({
         </View>
 
         <View className="mt-3 flex-row items-baseline justify-between">
-          <Num className="font-mono-medium text-18 text-signal">{param.display}</Num>
-          {param.inferred ? (
+          <Num className="font-mono-medium text-18 text-signal">{param.missing ? '—' : param.display}</Num>
+          {param.missing ? (
+            <Text className="font-mono text-10 tracking-w10 text-signal">NOT STATED · YOURS TO SET</Text>
+          ) : param.inferred ? (
             <Text className="font-mono text-10 tracking-w10 text-signal">INFERRED · NOT STATED</Text>
           ) : (
             <Text className="font-mono text-10 tracking-w10 text-ash">STATED</Text>
@@ -140,6 +151,7 @@ export function ParamSheet({
                 {param.unit === 'bps' ? '%' : (param.unit ?? '')}
               </Text>
             </View>
+            {exitHint ? <Text className="font-sans text-12 text-ash leading-[1.5]">{exitHint}</Text> : null}
             {bounds ? <Text className="font-mono text-10 text-ash">{bounds}</Text> : null}
             <PrimaryButton onPress={submitNumber} className="py-4">
               APPLY

@@ -1,7 +1,7 @@
 import { formatBps, type ChangeKind } from '@kanon/spec';
 
 /** Parameters the spec holds as integer basis points and every screen writes as a percentage. */
-const BPS_LEAVES = new Set(['min_gap_size', 'risk_per_trade', 'stop_distance']);
+const BPS_LEAVES = new Set(['min_gap_size', 'risk_per_trade', 'stop_distance', 'target_distance']);
 
 /**
  * One side of a spec diff row, in the units the review screen writes it in.

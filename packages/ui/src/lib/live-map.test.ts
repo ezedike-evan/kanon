@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   RULE_04,
   RULE_04_LOOSENED,
+  RULE_04_NO_TARGET,
+  BOS20_15M_NO_TARGET,
   applyParamEdit,
   dec,
   formatDecimal,
@@ -493,6 +495,48 @@ describe('compilerData and reviewData', () => {
     expect(r.params.length).toBeGreaterThan(3);
   });
 
+  it('a review of a rule with both exits stated lists nothing missing', () => {
+    const r = reviewData({ spec: RULE_04, baseline: null, mode: 'draft', acknowledged: false, busy: false });
+    expect(r.missingExits).toEqual([]);
+    expect(r.exitsSentence).toBe('');
+  });
+
+  it('a review of a rule with no target lists it, openable, with the sentence', () => {
+    const r = reviewData({ spec: RULE_04_NO_TARGET, baseline: null, mode: 'draft', acknowledged: true, busy: false });
+    expect(r.missingExits).toEqual([
+      { name: 'target_distance', key: 'risk.targetDistanceBps', display: 'not stated', absent: true },
+    ]);
+    expect(r.exitsSentence).toMatch(/^This rule has no stated target\./);
+    expect(r.params.some((p) => p.key === 'risk.targetDistanceBps' && p.missing)).toBe(true);
+  });
+
+  it('a stop the compiler chose is listed as missing, with the value it chose', () => {
+    const chosen = { ...RULE_04, risk: { ...RULE_04.risk, stopDistanceBps: { value: 50, inferred: true } } };
+    const r = reviewData({ spec: chosen, baseline: null, mode: 'draft', acknowledged: true, busy: false });
+    expect(r.missingExits).toEqual([
+      { name: 'stop_distance', key: 'risk.stopDistanceBps', display: '0.50%', absent: false },
+    ]);
+  });
+
+  it('amending a rule pinned without a target: stating one previews as immediate, and is an add', () => {
+    const r0 = reviewData({ spec: BOS20_15M_NO_TARGET, baseline: BOS20_15M_NO_TARGET, mode: 'amend', acknowledged: true, busy: false });
+    expect(r0.missingExits.map((m) => m.name)).toEqual(['target_distance']);
+    const added = applyParamEdit(BOS20_15M_NO_TARGET, 'risk.targetDistanceBps', 400);
+    if (!added.ok) throw new Error(added.error);
+    const r = reviewData({ spec: added.spec, baseline: BOS20_15M_NO_TARGET, mode: 'amend', acknowledged: true, busy: false });
+    expect(r.missingExits).toEqual([]);
+    expect(r.preview?.kind).toBe('immediate');
+    expect(r.preview?.changes).toEqual([{ path: 'target_distance', before: null, after: '400', kind: 'add' }]);
+  });
+
+  it('says a sweep rule cannot pass the on-chain gate, and nothing for one without a sweep', () => {
+    const sweep = reviewData({ spec: RULE_04, baseline: null, mode: 'draft', acknowledged: false, busy: false });
+    expect(sweep.gateNote).toMatch(/^This rule cannot pass the on-chain gate/);
+    const bos = reviewData({ spec: BOS20_15M_NO_TARGET, baseline: null, mode: 'draft', acknowledged: false, busy: false });
+    expect(bos.gateNote).toBeNull();
+    expect(reviewData({ spec: null, baseline: null, mode: 'empty', acknowledged: false, busy: false }).gateNote).toBeNull();
+  });
+
   it('an amend review previews tightening as immediate and loosening as a hold', () => {
     const tight = applyParamEdit(RULE_04, 'risk.riskPerTradeBps', 25);
     const loose = applyParamEdit(RULE_04, 'risk.stopDistanceBps', 90);
@@ -517,6 +561,7 @@ describe('pinningData', () => {
   it('shows the registry minimum at four places, and the hold from the spec package', () => {
     const p = pinningData({
       specHash: strategy().specHash,
+      spec: RULE_04,
       contract: '0x1234567890abcdef1234567890abcdef12345678',
       minBond: dec('250000000000000000', 18),
       nativeSymbol: 'MON',
@@ -532,6 +577,7 @@ describe('pinningData', () => {
   it('says NOT DEPLOYED, and carries the reason, when there is no registry', () => {
     const p = pinningData({
       specHash: '',
+      spec: null,
       contract: undefined,
       minBond: null,
       nativeSymbol: 'MON',
@@ -572,25 +618,39 @@ describe('pinAvailabilityFor', () => {
   };
 
   it('a ready registry and wallet are not enough without a deployed series', () => {
-    const a = pinAvailabilityFor({ state: 'ready' }, missing);
+    const a = pinAvailabilityFor({ state: 'ready' }, missing, RULE_04);
     expect(a.state).toBe('not_deployed');
     expect('message' in a && a.message).toMatch(/no canonical series/i);
   });
 
   it('is ready when the target could be built, and unchanged before it has been worked out', () => {
-    expect(pinAvailabilityFor({ state: 'ready' }, ok)).toEqual({ state: 'ready' });
-    expect(pinAvailabilityFor({ state: 'ready' }, null)).toEqual({ state: 'ready' });
+    expect(pinAvailabilityFor({ state: 'ready' }, ok, RULE_04)).toEqual({ state: 'ready' });
+    expect(pinAvailabilityFor({ state: 'ready' }, null, RULE_04)).toEqual({ state: 'ready' });
+    expect(pinAvailabilityFor({ state: 'ready' }, ok, null)).toEqual({ state: 'ready' });
   });
 
   it('never upgrades a state that was already blocked', () => {
     const blocked = { state: 'no_wallet' as const, message: 'No wallet.' };
-    expect(pinAvailabilityFor(blocked, ok)).toBe(blocked);
-    expect(pinAvailabilityFor(blocked, missing)).toBe(blocked);
+    expect(pinAvailabilityFor(blocked, ok, RULE_04)).toBe(blocked);
+    expect(pinAvailabilityFor(blocked, missing, RULE_04)).toBe(blocked);
+  });
+
+  it('a rule without a stated target cannot be pinned on any device, and says so first', () => {
+    const sentence = 'This rule has no stated target. A rule is pinned and tested only with a stop and a target you set.';
+    expect(pinAvailabilityFor({ state: 'ready' }, ok, RULE_04_NO_TARGET)).toEqual({ state: 'needs_exits', message: sentence });
+    expect(pinAvailabilityFor({ state: 'ready' }, missing, RULE_04_NO_TARGET).state).toBe('needs_exits');
+    expect(pinAvailabilityFor({ state: 'no_wallet', message: 'No wallet.' }, ok, RULE_04_NO_TARGET).state).toBe('needs_exits');
+  });
+
+  it('demo stays demo', () => {
+    const demo = { state: 'demo' as const, message: 'Demo data.' };
+    expect(pinAvailabilityFor(demo, null, RULE_04_NO_TARGET)).toBe(demo);
   });
 
   it('pinningData shows the commitment and series, or NOT DEPLOYED for the series', () => {
     const base = {
       specHash: `0x${'ab'.repeat(32)}`,
+      spec: RULE_04,
       contract: '0x1234567890abcdef1234567890abcdef12345678',
       minBond: dec('250000000000000000', 18),
       nativeSymbol: 'MON',
@@ -608,6 +668,9 @@ describe('pinAvailabilityFor', () => {
 
     // Demo and pre-computation: the rows are simply absent.
     expect(pinningData(base).commitment).toBeUndefined();
+
+    const legacy = pinningData({ ...base, spec: RULE_04_NO_TARGET, target: ok });
+    expect(legacy.availability.state).toBe('needs_exits');
   });
 });
 

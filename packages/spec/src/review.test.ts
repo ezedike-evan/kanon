@@ -10,17 +10,19 @@ import {
   parametricLines,
   parsePercentToBps,
   bpsToPercentText,
+  onchainGateNote,
   predicateComparison,
   predicateHeadlines,
   referenceLabel,
   reviewSpec,
+  ratioBps,
   roundedBps,
   shareSummary,
   specLines,
   timeframeLabel,
   truncateDecimal,
 } from './review';
-import { RULE_04 } from './fixtures';
+import { BOS20_15M_NO_TARGET, RULE_04, RULE_04_NO_TARGET } from './fixtures';
 import { dec } from './decimal';
 import { inferredDefaults } from './spec';
 
@@ -67,6 +69,41 @@ describe('reviewSpec', () => {
     expect(lines).toContain('sweep_lookback: 1D');
     expect(lines).toContain('risk_per_trade: 0.50%');
     expect(lines).toContain('stop_distance: 0.50%');
+    expect(lines).toContain('target_distance: 1.00%');
+  });
+
+  it('writes the target into the risk sentence', () => {
+    const risk = review.plain[review.plain.length - 1]!;
+    expect(risk).toContainEqual({ param: '0.50%', key: 'risk.stopDistanceBps' });
+    expect(risk).toContainEqual({ param: '1.00%', key: 'risk.targetDistanceBps' });
+    expect(risk.filter((s) => typeof s === 'string').join('')).toContain('from entry and the target');
+  });
+
+  it('shows a missing target as not stated, never skipped', () => {
+    const legacy = reviewSpec(RULE_04_NO_TARGET);
+    const slot = legacy.params.find((p) => p.key === 'risk.targetDistanceBps')!;
+    expect(slot).toMatchObject({
+      name: 'target_distance',
+      display: 'not stated',
+      missing: true,
+      inferred: false,
+      kind: 'int',
+      unit: 'bps',
+      min: 1,
+      max: 10_000,
+    });
+    expect(legacy.parametric).toContain('target_distance: not stated');
+    const risk = legacy.plain[legacy.plain.length - 1]!;
+    expect(risk).toContainEqual({ param: 'not stated', key: 'risk.targetDistanceBps' });
+    expect(risk[risk.length - 1]).toBe('.');
+    // Not an inferred default: nothing was chosen. It is missing.
+    expect(legacy.inferred.map((i) => i.key)).not.toContain('risk.targetDistanceBps');
+  });
+
+  it('a stated target is not marked missing', () => {
+    const slot = editableParams(RULE_04).find((p) => p.key === 'risk.targetDistanceBps')!;
+    expect(slot.missing).toBeUndefined();
+    expect(slot.value).toBe(100);
   });
 
   it('only offers references on the correct side for the direction', () => {
@@ -91,6 +128,20 @@ describe('applyParamEdit', () => {
   it('edits risk parameters', () => {
     const r = applyParamEdit(RULE_04, 'risk.stopDistanceBps', '75');
     expect(r.ok && r.spec.risk.stopDistanceBps).toEqual({ value: 75, inferred: false });
+  });
+
+  it('states a target on a rule that had none', () => {
+    const r = applyParamEdit(BOS20_15M_NO_TARGET, 'risk.targetDistanceBps', 400);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.spec.risk.targetDistanceBps).toEqual({ value: 400, inferred: false });
+    expect(BOS20_15M_NO_TARGET.risk.targetDistanceBps).toBeUndefined();
+  });
+
+  it('holds a new target to the same bounds', () => {
+    for (const value of [0, 10_001, 2.5]) {
+      expect(applyParamEdit(RULE_04_NO_TARGET, 'risk.targetDistanceBps', value).ok).toBe(false);
+    }
   });
 
   it('edits an enum parameter within its options', () => {
@@ -199,6 +250,29 @@ describe('roundedBps', () => {
     expect(roundedBps(dec('20520', 2), dec('6841250', 2))).toBe(30);
     expect(roundedBps(dec('0', 2), dec('6841250', 2))).toBe(0);
     expect(roundedBps(dec('5', 2), dec('0', 2))).toBe(0);
+  });
+});
+
+describe('ratioBps', () => {
+  it('is part of whole in integer bps, rounded half up', () => {
+    expect(ratioBps(1, 3)).toBe(3333);
+    expect(ratioBps(2, 3)).toBe(6667);
+    expect(ratioBps(1, 8)).toBe(1250);
+    expect(ratioBps(1, 20_000)).toBe(1); // 0.5 bps rounds up
+    expect(ratioBps(0, 5)).toBe(0);
+    expect(ratioBps(5, 5)).toBe(10_000);
+  });
+  it('is null against nothing', () => {
+    expect(ratioBps(0, 0)).toBeNull();
+  });
+});
+
+describe('onchainGateNote', () => {
+  it('says plainly that a sweep rule cannot pass the gate', () => {
+    expect(onchainGateNote(RULE_04)).toMatch(/^This rule cannot pass the on-chain gate: .*15m bucket/);
+  });
+  it('says nothing for a rule without a sweep', () => {
+    expect(onchainGateNote(BOS20_15M_NO_TARGET)).toBeNull();
   });
 });
 

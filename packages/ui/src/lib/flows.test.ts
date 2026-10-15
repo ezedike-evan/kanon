@@ -1,7 +1,9 @@
 import { createElement, type ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  BOS20_15M_NO_TARGET,
   RULE_04,
+  RULE_04_NO_TARGET,
   applyParamEdit,
   dec,
   predicatesCommitment,
@@ -123,6 +125,25 @@ describe('runPinFlow', () => {
   it('will not pin without a reviewed draft', async () => {
     const t = await pinInput({ draft: undefined });
     expect(await runPinFlow(t.input)).toMatchObject({ ok: false, reason: 'no_draft' });
+    expect(t.chainLog).toEqual([]);
+  });
+
+  it('will not pin a rule without a stated target: nothing is saved or sent', async () => {
+    const t = await pinInput({ spec: RULE_04_NO_TARGET });
+    const out = await runPinFlow(t.input);
+    expect(out).toEqual({
+      ok: false,
+      reason: 'needs_exits',
+      message: 'This rule has no stated target. A rule is pinned and tested only with a stop and a target you set.',
+    });
+    expect(t.chainLog).toEqual([]);
+    expect(t.log).toEqual([]);
+  });
+
+  it('will not pin a rule whose stop the compiler chose', async () => {
+    const chosen = { ...RULE_04, risk: { ...RULE_04.risk, stopDistanceBps: { value: 50, inferred: true } } };
+    const t = await pinInput({ spec: chosen });
+    expect(await runPinFlow(t.input)).toMatchObject({ ok: false, reason: 'needs_exits' });
     expect(t.chainLog).toEqual([]);
   });
 
@@ -473,6 +494,29 @@ describe('runAmendFlow', () => {
     expect(t.actions.amendStrategy).not.toHaveBeenCalled();
   });
 
+  it('stating a target on a rule pinned without one goes on-chain as tighten, and applies now', async () => {
+    const t = await setup(edit(BOS20_15M_NO_TARGET, 'risk.targetDistanceBps', 400), { current: BOS20_15M_NO_TARGET });
+    expect(await runAmendFlow(t.input)).toEqual({ ok: true, kind: 'immediate' });
+    expect(t.log).toHaveLength(1);
+    expect(t.log[0]).toMatch(/^chain\.tighten:7:/);
+  });
+
+  it('will not send a change that leaves the rule without a stated target', async () => {
+    const t = await setup(edit(BOS20_15M_NO_TARGET, 'risk.riskPerTradeBps', 50), { current: BOS20_15M_NO_TARGET });
+    expect(await runAmendFlow(t.input)).toEqual({
+      ok: false,
+      message: 'This rule has no stated target. A rule is pinned and tested only with a stop and a target you set.',
+    });
+    expect(t.log).toEqual([]);
+    expect(t.actions.amendStrategy).not.toHaveBeenCalled();
+  });
+
+  it('moving a target waits: it goes on-chain as proposeLoosening', async () => {
+    const t = await setup(edit(RULE_04, 'risk.targetDistanceBps', 150));
+    expect(await runAmendFlow(t.input)).toEqual({ ok: true, kind: 'cooling_off' });
+    expect(t.log[0]).toMatch(/^chain\.proposeLoosening:/);
+  });
+
   it('does nothing when nothing changed', async () => {
     const t = await setup(RULE_04);
     expect(await runAmendFlow(t.input)).toEqual({ ok: false, message: 'Nothing has changed.' });
@@ -696,6 +740,69 @@ describe('the pin, through the data source', () => {
     expect(recorded[0]).toMatchObject({ strategyId: 'd1', specHash: hash, txHash: TX });
     expect(recorded[1]).toEqual({ ...(recorded[0] as object), walletSignature: '0xsig' });
     expect(chainLog).toHaveLength(1);
+    await h.unmount();
+  });
+});
+
+describe('the compiler, through the data source', () => {
+  it('a question for a missing target joins the conversation, drafts nothing, and the answer is sent with wire names', async () => {
+    const hash = await specHash(RULE_04);
+    const { client } = fakeClient();
+    const fake = createFakeConvex();
+    const QUESTION = 'Where is your target? Give it as a distance from entry, for example 4%.';
+    const answers: unknown[] = [
+      { status: 'needs_input', reply: QUESTION, missing: ['target_distance'] },
+      { status: 'compiled', spec: RULE_04, reply: 'Compiled.', specHash: hash },
+    ];
+    fake.onAction('compiler.compileStrategy', () => answers.shift());
+    fake.onMutation('strategies.saveDraft', () => ({ strategyId: 'd1', specHash: hash }));
+
+    const seen: { source: KanonDataSource | null } = { source: null };
+    function Reader(): null {
+      seen.source = useKanonData();
+      return null;
+    }
+    const screens = [createElement(Reader, { key: 'reader' })];
+    function Bridge(): ReactElement {
+      const source = useConvexKanonSource({
+        hooks: fake.hooks,
+        api: fake.api,
+        session: { pending: false, signedIn: true },
+        pinClient: client,
+        hasWallet: true,
+      });
+      return createElement(KanonDataProvider, { source, children: screens });
+    }
+    const h = createHarness();
+    await h.render(createElement(Bridge));
+    fake.emit('users.me', { _id: 'u1', username: 'x', name: 'X' });
+    fake.emit('strategies.listStrategiesByOwner', []);
+    await settle();
+
+    await seen.source!.sendCompilerMessage('BOS 20, risk 1%, stop 2%');
+    await settle();
+    expect(seen.source!.compiler.status).toBe('idle');
+    expect(seen.source!.compiler.error).toBeUndefined();
+    expect(seen.source!.compiler.transcript.map((t) => [t.from, t.text])).toEqual([
+      ['YOU', 'BOS 20, risk 1%, stop 2%'],
+      ['KANON', QUESTION],
+    ]);
+    expect(seen.source!.hasDraft).toBe(false);
+    expect(fake.mutationCalls.filter((c) => c.name === 'strategies.saveDraft')).toEqual([]);
+
+    await seen.source!.sendCompilerMessage('target 4%');
+    await settle();
+    const calls = fake.actionArgs.filter((c) => c.name === 'compiler.compileStrategy').map((c) => c.args);
+    expect(calls).toHaveLength(2);
+    // The compiler's validator takes `user` and `assistant`, never the transcript's YOU and KANON.
+    expect(calls[1]).toMatchObject({
+      prompt: 'target 4%',
+      conversationHistory: [
+        { from: 'user', text: 'BOS 20, risk 1%, stop 2%' },
+        { from: 'assistant', text: QUESTION },
+      ],
+    });
+    expect(fake.mutationCalls.filter((c) => c.name === 'strategies.saveDraft')).toHaveLength(1);
     await h.unmount();
   });
 });

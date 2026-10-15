@@ -47,6 +47,7 @@ export const RULE_04: StrategySpec = {
   risk: {
     riskPerTradeBps: stated(50),
     stopDistanceBps: stated(50),
+    targetDistanceBps: stated(100),
   },
 };
 
@@ -56,5 +57,41 @@ export const RULE_04_LOOSENED: StrategySpec = {
   risk: {
     riskPerTradeBps: stated(75),
     stopDistanceBps: stated(90),
+    targetDistanceBps: stated(100),
+  },
+};
+
+/** RULE 04 as it would have been pinned before targets existed: a stop, and no target. */
+export const RULE_04_NO_TARGET: StrategySpec = {
+  ...RULE_04,
+  risk: {
+    riskPerTradeBps: stated(50),
+    stopDistanceBps: stated(50),
+  },
+};
+
+/**
+ * Shaped like the first rule pinned from the live site (strategy 0): one break
+ * of structure over 20 candles on BTC/USD 15m, 1% risk, a 2% stop, and no
+ * target, because it was compiled before targets existed.
+ */
+export const BOS20_15M_NO_TARGET: StrategySpec = {
+  version: SPEC_VERSION,
+  id: 'btc-long-bos-20',
+  name: 'BTC Long 15m Break of Structure',
+  direction: 'long',
+  series: { asset: 'BTC/USD', feed: 'default', cadenceSeconds: 900, bucketSeconds: 900 },
+  predicates: [
+    {
+      kind: 'break_of_structure',
+      id: 'bos-20',
+      direction: 'long',
+      swingLookbackCandles: stated(20),
+      timeframe: stated('15m'),
+    },
+  ],
+  risk: {
+    riskPerTradeBps: stated(100),
+    stopDistanceBps: stated(200),
   },
 };

@@ -7,6 +7,8 @@
  *
  *   - nothing is sent to the chain before the user has confirmed they read the
  *     spec, and nothing is sent at all where pinning is unavailable
+ *   - a rule without a stop and a target the user stated is neither pinned
+ *     nor changed: it is refused before anything is saved or sent
  *   - the chain is written first, and the row is saved only after the chain
  *     accepted it, so a stored `pinned` always has a transaction behind it
  *   - a pin the chain accepted whose row failed to save is retried, never sent
@@ -23,7 +25,14 @@
  *     the transaction
  */
 
-import { isSpecOnchainTightening, planAmendment, toPredicateDefinitions, type StrategySpec } from '@kanon/spec';
+import {
+  exitsSentence,
+  isSpecOnchainTightening,
+  missingExits,
+  planAmendment,
+  toPredicateDefinitions,
+  type StrategySpec,
+} from '@kanon/spec';
 import type { AmendOutcome, PinOutcome } from './flow-types';
 import type { LiveActions } from './live';
 import { PinError, buildPinTarget, type PinClient, type PinReceipt, type PinTarget } from './pin';
@@ -65,6 +74,10 @@ export async function runPinFlow(i: PinFlowInput): Promise<PinOutcome> {
   const { userId, spec, draft, pinClient, actions, unsaved } = i;
   if (!userId || !spec || !draft) {
     return { ok: false, reason: 'no_draft', message: 'There is no reviewed draft to pin.' };
+  }
+  const missing = missingExits(spec);
+  if (missing.length > 0) {
+    return { ok: false, reason: 'needs_exits', message: exitsSentence(missing) };
   }
   if (!i.acknowledged) {
     return {
@@ -160,6 +173,9 @@ export async function runAmendFlow(i: AmendFlowInput): Promise<AmendOutcome> {
   if (!userId || !strategy || !current || !staged) {
     return { ok: false, message: 'There is no staged change to send.' };
   }
+  // A rule pinned before targets existed is changed only by a change that states one.
+  const missing = missingExits(staged);
+  if (missing.length > 0) return { ok: false, message: exitsSentence(missing) };
   if (!strategy.chainStrategyId) {
     return { ok: false, message: 'This rule has no registry entry to amend.' };
   }

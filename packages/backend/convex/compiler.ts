@@ -9,7 +9,8 @@
  * validation error fed back to the model, up to `MAX_ATTEMPTS` times. A
  * partially valid spec is never returned to the caller — either a full
  * `StrategySpec`, a typed rejection (the request wasn't expressible as one
- * of the three predicates), or a typed failure.
+ * of the three predicates), a question for the stop or target the user has
+ * not stated (`needs_input`, never retried), or a typed failure.
  *
  * This file only wires the LLM API call together. The prompt and the
  * response validation are pure functions in `compilerLogic.ts`, so they can
@@ -42,11 +43,11 @@
 import { action } from './_generated/server';
 import { v } from 'convex/values';
 import OpenAI from 'openai';
-import { specHash, diffSpec, parseSpec, type StrategySpec, type SpecDiff } from '@kanon/spec';
+import { specHash, diffSpec, parseSpec, type ExitName, type StrategySpec, type SpecDiff } from '@kanon/spec';
 import { requireSubject } from './authz';
 import { checkRateLimit, type RateLimited } from './rateLimit';
 import { describeEnvProblem, parseCompilerEnv } from './serverEnv';
-import { buildCompilerPrompt, parseCompilerResponse, type CompilerTurn } from './compilerLogic';
+import { buildCompilerPrompt, parseCompilerResponse, userWordsOf, type CompilerTurn } from './compilerLogic';
 
 /**
  * DashScope's OpenAI-compatible endpoint. International (Singapore) region —
@@ -85,6 +86,8 @@ type CompileResult =
       diff: SpecDiff | null;
     }
   | { status: 'rejected'; reply: string; reason: string }
+  /** The user has not stated a stop or a target. `reply` asks for them; nothing was compiled. */
+  | { status: 'needs_input'; reply: string; missing: ExitName[] }
   | { status: 'failed'; error: string }
   | RateLimited;
 
@@ -147,6 +150,8 @@ export const compileStrategy = action({
     });
 
     let retryFeedback: string | undefined;
+    // What the user said, to check that an exit the model marked stated was: the compiler's turns are not evidence.
+    const userWords = userWordsOf(args.conversationHistory as CompilerTurn[] | undefined, args.prompt);
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       const request = buildCompilerPrompt(
@@ -226,7 +231,7 @@ export const compileStrategy = action({
         continue;
       }
 
-      const parsed = parseCompilerResponse(toolInput);
+      const parsed = parseCompilerResponse(toolInput, { userWords, previousSpec: previousSpec ?? null });
 
       if (parsed.ok) {
         const hash = await specHash(parsed.spec);
@@ -236,6 +241,11 @@ export const compileStrategy = action({
 
       if (parsed.kind === 'rejected') {
         return { status: 'rejected', reply: parsed.reply, reason: parsed.reason };
+      }
+
+      // No stop or no target the user stated. An answer, not a schema failure: asked once, never retried.
+      if (parsed.kind === 'needs_input') {
+        return { status: 'needs_input', reply: parsed.reply, missing: parsed.missing };
       }
 
       // Schema validation failed — retry with the error fed back, per

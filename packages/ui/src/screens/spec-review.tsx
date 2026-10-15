@@ -2,6 +2,7 @@ import { Fragment, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Body, Footer, NavBar, Screen } from '../components/chrome';
 import { ParamSheet } from '../components/param-sheet';
+import { FOCUS } from '../components/reel/trade-parts';
 import { Dot, Num, PrimaryButton } from '../components/ui';
 import { useNavigator } from '../nav';
 import { CHANGE_TAG, formatChangeValue } from '../lib/change-format';
@@ -24,6 +25,13 @@ type View_ = 'plain' | 'parametric';
  * they have read the spec, defaults included, before the pin ceremony opens.
  * On a pinned rule the same screen stages a change and says, before it is sent,
  * whether it applies now or waits.
+ *
+ * A rule needs a stop and a target the user stated. One that is missing, or
+ * that the compiler chose, is listed above the defaults with a way to set it,
+ * and until it is set the rule is not pinned and a change is not sent. That is
+ * a rule being incomplete, not a fault, so it is set in the rule's colour like
+ * the defaults are, never as an error. What the on-chain gate cannot see in a
+ * rule (a liquidity sweep, on one price per bucket) is said in a neutral note.
  */
 export function SpecReviewScreen() {
   const nav = useNavigator();
@@ -61,6 +69,11 @@ export function SpecReviewScreen() {
 
   const preview = REVIEW.preview;
   const staged = REVIEW.mode === 'amend';
+  const exitsMissing = REVIEW.missingExits.length > 0;
+  const exitsLabel =
+    REVIEW.missingExits.length === 1
+      ? `${REVIEW.missingExits[0]!.name === 'target_distance' ? 'TARGET' : 'STOP'} NOT STATED`
+      : 'EXITS NOT STATED';
 
   async function send() {
     setNotice(null);
@@ -149,6 +162,35 @@ export function SpecReviewScreen() {
           </View>
         )}
 
+        {/* A stop or a target the user has not set. Nothing is pinned or changed until both are. */}
+        {exitsMissing ? (
+          <View className="mt-5 border border-inferred-edge bg-inferred-wash p-3.5">
+            <View className="flex-row items-center gap-2.25">
+              <Dot className="bg-signal" />
+              <Text className="font-mono text-9 tracking-w18 text-signal">{exitsLabel}</Text>
+            </View>
+            <Text className="mt-2 font-sans text-13 text-ash leading-[1.5]">{REVIEW.exitsSentence}</Text>
+            <View className="mt-2.75 gap-1.75">
+              {REVIEW.missingExits.map((exit) => (
+                <Pressable
+                  key={exit.key}
+                  onPress={() => open(exit.key)}
+                  disabled={!editable}
+                  role="button"
+                  aria-label={exit.absent ? `Add ${exit.name}` : `Set ${exit.name}`}
+                  className={cx('flex-row justify-between gap-3 active:opacity-70 hover:opacity-80', FOCUS)}
+                >
+                  <Text className="flex-1 font-mono text-11p5 text-ash leading-[1.5]">{exit.name}</Text>
+                  <Text className="font-mono text-11p5 text-ash leading-[1.5]">
+                    <Num className="text-11p5 text-bone">{exit.display}</Num>
+                    {editable ? (exit.absent ? '   — add' : '   — set') : ''}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
+
         {/* Surfaced in both registers: an inferred default is never silent. */}
         {REVIEW.inferred.length > 0 ? (
           <View className="mt-5 mb-5 border border-inferred-edge bg-inferred-wash p-3.5">
@@ -187,6 +229,14 @@ export function SpecReviewScreen() {
             </Text>
           </View>
         )}
+
+        {/* What the gate can and cannot see in this rule. A fact about it, not a fault in it. */}
+        {REVIEW.gateNote ? (
+          <View className="mb-5 border border-hairline p-3.5">
+            <Text className="font-mono text-9 tracking-w18 text-ash">ON-CHAIN GATE</Text>
+            <Text className="mt-2 font-sans text-13 text-ash leading-[1.5]">{REVIEW.gateNote}</Text>
+          </View>
+        ) : null}
 
         {/* A pinned rule with a staged change: what it does, before it is sent. */}
         {staged && preview && preview.kind !== 'none' ? (
@@ -270,11 +320,13 @@ export function SpecReviewScreen() {
             </Pressable>
             <View className="mb-4 flex-row items-center justify-between">
               <Text className="font-mono text-10 tracking-w10 text-ash">ENFORCEMENT</Text>
-              <Text className="font-mono text-10 tracking-w10 text-bone">IMMEDIATE ON PIN</Text>
+              <Text className={cx('font-mono text-10 tracking-w10', exitsMissing ? 'text-signal' : 'text-bone')}>
+                {exitsMissing ? exitsLabel : 'IMMEDIATE ON PIN'}
+              </Text>
             </View>
             <PrimaryButton
               onPress={() => nav.push(routes.compilePin)}
-              disabled={!REVIEW.acknowledged}
+              disabled={!REVIEW.acknowledged || exitsMissing}
             >
               PIN ON-CHAIN
             </PrimaryButton>
@@ -283,17 +335,19 @@ export function SpecReviewScreen() {
           <>
             <View className="mb-4 flex-row items-center justify-between">
               <Text className="font-mono text-10 tracking-w10 text-ash">CHANGE</Text>
-              <Text className="font-mono text-10 tracking-w10 text-bone">
-                {!preview || preview.kind === 'none'
-                  ? 'NONE STAGED'
-                  : preview.kind === 'cooling_off'
-                    ? `HELD ${Math.round(preview.cooldownSeconds / 3600)}H`
-                    : 'IMMEDIATE'}
+              <Text className={cx('font-mono text-10 tracking-w10', exitsMissing ? 'text-signal' : 'text-bone')}>
+                {exitsMissing
+                  ? exitsLabel
+                  : !preview || preview.kind === 'none'
+                    ? 'NONE STAGED'
+                    : preview.kind === 'cooling_off'
+                      ? `HELD ${Math.round(preview.cooldownSeconds / 3600)}H`
+                      : 'IMMEDIATE'}
               </Text>
             </View>
             <PrimaryButton
               onPress={send}
-              disabled={!preview || preview.kind === 'none' || REVIEW.busy}
+              disabled={!preview || preview.kind === 'none' || REVIEW.busy || exitsMissing}
             >
               {REVIEW.busy ? 'SENDING' : 'SEND CHANGE'}
             </PrimaryButton>

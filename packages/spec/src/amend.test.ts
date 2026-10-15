@@ -5,7 +5,7 @@ import {
   cooldownRemainingMs,
   planAmendment,
 } from './amend';
-import { RULE_04, RULE_04_LOOSENED } from './fixtures';
+import { BOS20_15M_NO_TARGET, RULE_04, RULE_04_LOOSENED, RULE_04_NO_TARGET } from './fixtures';
 import { applyParamEdit } from './review';
 import type { StrategySpec } from './spec';
 import { COOLING_OFF_SECONDS } from './diff';
@@ -73,6 +73,37 @@ describe('planAmendment', () => {
 
   it('a pure rename applies immediately: it admits nothing new', () => {
     expect(planAmendment(RULE_04, { ...RULE_04, name: 'RENAMED' }).kind).toBe('immediate');
+  });
+});
+
+describe('planAmendment and the target', () => {
+  it('stating a target on a rule pinned without one applies immediately: the predicates are untouched', () => {
+    const plan = planAmendment(RULE_04_NO_TARGET, edit(RULE_04_NO_TARGET, 'risk.targetDistanceBps', 100));
+    expect(plan.kind).toBe('immediate');
+    if (plan.kind === 'immediate') {
+      expect(plan.diff.changes).toEqual([{ path: 'target_distance', before: null, after: '100', kind: 'add' }]);
+    }
+  });
+
+  it('the live strategy 0 shape gains a target at once', () => {
+    expect(planAmendment(BOS20_15M_NO_TARGET, edit(BOS20_15M_NO_TARGET, 'risk.targetDistanceBps', 400)).kind).toBe(
+      'immediate',
+    );
+  });
+
+  it('moving a target waits, nearer or further', () => {
+    expect(planAmendment(RULE_04, edit(RULE_04, 'risk.targetDistanceBps', 60)).kind).toBe('cooling_off');
+    expect(planAmendment(RULE_04, edit(RULE_04, 'risk.targetDistanceBps', 150)).kind).toBe('cooling_off');
+  });
+
+  it('dropping a target waits', () => {
+    expect(planAmendment(RULE_04, RULE_04_NO_TARGET).kind).toBe('cooling_off');
+  });
+
+  it('a target added alongside a loosening waits with it', () => {
+    let next = edit(RULE_04_NO_TARGET, 'risk.targetDistanceBps', 100);
+    next = edit(next, 'risk.stopDistanceBps', 90);
+    expect(planAmendment(RULE_04_NO_TARGET, next).kind).toBe('cooling_off');
   });
 });
 

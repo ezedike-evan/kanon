@@ -2,11 +2,13 @@ import { action, internalMutation, internalQuery, mutation, query } from "./_gen
 import type { Doc, Id } from "./_generated/dataModel";
 import { makeFunctionReference } from "convex/server";
 import { MAX_LIST_ROWS } from "./limits";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import {
   COOLING_OFF_SECONDS,
   cooldownElapsed,
   cooldownEndsAt,
+  exitsSentence,
+  missingExits,
   parseSpec,
   planAmendment,
   predicatesCommitment,
@@ -94,6 +96,12 @@ export const saveDraft = mutation({
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
     const spec = parseSpec(args.spec);
+    // No stop and target the user stated, no draft: nothing without them is pinned or tested. A client
+    // that predates targets would otherwise save a spec with the field dropped.
+    const missing = missingExits(spec);
+    if (missing.length > 0) {
+      throw new ConvexError({ code: "exits_not_stated", message: exitsSentence(missing) });
+    }
     const hash = await specHash(spec);
 
     if (args.strategyId) {

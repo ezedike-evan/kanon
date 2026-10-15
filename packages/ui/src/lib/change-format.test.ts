@@ -5,6 +5,7 @@ describe('formatChangeValue', () => {
   it('writes basis-point parameters as percentages', () => {
     expect(formatChangeValue('risk_per_trade', '50')).toBe('0.50%');
     expect(formatChangeValue('stop_distance', '90')).toBe('0.90%');
+    expect(formatChangeValue('target_distance', '400')).toBe('4.00%');
     expect(formatChangeValue('fvg_present.min_gap_size', '15')).toBe('0.15%');
   });
 

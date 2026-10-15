@@ -80,6 +80,8 @@ function flatten(spec: StrategySpec): Map<string, string> {
   }
   put('risk_per_trade', spec.risk.riskPerTradeBps);
   put('stop_distance', spec.risk.stopDistanceBps);
+  // Absent on a spec pinned before targets existed: adding one is an `add`, dropping one a `remove`.
+  if (spec.risk.targetDistanceBps) put('target_distance', spec.risk.targetDistanceBps);
   return out;
 }
 
@@ -108,6 +110,10 @@ export function diffSpec(before: StrategySpec, after: StrategySpec): SpecDiff {
     const bothNumeric = /^-?\d+$/.test(from) && /^-?\d+$/.test(to);
     let kind: ChangeKind;
     if (leaf === 'sweep_lookback') kind = classifyLookback(from, to);
+    // A target is an exit, not an entry condition: moving it in either direction changes
+    // nothing about which setups the rule admits, so neither direction is provably tighter.
+    // A nearer target books smaller wins, a further one waits longer for them. It waits.
+    else if (leaf === 'target_distance') kind = 'loosen';
     else if (bothNumeric) kind = classifyNumeric(leaf, Number(from), Number(to));
     else kind = 'loosen'; // unorderable: wait it out
     changes.push({ path, before: from, after: to, kind });
@@ -126,7 +132,9 @@ export function diffSpec(before: StrategySpec, after: StrategySpec): SpecDiff {
 
   return {
     changes,
-    // Removing a predicate loosens the rule. Adding one tightens it.
+    // Removing a predicate loosens the rule. Adding one tightens it. Adding a target where
+    // there was none is immediate too: a rule pinned without one could not be tested or
+    // amended, and the predicates the gate checks are untouched. Removing one waits.
     requiresCoolingOff: changes.some((c) => c.kind === 'loosen' || c.kind === 'remove'),
   };
 }

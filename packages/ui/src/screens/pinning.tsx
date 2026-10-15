@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { formatDecimal } from '@kanon/spec';
 import { Body, Footer, NavBar, Screen } from '../components/chrome';
+import { FOCUS } from '../components/reel/trade-parts';
 import { Dot, Meta, Num, PrimaryButton } from '../components/ui';
 import { useNavigator } from '../nav';
 import { usePlatform } from '../platform';
 import { useKanonData } from '../lib/data';
 import { routes } from '../lib/routes';
+import { cx } from '../lib/cx';
 
 /**
  * 04 · PINNING CEREMONY.
@@ -19,7 +21,8 @@ import { routes } from '../lib/routes';
  * happen (no registry deployed on this network, no wallet to sign with) the
  * ceremony says so and the sign button stays off: a ceremony that claimed a
  * signature it did not take would be the lie the rest of the product exists to
- * prevent.
+ * prevent. A rule whose stop or target the user has not stated is not pinned
+ * either: the box says which, and leads back to the review where they are set.
  */
 export function PinningScreen() {
   const nav = useNavigator();
@@ -30,6 +33,7 @@ export function PinningScreen() {
 
   const availability = PINNING.availability;
   const blocked = availability.state !== 'ready' && availability.state !== 'demo';
+  const needsExits = availability.state === 'needs_exits';
   const busy = signing || PINNING.busy;
   const noBond = PINNING.bond.atoms === '0';
 
@@ -74,7 +78,8 @@ export function PinningScreen() {
           </View>
           <View className="flex-row items-baseline justify-between border-b border-hairline py-3.5">
             <Meta>CONTRACT</Meta>
-            <Num className={blocked ? 'text-12 text-signal' : 'text-12'}>{PINNING.contract}</Num>
+            {/* The rule, not the registry, is what is missing when the exits are. */}
+            <Num className={blocked && !needsExits ? 'text-12 text-signal' : 'text-12'}>{PINNING.contract}</Num>
           </View>
           {/* What the gate is given next to the hash: the predicates it will check, and the tape it reads. */}
           {PINNING.commitment !== undefined ? (
@@ -125,10 +130,22 @@ export function PinningScreen() {
                   ? 'NOT DEPLOYED'
                   : availability.state === 'no_wallet'
                     ? 'NO WALLET'
-                    : 'DEMO'}
+                    : availability.state === 'needs_exits'
+                      ? 'EXITS NOT STATED'
+                      : 'DEMO'}
               </Text>
             </View>
             <Text className="font-sans text-13 text-ash leading-[1.5]">{availability.message}</Text>
+            {needsExits ? (
+              <Pressable
+                onPress={() => nav.push(routes.compileReview)}
+                role="link"
+                aria-label="Set the stop and target in the review"
+                className={cx('mt-1 self-start py-1 active:opacity-70 hover:opacity-80', FOCUS)}
+              >
+                <Text className="font-mono text-10 tracking-w12 text-signal">SET THEM IN REVIEW →</Text>
+              </Pressable>
+            ) : null}
           </View>
         )}
 

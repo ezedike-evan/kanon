@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   applyParamEdit,
+  exitsStated,
   specHash as hashSpec,
   type Decimal,
   type StrategySpec,
@@ -71,6 +72,8 @@ import type { WalletLinkDeps } from './wallet-link';
 export type CompileResult =
   | { status: 'compiled'; spec: StrategySpec; reply: string; specHash: string }
   | { status: 'rejected'; reply: string; reason: string }
+  /** The user has not stated a stop or a target. `reply` asks for them; nothing was compiled. */
+  | { status: 'needs_input'; reply: string; missing: string[] }
   | { status: 'failed'; error: string }
   | { status: 'rate_limited'; retryAfterMs: number; message: string };
 
@@ -117,7 +120,8 @@ export interface LiveActions {
   compile(args: {
     prompt: string;
     previousSpec?: unknown;
-    conversationHistory?: Array<{ from: string; text: string }>;
+    /** The wire names the compiler takes: `user` for the person, `assistant` for itself. */
+    conversationHistory?: Array<{ from: 'user' | 'assistant'; text: string }>;
   }): Promise<CompileResult>;
   saveDraft(args: {
     strategyId?: string;
@@ -191,8 +195,12 @@ const NOT_PINNED_SHARE: ShareCardData = {
   specHash: '',
 };
 
-const errorText = (err: unknown, fallback: string) =>
-  err instanceof Error && err.message ? err.message : fallback;
+/** A server refusal written for the person (`ConvexError` data) first, then the error's own text. */
+const errorText = (err: unknown, fallback: string) => {
+  const data = (err as { data?: { message?: unknown } } | null | undefined)?.data?.message;
+  if (typeof data === 'string' && data.trim() !== '') return data;
+  return err instanceof Error && err.message ? err.message : fallback;
+};
 
 const REFRESH_BLOCKED_MS = 5 * 60 * 1000;
 
@@ -374,7 +382,11 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
     async function sendCompilerMessage(text: string): Promise<void> {
       const prompt = text.trim();
       if (!prompt || compileStatus === 'compiling' || !userId) return;
-      const history = transcript.map((t) => ({ from: t.from, text: t.text }));
+      // The transcript speaks as YOU and KANON; the compiler takes `user` and `assistant`.
+      const history = transcript.map((t) => ({
+        from: t.from === 'KANON' ? ('assistant' as const) : ('user' as const),
+        text: t.text,
+      }));
       setComposing(true);
       setCompileError(undefined);
       setCompileStatus('compiling');
@@ -395,8 +407,9 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
             setCompileStatus('failed');
             setCompileError(`The draft compiled but could not be saved. ${errorText(err, '')}`.trim());
           }
-        } else if (result.status === 'rejected') {
-          // The request was not expressible as one of the three predicates. That is an answer, not a fault.
+        } else if (result.status === 'rejected' || result.status === 'needs_input') {
+          // Not expressible as the three predicates, or no stop and target stated yet. Each is an answer,
+          // not a fault: the reply joins the conversation and nothing is drafted.
           setTranscript((prev) => [...prev, turn('KANON', result.reply, Date.now())]);
           setCompileStatus('idle');
         } else if (result.status === 'rate_limited') {
@@ -422,9 +435,13 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
       setReviewError(undefined);
       if (mode === 'draft') {
         setBothDrafts(edited.spec, base);
-        persistDraft(edited.spec).catch((err) =>
-          setReviewError(`The edit could not be saved. ${errorText(err, '')}`.trim()),
-        );
+        // The server keeps no draft without a stop and a target the user stated. Until both are, the
+        // edit is held here, and the review lists what is missing.
+        if (exitsStated(edited.spec)) {
+          persistDraft(edited.spec).catch((err) =>
+            setReviewError(`The edit could not be saved. ${errorText(err, '')}`.trim()),
+          );
+        }
       } else {
         setStaged(edited.spec);
       }
@@ -551,6 +568,7 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
       submitAmendment,
       pinning: pinningData({
         specHash: draftHash,
+        spec: draftSpec,
         target: draftTarget,
         contract: pinClient.registryAddress,
         minBond,

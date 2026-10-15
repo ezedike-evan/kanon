@@ -64,6 +64,12 @@ export interface EditableParam {
   options?: string[];
   /** For `int` parameters held in basis points: the edit box speaks percent. */
   unit: 'candles' | 'bps' | null;
+  /**
+   * The spec has no value here at all: a target on a rule written before
+   * targets existed. `value` is empty and `display` says `not stated`; an edit
+   * creates the parameter, stated.
+   */
+  missing?: boolean;
 }
 
 export interface InferredEntry {
@@ -95,6 +101,7 @@ interface ParamSlot {
   max?: number;
   options?: string[];
   unit: 'candles' | 'bps' | null;
+  missing?: boolean;
 }
 
 function tfSlot(p: Predicate): ParamSlot {
@@ -197,6 +204,21 @@ function slotsOf(spec: StrategySpec): ParamSlot[] {
     max: 10_000,
     unit: 'bps',
   });
+  // Always a slot, even where the spec has none: a missing target is shown, never skipped.
+  const target = spec.risk.targetDistanceBps;
+  out.push({
+    key: 'risk.targetDistanceBps',
+    name: 'target_distance',
+    owner: 'risk',
+    kind: 'int',
+    value: target ? target.value : '',
+    inferred: target ? target.inferred : false,
+    display: target ? formatBps(target.value) : 'not stated',
+    min: 1,
+    max: 10_000,
+    unit: 'bps',
+    ...(target ? {} : { missing: true }),
+  });
   return out;
 }
 
@@ -259,9 +281,15 @@ export function applyParamEdit(
           | Record<string, { value: unknown; inferred: boolean }>
           | undefined);
   const param = target?.[field];
-  if (!param) return { ok: false, error: `unknown parameter ${key}` };
-  param.value = value;
-  param.inferred = false;
+  if (param) {
+    param.value = value;
+    param.inferred = false;
+  } else if (slot.missing && target) {
+    // A target on a rule written before targets existed: the user is stating it for the first time.
+    target[field] = { value, inferred: false };
+  } else {
+    return { ok: false, error: `unknown parameter ${key}` };
+  }
 
   try {
     return { ok: true, spec: parseSpec(next) };
@@ -281,12 +309,15 @@ function chip(slot: ParamSlot | undefined): ReviewSegment {
 }
 
 function riskSentence(slots: Map<string, ParamSlot>): ReviewSegment[] {
+  const target = slots.get('risk.targetDistanceBps');
   return [
     'Risk no more than ',
     chip(slots.get('risk.riskPerTradeBps')),
     ' of the account on a trade, with the stop ',
     chip(slots.get('risk.stopDistanceBps')),
-    ' from entry.',
+    ' from entry and the target ',
+    chip(target),
+    target?.missing ? '.' : ' from entry.',
   ];
 }
 
@@ -523,13 +554,38 @@ export function roundedBps(numerator: Decimal, denominator: Decimal): number {
 }
 
 /**
+ * `part` of `whole`, two whole counts, in integer basis points rounded half up.
+ * `null` before there is anything to divide.
+ */
+export function ratioBps(part: number, whole: number): number | null {
+  if (whole <= 0) return null;
+  return Math.floor((part * 10_000 * 2 + whole) / (whole * 2));
+}
+
+/**
  * Of the setups put to the rule, the share that satisfied it, in integer basis
  * points rounded half up. `null` before there is anything to divide.
  */
 export function adherenceBps(taken: number, blocked: number): number | null {
-  const attempts = taken + blocked;
-  if (attempts <= 0) return null;
-  return Math.floor((taken * 10_000 * 2 + attempts) / (attempts * 2));
+  return ratioBps(taken, taken + blocked);
+}
+
+/**
+ * What the on-chain gate can and cannot see, said before anything is pinned.
+ * The gate's series records one price per bucket, so each candle it holds has
+ * its wick at its close. A liquidity sweep needs a wick through the level that
+ * closes back inside, which such a candle can never show: the gate refuses a
+ * sweep rule every time. It still compiles and pins; this says so plainly.
+ */
+export function onchainGateNote(spec: StrategySpec): string | null {
+  if (!spec.predicates.some((p) => p.kind === 'liquidity_sweep')) return null;
+  const minutes = Math.round(spec.series.bucketSeconds / 60);
+  const bucket = minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`;
+  return (
+    `This rule cannot pass the on-chain gate: Kanon records one price per ${bucket} bucket on-chain, ` +
+    "so a candle's wick is its close, and a liquidity sweep needs a wick through the level that " +
+    'closes back inside. The gate will refuse every setup this rule puts to it.'
+  );
 }
 
 /** The words a reference extreme is written in: `previous day's low`. */

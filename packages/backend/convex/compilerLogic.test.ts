@@ -16,10 +16,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { RULE_04, diffSpec, type StrategySpec } from '@kanon/spec';
+import { BOS20_15M_NO_TARGET, RULE_04, diffSpec, exitsQuestion, type StrategySpec } from '@kanon/spec';
 import {
   buildCompilerPrompt,
   parseCompilerResponse,
+  statedExitsNotInWords,
+  userWordsOf,
   COMPILER_TOOL,
   type CompilerToolOutput,
 } from './compilerLogic';
@@ -30,6 +32,19 @@ describe('COMPILER_TOOL — the three predicates, and only three', () => {
       .predicates.items.oneOf as Array<{ properties: { kind: { const: string } } }>;
     const kinds = predicateSchema.map((s) => s.properties.kind.const).sort();
     expect(kinds).toEqual(['break_of_structure', 'fair_value_gap', 'liquidity_sweep']);
+  });
+
+  it('requires a stop and a target in the risk block', () => {
+    const risk = (COMPILER_TOOL.input_schema as any).properties.spec.properties.risk;
+    expect(risk.required).toEqual(['riskPerTradeBps', 'stopDistanceBps', 'targetDistanceBps']);
+    expect(risk.properties.targetDistanceBps.properties.value).toMatchObject({ minimum: 1, maximum: 10_000 });
+  });
+
+  it('can answer with a question for the missing exits', () => {
+    const props = (COMPILER_TOOL.input_schema as any).properties;
+    expect(props.outcome.enum).toEqual(['compiled', 'rejected', 'needs_input']);
+    expect(props.missing.items.enum).toEqual(['stop_distance', 'target_distance']);
+    expect((COMPILER_TOOL.input_schema as any).required).toEqual(['outcome', 'reply']);
   });
 
   it('forces the tool call rather than allowing free text', () => {
@@ -51,6 +66,32 @@ describe('buildCompilerPrompt', () => {
     expect(request.system).toContain('break_of_structure');
     expect(request.system).toContain('fair_value_gap');
     expect(request.system).toContain('liquidity_sweep');
+  });
+
+  it("tells the model the exits are the user's to state, and what counts", () => {
+    const { system } = buildCompilerPrompt({ prompt: 'x' });
+    expect(system).toContain('targetDistanceBps');
+    expect(system).toContain('needs_input');
+    expect(system).toMatch(/"2R", "1:2"/);
+    expect(system).toMatch(/price level/);
+    expect(system).toMatch(/never\s+choose either one/i);
+  });
+
+  it('tells the model a sweep rule cannot pass the on-chain gate, and to say so', () => {
+    const { system } = buildCompilerPrompt({ prompt: 'x' });
+    expect(system).toMatch(/one price per 15m bucket/);
+    expect(system).toMatch(/cannot pass the\s+on-chain gate/);
+  });
+
+  it('reads the wire speaker names: an assistant turn is the compiler, not the user', () => {
+    const request = buildCompilerPrompt({
+      prompt: 'target 4%',
+      conversationHistory: [
+        { from: 'user', text: 'BOS 20, risk 1%, stop 2%' },
+        { from: 'assistant', text: 'Where is your target?' },
+      ],
+    });
+    expect(request.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
   });
 
   it('embeds the previous spec on a follow-up edit', () => {
@@ -125,7 +166,8 @@ describe('parseCompilerResponse — fixture 1: fresh compile', () => {
         ],
         risk: {
           riskPerTradeBps: { value: 50, inferred: true },
-          stopDistanceBps: { value: 50, inferred: true },
+          stopDistanceBps: { value: 50, inferred: false },
+          targetDistanceBps: { value: 100, inferred: false },
         },
       },
     };
@@ -162,6 +204,7 @@ describe('parseCompilerResponse — the asset', () => {
       risk: {
         riskPerTradeBps: { value: 100, inferred: false },
         stopDistanceBps: { value: 200, inferred: false },
+        targetDistanceBps: { value: 400, inferred: false },
       },
     },
   });
@@ -318,5 +361,192 @@ describe('parseCompilerResponse — fixture 4: schema-invalid output triggers a 
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.kind).toBe('invalid');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stated exits: no stop and target the user set, no rule
+// ---------------------------------------------------------------------------
+
+const bos20 = (risk: Record<string, unknown>, extra: Partial<Record<string, unknown>> = {}) => ({
+  version: 1,
+  id: 'btc-long-bos-20',
+  name: 'BTC Long 15m Break of Structure',
+  direction: 'long',
+  series: { asset: 'BTC/USD', feed: 'pyth/btc-usd', cadenceSeconds: 900, bucketSeconds: 900 },
+  predicates: [
+    {
+      kind: 'break_of_structure',
+      id: 'bos-20',
+      direction: 'long',
+      swingLookbackCandles: { value: 20, inferred: false },
+      timeframe: { value: '15m', inferred: false },
+    },
+  ],
+  risk,
+  ...extra,
+});
+
+const compiled = (spec: unknown): CompilerToolOutput => ({ outcome: 'compiled', reply: 'Compiled.', spec });
+
+const STOP_2 = { value: 200, inferred: false };
+const RISK_1 = { value: 100, inferred: false };
+
+describe('parseCompilerResponse — needs_input', () => {
+  it('asks for a target the spec does not carry, deterministically and without a retry', () => {
+    const result = parseCompilerResponse(compiled(bos20({ riskPerTradeBps: RISK_1, stopDistanceBps: STOP_2 })));
+    expect(result).toEqual({
+      ok: false,
+      kind: 'needs_input',
+      reply: exitsQuestion(['target_distance']),
+      missing: ['target_distance'],
+    });
+  });
+
+  it('asks for a target the model chose itself', () => {
+    const result = parseCompilerResponse(
+      compiled(bos20({ riskPerTradeBps: RISK_1, stopDistanceBps: STOP_2, targetDistanceBps: { value: 400, inferred: true } })),
+    );
+    expect(result).toMatchObject({ ok: false, kind: 'needs_input', missing: ['target_distance'] });
+  });
+
+  it('asks for both when neither was stated', () => {
+    const result = parseCompilerResponse(
+      compiled(bos20({ riskPerTradeBps: RISK_1, stopDistanceBps: { value: 200, inferred: true } })),
+    );
+    expect(result).toMatchObject({ ok: false, kind: 'needs_input', missing: ['stop_distance', 'target_distance'] });
+    if (!result.ok && result.kind === 'needs_input') expect(result.reply).toBe(exitsQuestion(result.missing));
+  });
+
+  it("writes its own question, whatever the model's reply said", () => {
+    const result = parseCompilerResponse({
+      ...compiled(bos20({ riskPerTradeBps: RISK_1, stopDistanceBps: STOP_2 })),
+      reply: 'Compiled. BOS 20 on the 15m.',
+    });
+    expect(!result.ok && result.kind === 'needs_input' && result.reply).toBe(exitsQuestion(['target_distance']));
+  });
+
+  it("passes the model's own needs_input through, keeping only the two exit names", () => {
+    expect(
+      parseCompilerResponse({ outcome: 'needs_input', reply: 'Target?', missing: ['target_distance', 'size'] }),
+    ).toEqual({ ok: false, kind: 'needs_input', reply: exitsQuestion(['target_distance']), missing: ['target_distance'] });
+    expect(parseCompilerResponse({ outcome: 'needs_input', reply: 'Exits?' })).toMatchObject({
+      kind: 'needs_input',
+      missing: ['stop_distance', 'target_distance'],
+    });
+  });
+
+  it('never compiles a needs_input, even with a complete spec beside it', () => {
+    const result = parseCompilerResponse({
+      outcome: 'needs_input',
+      reply: 'Target?',
+      missing: ['target_distance'],
+      spec: RULE_04,
+    });
+    expect(result).toMatchObject({ ok: false, kind: 'needs_input', missing: ['target_distance'] });
+  });
+
+  it('checks the market first: an unlisted market is invalid, not a question', () => {
+    const result = parseCompilerResponse(
+      compiled({ ...bos20({ riskPerTradeBps: RISK_1, stopDistanceBps: STOP_2 }), series: { asset: 'DOGE', feed: 'x', cadenceSeconds: 900, bucketSeconds: 900 } }),
+    );
+    expect(result).toMatchObject({ ok: false, kind: 'invalid' });
+  });
+
+  it('compiles once both exits are stated', () => {
+    const result = parseCompilerResponse(
+      compiled(bos20({ riskPerTradeBps: RISK_1, stopDistanceBps: STOP_2, targetDistanceBps: { value: 400, inferred: false } })),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.spec.risk.targetDistanceBps).toEqual({ value: 400, inferred: false });
+  });
+});
+
+describe('parseCompilerResponse — exits marked stated must be in the user\'s words', () => {
+  const full = (target: number, stop = 200) =>
+    compiled(
+      bos20({
+        riskPerTradeBps: RISK_1,
+        stopDistanceBps: { value: stop, inferred: false },
+        targetDistanceBps: { value: target, inferred: false },
+      }),
+    );
+
+  it('asks again when the model invented a target the user never wrote', () => {
+    const result = parseCompilerResponse(full(400), { userWords: ['BOS 20, risk 1%, stop 2%'] });
+    expect(result).toMatchObject({ ok: false, kind: 'needs_input', missing: ['target_distance'] });
+  });
+
+  it('does not take the risk per trade for a target', () => {
+    const result = parseCompilerResponse(full(100), { userWords: ['BOS 20, risk 1%, stop 2%'] });
+    expect(result).toMatchObject({ ok: false, kind: 'needs_input', missing: ['target_distance'] });
+  });
+
+  it('compiles a target the user answered with', () => {
+    const words = userWordsOf(
+      [
+        { from: 'user', text: 'BOS 20, risk 1%, stop 2%' },
+        { from: 'assistant', text: exitsQuestion(['target_distance']) },
+      ],
+      'target 4%',
+    );
+    expect(parseCompilerResponse(full(400), { userWords: words }).ok).toBe(true);
+    expect(parseCompilerResponse(full(400), { userWords: ['BOS 20, risk 1%, stop 2%', '4%'] }).ok).toBe(true);
+    expect(parseCompilerResponse(full(400), { userWords: ['BOS 20, risk 1%, stop 2%', '4'] }).ok).toBe(true);
+  });
+
+  it('counts an R-multiple of a stated stop as stated', () => {
+    expect(parseCompilerResponse(full(400), { userWords: ['BOS 20, risk 1%, stop 2%, target 2R'] }).ok).toBe(true);
+    expect(parseCompilerResponse(full(300, 150), { userWords: ['BOS 20 risk 1% 1:2 RR with a 1.5% stop'] }).ok).toBe(true);
+    expect(parseCompilerResponse(full(300, 200), { userWords: ['BOS 20, risk 1%, stop 2%, 1.5R target'] }).ok).toBe(true);
+    // 3R of a 2% stop is 6%, not 4%.
+    expect(parseCompilerResponse(full(400), { userWords: ['BOS 20, risk 1%, stop 2%, target 3R'] }).ok).toBe(false);
+  });
+
+  it('does not count a price level as a distance', () => {
+    const result = parseCompilerResponse(full(400), { userWords: ['BOS 20, risk 1%, stop 2%, target 70k'] });
+    expect(result).toMatchObject({ ok: false, kind: 'needs_input', missing: ['target_distance'] });
+    const atPrice = parseCompilerResponse(full(400), { userWords: ['BOS 20, risk 1%, stop at 64,000, target 4%'] });
+    expect(atPrice).toMatchObject({ ok: false, kind: 'needs_input', missing: ['stop_distance'] });
+  });
+
+  it('reads basis points and bare figures after the word', () => {
+    expect(parseCompilerResponse(full(150, 75), { userWords: ['stop 75 bps, target 150bps, BOS 20'] }).ok).toBe(true);
+    expect(parseCompilerResponse(full(400), { userWords: ['BOS 20 risk 1% stop 2 target 4'] }).ok).toBe(true);
+  });
+
+  it('keeps exits the edited spec already held, stated', () => {
+    const previous = { ...BOS20_15M_NO_TARGET, risk: { ...BOS20_15M_NO_TARGET.risk, targetDistanceBps: { value: 400, inferred: false } } };
+    const result = parseCompilerResponse(full(400), { userWords: ['make the lookback 25'], previousSpec: previous });
+    expect(result.ok).toBe(true);
+    // A value the previous spec held only as a guess is not the user's.
+    const guessed = { ...previous, risk: { ...previous.risk, targetDistanceBps: { value: 400, inferred: true } } };
+    expect(parseCompilerResponse(full(400), { userWords: ['make the lookback 25'], previousSpec: guessed }).ok).toBe(false);
+  });
+
+  it('names what it would demote', () => {
+    const spec = { ...BOS20_15M_NO_TARGET, risk: { ...BOS20_15M_NO_TARGET.risk, targetDistanceBps: { value: 400, inferred: false } } };
+    expect(statedExitsNotInWords(spec, ['nothing about exits'])).toEqual(['stop_distance', 'target_distance']);
+    expect(statedExitsNotInWords(spec, ['stop 2%, target 4%'])).toEqual([]);
+  });
+
+  it('without the user\'s words, trusts the stated flag', () => {
+    expect(parseCompilerResponse(full(400)).ok).toBe(true);
+  });
+});
+
+describe('userWordsOf', () => {
+  it("keeps the user's turns and the prompt, never the compiler's", () => {
+    expect(
+      userWordsOf(
+        [
+          { from: 'user', text: 'a' },
+          { from: 'assistant', text: 'b' },
+          { from: 'YOU', text: 'c' },
+          { from: 'KANON', text: 'd' },
+        ],
+        'e',
+      ),
+    ).toEqual(['a', 'c', 'e']);
   });
 });

@@ -25,7 +25,14 @@
  * going — only what the user's words compile to.
  */
 
-import { marketAssets, parseSpec, type StrategySpec } from '@kanon/spec';
+import {
+  exitsQuestion,
+  marketAssets,
+  missingExits,
+  parseSpec,
+  type ExitName,
+  type StrategySpec,
+} from '@kanon/spec';
 
 // ---------------------------------------------------------------------------
 // Wire types
@@ -63,16 +70,28 @@ export interface CompilerRequest {
 
 /** The shape the model must fill via the forced tool call. */
 export interface CompilerToolOutput {
-  outcome: 'compiled' | 'rejected';
+  outcome: 'compiled' | 'rejected' | 'needs_input';
   reply: string;
   rejectionReason?: string;
+  /** With `needs_input`: the exits the user has not stated. */
+  missing?: string[];
   spec?: unknown;
 }
 
 export type CompilerParseResult =
   | { ok: true; spec: StrategySpec; reply: string }
   | { ok: false; kind: 'rejected'; reply: string; reason: string }
+  /** The user has not stated a stop or a target. An answer, not a fault: nothing to retry. */
+  | { ok: false; kind: 'needs_input'; reply: string; missing: ExitName[] }
   | { ok: false; kind: 'invalid'; error: string; raw: unknown };
+
+/** What the user said, for checking that an exit marked stated was. Optional: without it nothing is demoted. */
+export interface CompilerParseContext {
+  /** Every user turn of the conversation, the current prompt included. */
+  userWords?: readonly string[] | undefined;
+  /** The spec being edited, whose stated exits the user need not repeat. */
+  previousSpec?: StrategySpec | null | undefined;
+}
 
 // ---------------------------------------------------------------------------
 // The three allowed predicates, and only these three. Exact parameter names
@@ -169,11 +188,22 @@ const RISK_SCHEMA = {
   type: 'object',
   properties: {
     riskPerTradeBps: paramNumberSchema(1, 10_000),
-    stopDistanceBps: paramNumberSchema(1, 10_000),
+    stopDistanceBps: {
+      ...paramNumberSchema(1, 10_000),
+      description: "Distance from entry to the stop, in basis points of entry. From the user's own words only.",
+    },
+    targetDistanceBps: {
+      ...paramNumberSchema(1, 10_000),
+      description:
+        "Distance from entry to the target, in basis points of entry. From the user's own words only; " +
+        'a multiple of a stated stop (2R, 1:2) is stated, a price level is not.',
+    },
   },
-  required: ['riskPerTradeBps', 'stopDistanceBps'],
+  required: ['riskPerTradeBps', 'stopDistanceBps', 'targetDistanceBps'],
   additionalProperties: false,
 } as const;
+
+const EXIT_NAMES: readonly ExitName[] = ['stop_distance', 'target_distance'];
 
 /**
  * The markets a rule can be written on: the pairs with a price feed, and so with
@@ -237,18 +267,24 @@ export const COMPILER_TOOL: CompilerToolDefinition = {
   name: 'emit_compiled_spec',
   description:
     "Return the result of compiling the user's strategy description. Either a spec that " +
-    'compiles to arithmetic over the canonical series, or a rejection naming what could not ' +
-    'be expressed that way.',
+    'compiles to arithmetic over the canonical series, a rejection naming what could not ' +
+    'be expressed that way, or a request for the stop or target the user has not stated.',
   input_schema: {
     type: 'object',
     properties: {
       outcome: {
         type: 'string',
-        enum: ['compiled', 'rejected'],
+        enum: ['compiled', 'rejected', 'needs_input'],
         description:
-          '"compiled" when the request produced a valid spec. "rejected" when any part of ' +
-          'the request cannot be expressed as arithmetic over the three allowed predicates — ' +
-          'never invent a fourth predicate to make it fit.',
+          '"compiled" when the request produced a valid spec with a stop and a target the user ' +
+          'stated. "rejected" when any part of the request cannot be expressed as arithmetic over ' +
+          'the three allowed predicates — never invent a fourth predicate to make it fit. ' +
+          '"needs_input" when the user has not stated a stop or a target as a distance from entry.',
+      },
+      missing: {
+        type: 'array',
+        items: { type: 'string', enum: EXIT_NAMES as unknown as string[] },
+        description: 'Present only when outcome is "needs_input". The exits the user has not stated.',
       },
       reply: {
         type: 'string',
@@ -318,6 +354,24 @@ Rules, without exception:
 - When editing an existing pinned spec, keep every predicate and parameter
   the user did not ask to change exactly as it was — do not re-infer values
   that were already stated.
+- Every rule has two exits, risk.stopDistanceBps and risk.targetDistanceBps,
+  each a distance from entry in basis points of entry (2% is 200). Both come
+  from the user's own words, and both carry "inferred": false. You never
+  choose either one:
+  - A percentage or basis points from entry is stated: "stop 2%", "target
+    150 bps".
+  - A target written as a multiple of a stated stop is stated. "2R", "1:2" or
+    "2:1 reward to risk" with a 2% stop is a 4% target: compute 400.
+  - A price level ("target 70k", "stop at 64,000") is not a distance from
+    entry, so it is not stated.
+  - If either one is not stated, set outcome to "needs_input", list what is
+    missing in "missing" (stop_distance, target_distance), and leave out
+    "spec". Never fill one in to make the rule compile.
+- Kanon's on-chain gate records one price per 15m bucket, so on-chain a
+  candle's wick is its close. A liquidity_sweep predicate needs a wick
+  through the level that closes back inside, so it can never pass the
+  on-chain gate. Still compile it when the user asks for one, but say so in
+  "reply": this rule cannot pass the on-chain gate, and why.
 - "reply" is one or two sentences, terse, states what you added or changed.
   Never speculate about where price is headed. Never apologize, never add
   disclaimers — just say what compiled.
@@ -332,10 +386,20 @@ Rules, without exception:
 // Prompt building
 // ---------------------------------------------------------------------------
 
+/** Whether a turn is the compiler's own: `assistant` on the wire, `KANON` in the demo transcript. */
+function fromCompiler(turn: CompilerTurn): boolean {
+  const from = turn.from.toUpperCase();
+  return from === 'KANON' || from === 'ASSISTANT';
+}
+
 function turnToMessage(turn: CompilerTurn): CompilerMessage {
-  // The demo transcript's two speakers: KANON (the compiler) and YOU (the user).
-  const role: CompilerMessage['role'] = turn.from.toUpperCase() === 'KANON' ? 'assistant' : 'user';
+  const role: CompilerMessage['role'] = fromCompiler(turn) ? 'assistant' : 'user';
   return { role, content: turn.text };
+}
+
+/** Everything the user said in a conversation, the current prompt last. The compiler's turns are not evidence. */
+export function userWordsOf(history: readonly CompilerTurn[] | undefined, prompt: string): string[] {
+  return [...(history ?? []).filter((t) => !fromCompiler(t)).map((t) => t.text), prompt];
 }
 
 /**
@@ -382,13 +446,167 @@ export function buildCompilerPrompt(
 // Response parsing
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Exits the user actually stated
+// ---------------------------------------------------------------------------
+
+/** A decimal the user wrote, as an exact fraction `num / den`. No float touches it. */
+function fraction(text: string): { num: number; den: number } | null {
+  const m = /^(\d*)(?:\.(\d+))?$/.exec(text);
+  if (!m || (!m[1] && !m[2])) return null;
+  const frac = m[2] ?? '';
+  const den = 10 ** frac.length;
+  return { num: Number(m[1] || '0') * den + Number(frac || '0'), den };
+}
+
+/** A percentage as whole basis points. One finer than a basis point counts as both neighbours. */
+function percentBps(text: string): number[] {
+  const f = fraction(text);
+  if (!f) return [];
+  const scaled = f.num * 100;
+  return scaled % f.den === 0 ? [scaled / f.den] : [Math.floor(scaled / f.den), Math.ceil(scaled / f.den)];
+}
+
+const STOP_WORDS = /\b(?:stop|stops|sl|stop[\s-]*loss|invalidat\w*)\b/i;
+const TARGET_WORDS =
+  /\b(?:target|targets|tp|take[\s-]*profit|profit|reward|rr|r:r|r\/r)\b|\d\s*r\b|\d\s*:\s*\d/i;
+const RISK_WORDS = /\brisk\b/i;
+
+interface ExitEvidence {
+  stop: Set<number>;
+  target: Set<number>;
+  /** Reward-to-risk multiples, each as `num / den`. */
+  multiples: Array<{ num: number; den: number }>;
+}
+
+/**
+ * The distances and multiples the user wrote. A figure counts for the stop when
+ * its clause speaks of a stop, for the target when it speaks of a target, and
+ * for either when it names neither (an answer to "where is your target?"). A
+ * clause about the risk per trade, and nothing else, is evidence of neither.
+ */
+function exitEvidence(userWords: readonly string[]): ExitEvidence {
+  const out: ExitEvidence = { stop: new Set(), target: new Set(), multiples: [] };
+  for (const turn of userWords) {
+    for (const clause of turn.split(/[,;\n]|\.(?!\d)|\band\b|\bwith\b/i)) {
+      const stopClause = STOP_WORDS.test(clause);
+      const targetClause = TARGET_WORDS.test(clause);
+      const neither = !stopClause && !targetClause;
+      if (neither && RISK_WORDS.test(clause)) continue;
+      const figures: number[] = [];
+      for (const m of clause.matchAll(/(\d+(?:\.\d+)?|\.\d+)\s*(?:%|percent\b|pct\b)/gi)) {
+        figures.push(...percentBps(m[1]!));
+      }
+      for (const m of clause.matchAll(/(\d+)\s*(?:bps|bp|basis\s*points?)\b/gi)) figures.push(Number(m[1]));
+      // A bare figure right after the word ("stop 2", "target 4") reads as a percentage. A price
+      // level ("target 70k", "stop at 64,000") is either suffixed or far out of range, so it never matches.
+      for (const m of clause.matchAll(
+        /\b(?:stop(?:[\s-]*loss)?|sl|target|tp|take[\s-]*profit)\b\s*(?:at|of|is|=|:|-)?\s*(\d+(?:\.\d+)?)(?![\d.,]|\s*(?:k\b|bps|bp|%|percent|pct|r\b|x\b|:))/gi,
+      )) {
+        figures.push(...percentBps(m[1]!));
+      }
+      // A clause that is only a figure answers the question before it: "4" to "where is your target?".
+      const alone = /^\s*(\d+(?:\.\d+)?)\s*$/.exec(clause);
+      if (alone && neither) figures.push(...percentBps(alone[1]!));
+      if (stopClause || neither) for (const f of figures) out.stop.add(f);
+      if (targetClause || neither) for (const f of figures) out.target.add(f);
+
+      if (!targetClause) continue;
+      const multiple = (text: string) => {
+        const f = fraction(text);
+        if (f && f.num > 0) out.multiples.push(f);
+      };
+      for (const m of clause.matchAll(/(\d+(?:\.\d+)?)\s*(?:r|rr|x)\b/gi)) multiple(m[1]!);
+      for (const m of clause.matchAll(
+        /\b(?:rr|r:r|r\/r|risk[\s-]*(?:to[\s-]*)?reward|reward[\s-]*(?:to[\s-]*)?risk)\s*(?:of|=|:|is)?\s*(\d+(?:\.\d+)?)(?!\s*(?::|to\b))/gi,
+      )) {
+        multiple(m[1]!);
+      }
+      // "1:2" and "2:1" are both written for a target twice the stop. Either reading counts.
+      for (const m of clause.matchAll(/(\d+(?:\.\d+)?)\s*(?::|\bto\b)\s*(\d+(?:\.\d+)?)/gi)) {
+        const a = fraction(m[1]!);
+        const b = fraction(m[2]!);
+        if (!a || !b || a.num === 0 || b.num === 0) continue;
+        out.multiples.push({ num: b.num * a.den, den: b.den * a.num });
+        out.multiples.push({ num: a.num * b.den, den: a.den * b.num });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The exits the model marked stated whose value the user never wrote: not as a
+ * percentage or basis points, not as a multiple of the stop, and not as the
+ * value the spec being edited already held, stated. Hardening, not the rule
+ * itself: the prompt tells the model never to choose an exit, and this catches
+ * one that did and said otherwise. It is lenient by design, because a wrong
+ * catch asks the user again and a miss is no worse than before.
+ */
+export function statedExitsNotInWords(
+  spec: StrategySpec,
+  userWords: readonly string[],
+  previousSpec?: StrategySpec | null,
+): ExitName[] {
+  const evidence = exitEvidence(userWords);
+  const out: ExitName[] = [];
+
+  const stop = spec.risk.stopDistanceBps;
+  const prevStop = previousSpec?.risk.stopDistanceBps;
+  const stopKept = prevStop !== undefined && !prevStop.inferred && prevStop.value === stop.value;
+  if (!stop.inferred && !stopKept && !evidence.stop.has(stop.value)) out.push('stop_distance');
+
+  const target = spec.risk.targetDistanceBps;
+  if (target && !target.inferred) {
+    const prevTarget = previousSpec?.risk.targetDistanceBps;
+    const kept = prevTarget !== undefined && !prevTarget.inferred && prevTarget.value === target.value;
+    // Within a basis point of stop × multiple: the spec holds whole basis points, so the model rounds.
+    const byMultiple = evidence.multiples.some(
+      (r) => Math.abs(target.value * r.den - stop.value * r.num) <= r.den,
+    );
+    if (!kept && !byMultiple && !evidence.target.has(target.value)) out.push('target_distance');
+  }
+  return out;
+}
+
+/** The spec with the named exits marked inferred, so `missingExits` counts them as not stated. */
+function demoteExits(spec: StrategySpec, names: readonly ExitName[]): StrategySpec {
+  if (names.length === 0) return spec;
+  const risk = { ...spec.risk };
+  if (names.includes('stop_distance')) risk.stopDistanceBps = { ...risk.stopDistanceBps, inferred: true };
+  if (names.includes('target_distance') && risk.targetDistanceBps) {
+    risk.targetDistanceBps = { ...risk.targetDistanceBps, inferred: true };
+  }
+  return { ...spec, risk };
+}
+
+/** The model's own list of missing exits, kept to the two names there are, in order. */
+function namedExits(missing: unknown): ExitName[] {
+  if (!Array.isArray(missing)) return [];
+  return EXIT_NAMES.filter((name) => missing.includes(name));
+}
+
+function needsInput(missing: ExitName[]): CompilerParseResult {
+  const named = missing.length > 0 ? missing : [...EXIT_NAMES];
+  return { ok: false, kind: 'needs_input', reply: exitsQuestion(named), missing: named };
+}
+
 /**
  * Validates the model's tool call against `StrategySpec` via `@kanon/spec`'s
  * `parseSpec`. Never returns a partially valid spec — either the whole
  * thing parses, or the caller gets an `invalid` result to retry on, or the
  * model's own `rejected` outcome is passed through unchanged.
+ *
+ * A spec without a stop and a target the user stated never compiles. Whatever
+ * the model's outcome, that is decided here, from the spec: the answer is
+ * `needs_input`, with a question written here rather than by the model, and it
+ * is never retried. `context.userWords`, when given, also demotes an exit the
+ * model marked stated that the user never wrote (`statedExitsNotInWords`).
  */
-export function parseCompilerResponse(toolInput: unknown): CompilerParseResult {
+export function parseCompilerResponse(
+  toolInput: unknown,
+  context: CompilerParseContext = {},
+): CompilerParseResult {
   if (typeof toolInput !== 'object' || toolInput === null) {
     return { ok: false, kind: 'invalid', error: 'Tool input was not an object.', raw: toolInput };
   }
@@ -413,11 +631,23 @@ export function parseCompilerResponse(toolInput: unknown): CompilerParseResult {
     };
   }
 
+  if (input.outcome === 'needs_input') {
+    // The model asked. A spec it sent anyway may name more that is missing; it is never compiled.
+    const fromModel = namedExits(input.missing);
+    let fromSpec: ExitName[] = [];
+    try {
+      if (input.spec !== undefined) fromSpec = missingExits(parseSpec(input.spec));
+    } catch {
+      // A malformed spec beside a question adds nothing to it.
+    }
+    return needsInput(EXIT_NAMES.filter((n) => fromModel.includes(n) || fromSpec.includes(n)));
+  }
+
   if (input.outcome !== 'compiled') {
     return {
       ok: false,
       kind: 'invalid',
-      error: `Unknown outcome "${String(input.outcome)}". Expected "compiled" or "rejected".`,
+      error: `Unknown outcome "${String(input.outcome)}". Expected "compiled", "rejected" or "needs_input".`,
       raw: toolInput,
     };
   }
@@ -444,12 +674,17 @@ export function parseCompilerResponse(toolInput: unknown): CompilerParseResult {
     }
     // The feed is a fact about the pair, not the model's to choose: one it names is replaced.
     const feed = feedFor(asset);
-    return {
-      ok: true,
-      spec:
-        asset === spec.series.asset && feed === spec.series.feed ? spec : { ...spec, series: { ...spec.series, asset, feed } },
-      reply: input.reply,
-    };
+    const listed =
+      asset === spec.series.asset && feed === spec.series.feed ? spec : { ...spec, series: { ...spec.series, asset, feed } };
+
+    // No stop and target the user stated, no rule. Decided here, from the spec, whatever the model said.
+    const unstated = context.userWords
+      ? statedExitsNotInWords(listed, context.userWords, context.previousSpec ?? null)
+      : [];
+    const missing = missingExits(demoteExits(listed, unstated));
+    if (missing.length > 0) return needsInput(missing);
+
+    return { ok: true, spec: listed, reply: input.reply };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, kind: 'invalid', error: message, raw: toolInput };

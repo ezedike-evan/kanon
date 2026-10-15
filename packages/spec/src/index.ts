@@ -12,6 +12,7 @@ export * from './pyth-rpc';
 export * from './mirror';
 export * from './review';
 export * from './amend';
+export * from './exits';
 export * from './vault';
 export * from './copy';
 export * from './analytics';

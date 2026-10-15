@@ -119,6 +119,14 @@ export const Risk = z.object({
   riskPerTradeBps: param(z.number().int().min(1).max(10_000)),
   /** Distance from entry to stop, in basis points of entry. */
   stopDistanceBps: param(z.number().int().min(1).max(10_000)),
+  /**
+   * Distance from entry to target, in basis points of entry. Optional only so a
+   * spec pinned before targets existed still parses, and hashes as it did
+   * (`canonical()` drops an absent field). It is not optional in practice: a
+   * rule without a target the user stated is never compiled, pinned, amended or
+   * tested (`exits.ts`).
+   */
+  targetDistanceBps: param(z.number().int().min(1).max(10_000)).optional(),
 });
 export type Risk = z.infer<typeof Risk>;
 
@@ -182,6 +190,7 @@ export function inferredDefaults(
   }
   take('risk_per_trade', spec.risk.riskPerTradeBps);
   take('stop_distance', spec.risk.stopDistanceBps);
+  if (spec.risk.targetDistanceBps) take('target_distance', spec.risk.targetDistanceBps);
   return out;
 }
 

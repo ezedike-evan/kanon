@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RULE_04, RULE_04_LOOSENED } from './fixtures';
+import { BOS20_15M_NO_TARGET, RULE_04, RULE_04_LOOSENED, RULE_04_NO_TARGET } from './fixtures';
 import { inferredDefaults, parseSpec, predicateSymbol, stated } from './spec';
 import { COOLING_OFF_SECONDS, diffSpec } from './diff';
 import { abbreviateHash, canonicalizeSpec, specHash } from './hash';
@@ -20,6 +20,26 @@ describe('schema', () => {
     expect(() => parseSpec(naked)).toThrow();
   });
 
+  it('still parses a rule pinned before targets existed', () => {
+    expect(() => parseSpec(BOS20_15M_NO_TARGET)).not.toThrow();
+    expect(parseSpec(JSON.parse(JSON.stringify(BOS20_15M_NO_TARGET))).risk.targetDistanceBps).toBeUndefined();
+  });
+
+  it('holds a target to the same bounds as the stop', () => {
+    const withTarget = (value: number) => ({
+      ...RULE_04,
+      risk: { ...RULE_04.risk, targetDistanceBps: { value, inferred: false } },
+    });
+    expect(() => parseSpec(withTarget(1))).not.toThrow();
+    expect(() => parseSpec(withTarget(10_000))).not.toThrow();
+    expect(() => parseSpec(withTarget(0))).toThrow();
+    expect(() => parseSpec(withTarget(10_001))).toThrow();
+    expect(() => parseSpec(withTarget(1.5))).toThrow();
+    const naked = structuredClone(RULE_04) as unknown as Record<string, unknown>;
+    (naked['risk'] as Record<string, unknown>)['targetDistanceBps'] = 100;
+    expect(() => parseSpec(naked)).toThrow();
+  });
+
   it('names predicates the way the evidence chain does', () => {
     expect(RULE_04.predicates.map(predicateSymbol)).toEqual([
       'bos_bullish',
@@ -36,6 +56,12 @@ describe('inferred defaults', () => {
       'min_gap_size',
       'sweep_lookback',
     ]);
+  });
+
+  it('lists a target the compiler chose', () => {
+    const chosen = structuredClone(RULE_04);
+    chosen.risk.targetDistanceBps = { value: 100, inferred: true };
+    expect(inferredDefaults(chosen).map((d) => d.path)).toContain('target_distance');
   });
 
   it('reports nothing once the user has stated them all', () => {
@@ -100,6 +126,30 @@ describe('tighten and loosen', () => {
     expect(diff.requiresCoolingOff).toBe(true);
   });
 
+  it('adds a target where there was none, immediately', () => {
+    const diff = diffSpec(RULE_04_NO_TARGET, RULE_04);
+    expect(diff.changes).toEqual([{ path: 'target_distance', before: null, after: '100', kind: 'add' }]);
+    expect(diff.requiresCoolingOff).toBe(false);
+  });
+
+  it('holds a moved target in either direction: an exit does not change what the rule admits', () => {
+    for (const value of [60, 150]) {
+      const moved = structuredClone(RULE_04);
+      moved.risk.targetDistanceBps = stated(value);
+      const diff = diffSpec(RULE_04, moved);
+      expect(diff.changes).toEqual([
+        { path: 'target_distance', before: '100', after: String(value), kind: 'loosen' },
+      ]);
+      expect(diff.requiresCoolingOff).toBe(true);
+    }
+  });
+
+  it('holds a dropped target', () => {
+    const diff = diffSpec(RULE_04, RULE_04_NO_TARGET);
+    expect(diff.changes).toEqual([{ path: 'target_distance', before: '100', after: null, kind: 'remove' }]);
+    expect(diff.requiresCoolingOff).toBe(true);
+  });
+
   it('reports an added predicate once, and immediately', () => {
     const fewer = structuredClone(RULE_04);
     fewer.predicates = fewer.predicates.slice(0, 2);
@@ -122,6 +172,30 @@ describe('hash', () => {
 
   it('changes when a parameter changes', async () => {
     expect(await specHash(RULE_04)).not.toBe(await specHash(RULE_04_LOOSENED));
+  });
+
+  it('hashes a rule pinned before targets existed exactly as it did', async () => {
+    // The live strategy 0 was pinned with no target. Its on-chain hash must not move because the
+    // schema grew a field: absent, undefined and parsed-from-JSON all hash identically.
+    const legacy = BOS20_15M_NO_TARGET;
+    const pinned = await specHash(legacy);
+    const undefinedTarget = { ...legacy, risk: { ...legacy.risk, targetDistanceBps: undefined } };
+    expect(await specHash(undefinedTarget)).toBe(pinned);
+    expect(await specHash(parseSpec(JSON.parse(JSON.stringify(legacy))))).toBe(pinned);
+    expect(await specHash(parseSpec(undefinedTarget))).toBe(pinned);
+    expect(canonicalizeSpec(legacy)).not.toContain('target');
+    // The canonical form is the one the pre-target code wrote, byte for byte.
+    expect(canonicalizeSpec(legacy)).toBe(
+      '{"direction":"long","id":"btc-long-bos-20","name":"BTC Long 15m Break of Structure",' +
+        '"predicates":[{"direction":"long","id":"bos-20","kind":"break_of_structure",' +
+        '"swingLookbackCandles":{"inferred":false,"value":20},"timeframe":{"inferred":false,"value":"15m"}}],' +
+        '"risk":{"riskPerTradeBps":{"inferred":false,"value":100},"stopDistanceBps":{"inferred":false,"value":200}},' +
+        '"series":{"asset":"BTC/USD","bucketSeconds":900,"cadenceSeconds":900,"feed":"default"},"version":1}',
+    );
+  });
+
+  it('changes when a target is added', async () => {
+    expect(await specHash(RULE_04)).not.toBe(await specHash(RULE_04_NO_TARGET));
   });
 
   it('abbreviates for display', () => {

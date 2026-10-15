@@ -17,7 +17,7 @@ import {
   TRADE,
   TRADE_ID,
 } from './demo';
-import { parseDecimal, type AssetClass as SpecAssetClass } from '@kanon/spec';
+import { onchainGateNote, parseDecimal, type AssetClass as SpecAssetClass } from '@kanon/spec';
 import type { TradeMarker } from '../components/chart/markers';
 import type { EditableParam } from '@kanon/spec';
 import type {
@@ -27,7 +27,7 @@ import type {
   CompilerStatus,
   DataMode,
   EditOutcome,
-  PinAvailability,
+  PinningAvailability,
   PinOutcome,
   ProposalRun,
   ReviewMode,
@@ -193,8 +193,29 @@ export interface ReviewData {
   acknowledged: boolean;
   /** In `amend` mode: what submitting would do. */
   preview: AmendmentPreview | null;
+  /**
+   * The exits the user has not stated, each opening its parameter in the sheet.
+   * While any is listed a draft is not pinned and a change is not sent.
+   */
+  missingExits: MissingExit[];
+  /** Why, in one sentence. Empty when nothing is missing. */
+  exitsSentence: string;
+  /** What the on-chain gate cannot see in this rule, said plainly. Null when there is nothing to say. */
+  gateNote: string | null;
   busy: boolean;
   error?: string;
+}
+
+/** A stop or a target the user has not set: absent, or chosen by the compiler. */
+export interface MissingExit {
+  /** `stop_distance` or `target_distance`, as the parametric view names it. */
+  name: string;
+  /** The parameter key the sheet edits. */
+  key: string;
+  /** `not stated`, or the value the compiler chose. */
+  display: string;
+  /** True when the spec has no value at all, false when it holds one the user did not state. */
+  absent: boolean;
 }
 
 export interface PinningData {
@@ -210,7 +231,7 @@ export interface PinningData {
   commitment?: string;
   /** The canonical series the gate reads, abbreviated, or `NOT DEPLOYED`. Empty in demo. */
   series?: string;
-  availability: PinAvailability;
+  availability: PinningAvailability;
   /** A pin is being signed or broadcast. */
   busy: boolean;
 }
@@ -701,6 +722,10 @@ export const demoDataSource: KanonDataSource = {
     params: [],
     acknowledged: true,
     preview: null,
+    // The demo rule states both exits. It does carry a liquidity sweep, and says what that means on-chain.
+    missingExits: [],
+    exitsSentence: '',
+    gateNote: onchainGateNote(SPEC),
     busy: false,
   },
   editParam() {

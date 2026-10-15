@@ -24,9 +24,18 @@ export type PinAvailability =
   | { state: 'no_wallet'; message: string }
   | { state: 'demo'; message: string };
 
+/**
+ * What the pin ceremony says about one draft: the device's own availability,
+ * or a rule that cannot be pinned as written because the user has not stated
+ * its stop or its target. Kept apart from `PinAvailability`, which is about the
+ * device and the network and is shared by every screen that signs.
+ */
+export type PinningAvailability = PinAvailability | { state: 'needs_exits'; message: string };
+
 export type PinFailure =
   | 'not_deployed'
   | 'no_wallet'
+  | 'needs_exits'
   | 'no_draft'
   | 'not_reviewed'
   | 'rejected'

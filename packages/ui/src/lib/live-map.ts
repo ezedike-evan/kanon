@@ -14,14 +14,18 @@
 
 import {
   COOLING_OFF_SECONDS,
+  EXIT_PARAM_KEY,
   PREDICATE_LABEL,
   abbreviateHash,
   adherenceBps,
   assetLabel,
+  exitsSentence,
   formatBps,
   formatDecimal,
   formatPredicateDelta,
   formatPredicateValue,
+  missingExits,
+  onchainGateNote,
   parseSpec,
   planAmendment,
   predicateComparison,
@@ -58,7 +62,7 @@ import type {
   TranscriptTurn,
 } from './data';
 import { autopilotNote, autopilotState, AUTOPILOT_STATE_LABEL } from './autopilot';
-import type { AmendmentPreview, PinAvailability, ReviewMode } from './flow-types';
+import type { AmendmentPreview, PinAvailability, PinningAvailability, ReviewMode } from './flow-types';
 import type { PinTargetResult } from './pin';
 
 // ---------------------------------------------------------------------------
@@ -449,7 +453,7 @@ export function proposalFromTrade(
   return {
     entry: trade.entry,
     stop: trade.stop,
-    // The spec pins no target. A target the user never wrote would be a hidden parameter.
+    // The proposer prices no target: a trade row carries an entry, a stop and a size, and nothing else is shown.
     target: null,
     size: trade.size,
     riskBps: trade.riskBps ?? spec.risk.riskPerTradeBps.value,
@@ -727,6 +731,8 @@ export function reviewData(input: {
             cooldownSeconds: plan.kind === 'cooling_off' ? plan.cooldownSeconds : 0,
           };
   }
+  // A stop or a target the user has not set blocks the pin and the change, and is listed where it can be set.
+  const missing = spec ? missingExits(spec) : [];
   const data: ReviewData = {
     plain: review.plain,
     parametric: review.parametric,
@@ -735,6 +741,13 @@ export function reviewData(input: {
     params: review.params,
     acknowledged: input.acknowledged,
     preview,
+    missingExits: missing.map((name) => {
+      const key = EXIT_PARAM_KEY[name];
+      const param = review.params.find((p) => p.key === key);
+      return { name, key, display: param?.display ?? 'not stated', absent: param?.missing === true || !param };
+    }),
+    exitsSentence: exitsSentence(missing),
+    gateNote: spec ? onchainGateNote(spec) : null,
     busy: input.busy,
   };
   return input.error ? { ...data, error: input.error } : data;
@@ -745,17 +758,26 @@ export function reviewData(input: {
  * deployed series for its asset and cadence, and predicates the gate can encode.
  * Where either is missing the ceremony says "not deployed" up front, in the
  * builder's own words, instead of failing at the sign button.
+ *
+ * Before any of that, the rule needs a stop and a target the user stated. That is
+ * said first, whatever the device can do, because no device could pin it as written.
  */
 export function pinAvailabilityFor(
   base: PinAvailability,
   target: PinTargetResult | null,
-): PinAvailability {
+  spec: StrategySpec | null,
+): PinningAvailability {
+  if (base.state === 'demo') return base;
+  const missing = spec ? missingExits(spec) : [];
+  if (missing.length > 0) return { state: 'needs_exits', message: exitsSentence(missing) };
   if (base.state !== 'ready' || target === null || target.ok) return base;
   return { state: 'not_deployed', message: target.message };
 }
 
 export function pinningData(input: {
   specHash: string;
+  /** The draft about to be pinned, or null when there is none. */
+  spec: StrategySpec | null;
   /** The result of `buildPinTarget` for the draft, or null before it has been worked out. */
   target?: PinTargetResult | null;
   contract: string | undefined;
@@ -784,7 +806,7 @@ export function pinningData(input: {
       : input.target
         ? { commitment: '', series: 'NOT DEPLOYED' }
         : {}),
-    availability: pinAvailabilityFor(input.availability, input.target ?? null),
+    availability: pinAvailabilityFor(input.availability, input.target ?? null, input.spec),
     busy: input.busy,
   };
 }
