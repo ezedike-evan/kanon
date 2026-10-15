@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   applyParamEdit,
+  canonicalizeSpec,
   exitsStated,
   specHash as hashSpec,
   type Decimal,
@@ -14,6 +15,8 @@ import {
   type TranscriptTurn,
 } from './data';
 import { switchAutopilot } from './autopilot';
+import { backtestSubject, fromReply } from './backtest';
+import type { BacktestRead, BacktestReply, BacktestState, BacktestSubject } from './backtest-types';
 import type {
   AmendOutcome,
   AutopilotOutcome,
@@ -166,6 +169,11 @@ export interface LiveActions {
   confirmTrade(args: { tradeId: string }): Promise<{ ok: boolean; reason?: string }>;
   /** `strategies:setAutopilot`. Throws unless the strategy is pinned or cooling off. */
   setAutopilot(args: { strategyId: string; on: boolean }): Promise<{ autopilot: boolean }>;
+  /**
+   * `backtest:run`. `run` false answers from the stored run only, reading no candle; true runs it
+   * when the stored one is not current. Absent, the test screen says testing is not connected.
+   */
+  backtest?(args: { spec: StrategySpec; run: boolean }): Promise<BacktestReply>;
 }
 
 export interface LiveBackend {
@@ -345,8 +353,73 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
       return userId ? live : demoDataSource.useBlockedLog();
     }
 
+    // Test on recorded prices. Opening the screen asks only for the stored answer (one small read
+    // on the server, no candle); a run, which reads the candles, waits for the press.
+    function useBacktest(subject: BacktestSubject): BacktestRead {
+      const owned = subject.kind === 'rule' ? strategies?.find((s) => String(s._id) === subject.id) : undefined;
+      const spec = subject.kind === 'review' ? reviewedSpec : safeSpec(owned?.spec ?? owned?.pendingSpec);
+      const key = spec ? canonicalizeSpec(spec) : '';
+      // Until the person's rules have arrived, a missing rule is not yet known to be missing.
+      const known = strategies !== undefined;
+      const call = actions.backtest;
+      const [state, setState] = useState<BacktestState>({ status: 'loading' });
+      const [running, setRunning] = useState(false);
+      const [note, setNote] = useState<string | null>(null);
 
-    if (!userId) return { ...demoDataSource, ...chartReads, ...predictReads, useBlockedLog };
+      const apply = (reply: BacktestReply) => {
+        const out = fromReply(reply);
+        if ('state' in out) setState(out.state);
+        else setNote(out.note);
+      };
+
+      useEffect(() => {
+        if (!userId) return;
+        setNote(null);
+        if (!known) {
+          setState({ status: 'loading' });
+          return;
+        }
+        if (!spec) {
+          setState({
+            status: 'nothing',
+            message:
+              subject.kind === 'review'
+                ? 'There is no rule under review to test. Describe one, or open one of your rules.'
+                : 'None of your rules has this id.',
+          });
+          return;
+        }
+        if (!call) {
+          setState({ status: 'failed', message: 'Testing on recorded prices is not connected in this build.' });
+          return;
+        }
+        let live = true;
+        setState({ status: 'loading' });
+        call({ spec, run: false })
+          .then((reply) => live && apply(reply))
+          .catch((err) => live && setState({ status: 'failed', message: errorText(err, 'The stored test could not be read.') }));
+        return () => {
+          live = false;
+        };
+        // `key` stands for `spec`: the same rule parsed again is not a new rule.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [userId, known, key, call]);
+
+      const run = () => {
+        if (!spec || !call || running) return;
+        setRunning(true);
+        setNote(null);
+        call({ spec, run: true })
+          .then(apply)
+          .catch((err) => setNote(errorText(err, 'The test could not run. Nothing was stored.')))
+          .finally(() => setRunning(false));
+      };
+
+      if (!userId) return demoDataSource.useBacktest(subject);
+      return { state, subject: spec ? backtestSubject(spec) : null, running, note, canRun: Boolean(spec && call), run };
+    }
+
+    if (!userId) return { ...demoDataSource, ...chartReads, ...predictReads, useBlockedLog, useBacktest };
 
     const now = Date.now();
     const newestFirst = [...list].sort((a, b) => b.createdAt - a.createdAt);
@@ -587,6 +660,7 @@ export function useLiveKanonSource(backend: LiveBackend): KanonDataSource {
         return found && activeSpec ? tradeDetailFromTrade(found, activeSpec) : null;
       },
       useBlockedLog,
+      useBacktest,
       coolingOff: coolingOffFromStrategy(strategy, now),
       finalizeCoolingOff,
       withdrawCoolingOff,

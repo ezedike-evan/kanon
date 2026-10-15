@@ -23,6 +23,7 @@ import {
   requiredCandles,
   sizePosition,
   summariseBlocked,
+  targetPrice,
   undoSecondsLeft,
   undoTransition,
 } from './proposerLogic';
@@ -262,6 +263,34 @@ describe('sizePosition', () => {
     expect(
       sizePosition({ direction: 'long', entry: dec('0', 2), stopDistanceBps: 50, riskBps: 50, equity: px('1.00') }),
     ).toBeNull();
+  });
+});
+
+describe('targetPrice', () => {
+  it('rounds a long target away from the entry', () => {
+    // 68,441.20 * 1.5% = 1,026.618 -> ceil to 1,026.62
+    const t = targetPrice({ direction: 'long', entry: px('68441.20'), targetDistanceBps: 150 })!;
+    expect(formatDecimal(t)).toBe('69,467.82');
+  });
+
+  it('places a short target below the entry, rounded away from it', () => {
+    const t = targetPrice({ direction: 'short', entry: px('100.01'), targetDistanceBps: 100 })!;
+    // 100.01 * 1% = 1.0001 -> ceil to 1.01
+    expect(formatDecimal(t)).toBe('99.00');
+  });
+
+  it('is exact when the distance divides evenly', () => {
+    expect(formatDecimal(targetPrice({ direction: 'long', entry: px('100.00'), targetDistanceBps: 400 })!)).toBe('104.00');
+  });
+
+  it('never puts a target closer than one atom', () => {
+    expect(targetPrice({ direction: 'long', entry: dec('1', 2), targetDistanceBps: 1 })).toEqual(dec('2', 2));
+  });
+
+  it('has no price for a short whose target would be at or below zero', () => {
+    expect(targetPrice({ direction: 'short', entry: px('100.00'), targetDistanceBps: 10_000 })).toBeNull();
+    expect(targetPrice({ direction: 'short', entry: dec('1', 2), targetDistanceBps: 1 })).toBeNull();
+    expect(targetPrice({ direction: 'long', entry: dec('0', 2), targetDistanceBps: 100 })).toBeNull();
   });
 });
 

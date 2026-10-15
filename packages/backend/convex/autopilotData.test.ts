@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getFunctionName, type FunctionReference } from "convex/server";
+import { stringToHex } from "viem";
 import {
+  PYTH_FEEDS,
   RULE_04,
   parseDecimal,
   predicatesCommitment,
@@ -10,13 +12,18 @@ import {
   type Series,
   type StrategySpec,
 } from "@kanon/spec";
-import { sweep } from "./autopilot";
 import * as autopilotData from "./autopilotData";
 import { HANDOFF_EXPIRY_MS, HANDOFF_MESSAGES, HANDOFF_WINDOW_MS } from "./autopilotLogic";
+import { padAddress, padUint } from "./chainLogic";
 import crons from "./crons";
+import { GATE_TOPICS } from "./gateLogic";
+import type { GatePort, GateReceipt, PriceSource } from "./gatePort";
 import http from "./http";
+import { tick } from "./keeper";
+import * as keeperData from "./keeperData";
 import { runProposer } from "./proposer";
 import * as proposerData from "./proposerData";
+import * as rateLimit from "./rateLimit";
 import { applyVerifiedPin, setAutopilot } from "./strategies";
 import * as timedData from "./timedData";
 import * as trades from "./trades";
@@ -24,18 +31,29 @@ import * as venueData from "./venueData";
 import { ORDER_LOCK_MS, RECORDER_HEADER } from "./venueLogic";
 
 /**
- * Autopilot's handlers, run as they are against a database held in memory.
+ * Autopilot's handlers, run as they are against a database held in memory,
+ * from the keeper tick that hands it each bucket to the gateway that opens a
+ * pass.
  *
- * Nothing here is deployed and nothing reaches a venue. Each registered
- * function's own handler is called with a stand-in `ctx`: the database below,
- * a token's identity, and `runQuery` / `runMutation` that find the real handler
- * by the name it is referenced by. The one thing that is not real is the price
- * series, which a test supplies, so a candle can be made to pass or to fail.
+ * Nothing here is deployed, nothing reaches a venue and nothing reaches a
+ * chain. Each registered function's own handler is called with a stand-in
+ * `ctx`: the database below, a token's identity, and `runQuery` /
+ * `runMutation` that find the real handler by the name it is referenced by.
+ * Two things are not real: Convex's price series, which a test supplies for
+ * the off-chain setup, and the chain, a gate held in memory that the real port
+ * factory is swapped for. Its verdict is the close of the bucket it judges:
+ * above the three before it passes, at or below refuses.
  *
  * Functions here are referenced by name, as strings, which no type check reads.
- * Every name the sweep and the routes use is resolved below against the modules
- * themselves, so one that names nothing fails a test.
+ * Every name autopilot and the routes use is resolved below against the
+ * modules themselves, so one that names nothing fails a test.
  */
+
+const fake = vi.hoisted(() => ({ port: null as unknown, source: null as unknown }));
+vi.mock("./gatePort", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./gatePort")>();
+  return { ...actual, createViemGatePort: () => fake.port, createPythSource: () => fake.source };
+});
 
 // ---------------------------------------------------------------------------
 // The stand-in database: tables of rows, read by equality on indexed fields.
@@ -101,6 +119,73 @@ function memoryDb() {
 }
 
 // ---------------------------------------------------------------------------
+// The stand-in chain: one series, always sampled, and the gate over it.
+// ---------------------------------------------------------------------------
+
+const GWEI = 10n ** 9n;
+const MON = 10n ** 18n;
+const GATE = "0x388f55962954c5083d885543af22b1b6ee640ec0";
+const REGISTRY = "0xdb91f547b59a3326f3db8e8f510e8dbbf4e50852";
+const SERIES = "0x74c4b8710fb83dcc18c1a5ae2e35a63dc005257a";
+const SIGNER = "0xe0072e39d6fb592bafb3c6783710c1b24ec601b4" as const;
+const BOS_SYMBOL = stringToHex("bos_bullish", { size: 32 });
+
+/** A price at the series' scale, expo -8. */
+const onChain = (v: string) => BigInt(parseDecimal(v, 8).atoms);
+
+function fakeChain(nowMs: () => number) {
+  const state = {
+    /** The judged bucket's one sample. The three before it top at 101. */
+    close: "100.50",
+    sends: [] as Array<{ fn: string; bucket: bigint }>,
+    receipts: new Map<string, GateReceipt>(),
+  };
+  const blockTime = () => BigInt(Math.floor(nowMs() / 1000));
+  const latest = () => blockTime() / 900n;
+  const passes = () => onChain(state.close) > onChain("101");
+  const port: GatePort = {
+    signer: SIGNER,
+    blockTime: async () => blockTime(),
+    getCandle: async () => ({ open: 1n, high: 1n, low: 1n, close: 1n, sampleCount: 1, recorded: true }),
+    seriesFeedId: async () => PYTH_FEEDS["BTC/USD"]!,
+    lastSampleTimestamp: async () => blockTime() - 30n,
+    cadenceSeconds: async () => 60n,
+    balance: async () => 3n * MON,
+    gasPrice: async () => 102n * GWEI,
+    estimateGas: async () => 288_752n,
+    async send(call, opts) {
+      state.sends.push({ fn: call.functionName, bucket: latest() });
+      const hash = `0x${state.sends.length.toString(16).padStart(64, "0")}` as `0x${string}`;
+      const topics = [padUint(0n), "0x" + "09".repeat(32), padAddress(SIGNER)];
+      const logs = passes()
+        ? [{ address: GATE, topics: [GATE_TOPICS.proposed, ...topics], data: "0x" }]
+        : [{ address: GATE, topics: [GATE_TOPICS.refused, ...topics], data: BOS_SYMBOL + onChain(state.close).toString(16).padStart(64, "0") }];
+      state.receipts.set(hash, { status: "success", gasUsed: opts.gas, effectiveGasPrice: 102n * GWEI, blockNumber: 48_000_000n, logs });
+      return hash;
+    },
+    waitForReceipt: async (hash) => state.receipts.get(hash)!,
+    blockTimeAt: async () => blockTime(),
+    previewOnChain: async () =>
+      passes()
+        ? { kind: "result", allSatisfied: true, failingSymbol: `0x${"00".repeat(32)}`, decidingValue: 0n }
+        : { kind: "result", allSatisfied: false, failingSymbol: BOS_SYMBOL, decidingValue: onChain(state.close) },
+    async readCandles(_series, from, to) {
+      const candles = [];
+      for (let b = from; b <= to; b++) {
+        const last = b === latest();
+        const c = last ? onChain(state.close) : onChain("100");
+        candles.push({ bucket: b, open: c, high: last ? c : onChain("101"), low: last ? c : onChain("99"), close: c, sampleCount: 1, recorded: true });
+      }
+      return { priceExpo: -8, candles };
+    },
+  };
+  const source: PriceSource = {
+    read: async () => ({ price: { price: 1n, conf: 0n, expo: -8, publishTime: blockTime() }, sourceNowSeconds: blockTime() }),
+  };
+  return { state, port, source, gateSends: () => state.sends.filter((s) => s.fn === "evaluateOnChain") };
+}
+
+// ---------------------------------------------------------------------------
 // The stand-in ctx
 // ---------------------------------------------------------------------------
 
@@ -113,6 +198,7 @@ const BOB = "did:privy:bob";
 const T0 = 1_800_000_000 - (1_800_000_000 % 900); // a 15m boundary
 const at = (i: number) => T0 + i * 900;
 const px = (v: string) => parseDecimal(v, 2);
+const atExpo = (v: string) => parseDecimal(v, 8);
 
 /** RULE_04 cut down to one predicate: a 15m close above the high of the three candles before it. */
 const bosSpec: StrategySpec = {
@@ -147,18 +233,34 @@ const FAIL = "100.50";
 
 type SeriesAnswer = (Series & { truncated: boolean }) | Error;
 
+const ENV = {
+  KEEPER_ENABLED: "on",
+  // Never a real key: the port it would sign with is the stand-in above.
+  KEEPER_PRIVATE_KEY: `0x${"11".repeat(32)}`,
+  REFUSAL_GATE_ADDRESS: GATE,
+  MOCK_PYTH_ADDRESS: "0x7b0564b87edd57d7bb70550b1fba3384964862ce",
+  STRATEGY_REGISTRY_ADDRESS: REGISTRY,
+  STRATEGY_REGISTRY_RPC_URL: "https://testnet-rpc.example",
+  STRATEGY_REGISTRY_CHAIN_ID: "10143",
+  SERIES_BTCUSD_ADDRESS: SERIES,
+};
+
 function world() {
   const db = memoryDb();
   const state = {
-    /** Unix milliseconds: what `Date.now()` reads inside a handler. */
+    /** Unix milliseconds: what `Date.now()` reads inside a handler, and what the chain's clock reads. */
     now: at(5) * 1000 + 30_000,
     /** Whose token the next public call carries. Null is nobody. */
     subject: ALICE as string | null,
     /** What `series:getSeries` answers, or an error for it to throw: one answer for every asset, or one per asset. */
     series: seriesEnding(4, FAIL) as SeriesAnswer | ((asset: string) => SeriesAnswer),
     seriesReads: 0,
+    snapshotReads: 0,
     scheduled: [] as unknown[],
   };
+  const chain = fakeChain(() => state.now);
+  fake.port = chain.port;
+  fake.source = chain.source;
 
   const named: Record<string, Handler> = {
     "series:getSeries": async (_ctx, args) => {
@@ -169,11 +271,16 @@ function world() {
     },
   };
   // `module:export`, exactly as Convex names a function: a reference that is misspelt finds nothing.
-  for (const [module, exports] of Object.entries({ autopilotData, proposerData, timedData, trades, venueData })) {
+  for (const [module, exports] of Object.entries({ autopilotData, keeperData, proposerData, rateLimit, timedData, trades, venueData })) {
     for (const [name, fn] of Object.entries(exports)) {
       if (typeof fn === "function" && "_handler" in fn) named[`${module}:${name}`] = handlerOf(fn);
     }
   }
+  const snapshot = named["autopilotData:snapshot"]!;
+  named["autopilotData:snapshot"] = async (c, a) => {
+    state.snapshotReads += 1;
+    return await snapshot(c, a);
+  };
   const run = (ref: FunctionReference<"query" | "mutation">, args: Record<string, unknown>): Promise<unknown> => {
     const name = getFunctionName(ref);
     const handler = named[name];
@@ -188,10 +295,21 @@ function world() {
     runMutation: run,
   };
   const call = <T = unknown>(fn: unknown, args: Record<string, unknown> = {}): Promise<T> => handlerOf(fn)(ctx, args) as Promise<T>;
-  return { db, state, ctx, call };
+  return { db, state, chain, ctx, call };
 }
 
 type World = ReturnType<typeof world>;
+
+/** Strategy 0's shape: pinned and read from the chain, on this deployment's registry and the keeper's BTC series. */
+const PINNED = {
+  status: "pinned",
+  pinVerified: true,
+  chainId: 10143,
+  registryAddress: REGISTRY,
+  chainStrategyId: "0",
+  predicatesCommitment: predicatesCommitment(bosSpec),
+  seriesAddress: SERIES,
+};
 
 async function seed(w: World, over: Record<string, unknown> = {}) {
   const alice = await w.db.insert("users", { privyId: ALICE, name: "Alice", username: "alice", experience: "some" });
@@ -200,20 +318,33 @@ async function seed(w: World, over: Record<string, unknown> = {}) {
     ownerUserId: alice,
     spec: bosSpec,
     specHash: "0xspec",
-    status: "pinned",
-    // The pin was read from the chain (`strategies:pinStrategy`): without that, autopilot runs nothing.
-    pinVerified: true,
+    ...PINNED,
     autopilot: false,
     ...over,
   });
+  // The keeper keeps the BTC series sampled for a pinned rule (`recomputeKeeperFeeds`).
+  if (w.db.rows("keeper").length === 0) {
+    await w.db.insert("keeper", { feeds: ["BTC/USD"], sampled: [], spentWeiDay: "0", dayStart: at(0) * 1000 - ((at(0) * 1000) % 86_400_000) });
+  }
   return { alice, bob, strategyId };
 }
 
-/** The sweep at half a minute past the close of the candle `at(closed)`, with a series whose last candle is that one. */
+type TickOutcome = { status: string; autopilot?: Record<string, unknown> & { clean: boolean } };
+
+/** The keeper tick at `seconds` into the bucket `at(bucket)`. */
+async function tickAt(w: World, bucket: number, seconds = 30): Promise<TickOutcome> {
+  w.state.now = (at(bucket) + seconds) * 1000;
+  return (await w.call(tick)) as TickOutcome;
+}
+
+/**
+ * The tick half a minute into the bucket after the candle `at(closed)`, when the
+ * chain's sample, and Convex's last closed candle, close at `close`.
+ */
 async function sweepAfter(w: World, closed: number, close: string) {
-  w.state.now = at(closed + 1) * 1000 + 30_000;
   w.state.series = seriesEnding(closed, close);
-  return (await w.call(sweep)) as Record<string, number>;
+  w.chain.state.close = close;
+  return (await tickAt(w, closed + 1)).autopilot ?? {};
 }
 
 const proposalsOf = (w: World) => w.db.rows("trades").filter((row) => row.handoff !== undefined);
@@ -243,11 +374,14 @@ const opened = (proposalId: string, openedAt: number) => ({
 
 let w: World;
 beforeEach(() => {
+  for (const [name, value] of Object.entries(ENV)) vi.stubEnv(name, value);
   w = world();
   vi.spyOn(Date, "now").mockImplementation(() => w.state.now);
+  vi.spyOn(console, "info").mockImplementation(() => {});
 });
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 // ---------------------------------------------------------------------------
@@ -279,13 +413,44 @@ describe("turning autopilot on and off", () => {
     expect((await w.db.get(strategyId))?.autopilot).toBe(false);
   });
 
-  it("forgets the last candle judged when it is turned on again, and keeps it when asked for what it already is", async () => {
+  it("remembers the bucket it is turned on in, and keeps its place when asked for what it already is", async () => {
     const { strategyId } = await seed(w, { autopilot: true, autopilotBucket: at(3) });
     await w.call(setAutopilot, { strategyId, on: true });
     expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(3));
     await w.call(setAutopilot, { strategyId, on: false });
-    await w.call(setAutopilot, { strategyId, on: true });
     expect("autopilotBucket" in ((await w.db.get(strategyId)) ?? {})).toBe(false);
+    // Seven minutes into the bucket at(5): that bucket, whose sample is from before, is not judged.
+    w.state.now = (at(5) + 420) * 1000;
+    await w.call(setAutopilot, { strategyId, on: true });
+    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(5));
+  });
+
+  it("is refused, with a sentence, for a rule the gate cannot judge", async () => {
+    const minute: StrategySpec = {
+      ...bosSpec,
+      series: { ...bosSpec.series, bucketSeconds: 60 },
+      predicates: bosSpec.predicates.map((p) => ({ ...p, timeframe: stated("1m" as const) })),
+    };
+    const cases: Array<[Record<string, unknown>, RegExp]> = [
+      [{ spec: minute, predicatesCommitment: predicatesCommitment(minute) }, /15-minute candles, and this one is written on 1m/],
+      [{ chainId: 143 }, /another chain or registry/],
+      [{ seriesAddress: `0x${"33".repeat(20)}` }, /not one Kanon keeps sampled/],
+      [{ predicatesCommitment: `0x${"44".repeat(32)}` }, /do not match the commitment/],
+    ];
+    // And on a deployment whose signer is switched off, nothing would judge it.
+    {
+      w = world();
+      const { strategyId } = await seed(w);
+      vi.stubEnv("KEEPER_ENABLED", "off");
+      await expect(w.call(setAutopilot, { strategyId, on: true })).rejects.toMatchObject({ data: { code: "not_eligible", message: expect.stringMatching(/switched off/) } });
+      vi.stubEnv("KEEPER_ENABLED", "on");
+    }
+    for (const [over, sentence] of cases) {
+      w = world();
+      const { strategyId } = await seed(w, over);
+      await expect(w.call(setAutopilot, { strategyId, on: true })).rejects.toMatchObject({ data: { code: "not_eligible", message: expect.stringMatching(sentence) } });
+      expect((await w.db.get(strategyId))?.autopilot).toBe(false);
+    }
   });
 
   it("is turned off for the rule a newly pinned one replaces, and what that rule had waiting is withdrawn", async () => {
@@ -325,54 +490,83 @@ describe("turning autopilot on and off", () => {
   });
 });
 
-describe("the sweep", () => {
-  it("is run every minute, by the name it is exported under, and by nothing a client can call", () => {
+describe("autopilot on the keeper tick", () => {
+  it("runs inside the keeper tick, every minute, and there is no separate autopilot sweep", () => {
     const jobs = (crons as unknown as { crons: Record<string, { name: string; schedule: Record<string, unknown> }> }).crons;
-    expect(jobs["sweep autopilot"]).toMatchObject({ name: "autopilot:sweep", schedule: { type: "interval", minutes: 1 } });
-    const registered = sweep as unknown as { isAction?: boolean; isInternal?: boolean; isPublic?: boolean };
+    expect(jobs["keeper tick"]).toMatchObject({ name: "keeper:tick", schedule: { type: "interval", minutes: 1 } });
+    expect(jobs["sweep autopilot"]).toBeUndefined();
+    expect(Object.values(jobs).map((job) => job.name)).not.toContain("autopilot:sweep");
+    const registered = tick as unknown as { isAction?: boolean; isInternal?: boolean; isPublic?: boolean };
     expect([registered.isAction, registered.isInternal, registered.isPublic]).toEqual([true, true, undefined]);
   });
 
-  it("judges nothing on its first pass after autopilot is turned on, whatever the candle that just closed did", async () => {
+  it("judges nothing in the bucket autopilot was turned on in: that bucket's sample is from before", async () => {
     const { strategyId } = await seed(w);
+    w.state.now = (at(5) + 60) * 1000;
     await w.call(setAutopilot, { strategyId, on: true });
 
-    // The candle that closed before it was turned on would have passed. It is not replayed.
-    expect(await sweepAfter(w, 4, PASS)).toMatchObject({ armed: 1, proposed: 0, refused: 0 });
+    // A minute later, in the same bucket, the sample would pass. It is not judged.
+    w.chain.state.close = PASS;
+    w.state.series = seriesEnding(4, PASS);
+    expect((await tickAt(w, 5, 120)).autopilot).toMatchObject({ proposed: 0, refused: 0, clean: true });
+    expect(w.chain.gateSends()).toEqual([]);
     expect(w.db.rows("trades")).toEqual([]);
     expect(w.state.seriesReads).toBe(0);
-    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(4));
+
+    // The next bucket is.
+    expect(await sweepAfter(w, 5, FAIL)).toMatchObject({ refused: 1 });
+    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(6));
   });
 
-  it("judges nothing for a rule whose pin was never read from the chain, even with autopilot on", async () => {
+  it("judges each bucket once: two ticks in one bucket give one transaction and one row", async () => {
+    const { strategyId } = await seed(w, { autopilot: true, autopilotBucket: at(4) });
+    expect(await sweepAfter(w, 5, FAIL)).toMatchObject({ refused: 1, clean: true });
+    expect(w.state.snapshotReads).toBe(1);
+
+    // Every minute after, through the bucket: nothing is read for autopilot and nothing is sent.
+    for (let minute = 1; minute < 14; minute++) {
+      expect((await tickAt(w, 6, 30 + minute * 60)).autopilot).toBeUndefined();
+    }
+    expect(w.state.snapshotReads).toBe(1);
+    expect(w.chain.gateSends()).toHaveLength(1);
+    expect(w.db.rows("trades")).toHaveLength(1);
+    expect(w.db.rows("keeper")[0]?.judgedBucket).toBe(at(6) / 900);
+    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(6));
+  });
+
+  it("judges a bucket only in its first five minutes", async () => {
+    await seed(w, { autopilot: true, autopilotBucket: at(4) });
+    w.chain.state.close = PASS;
+    w.state.series = seriesEnding(5, PASS);
+    expect((await tickAt(w, 6, 300)).autopilot).toBeUndefined();
+    expect(w.chain.gateSends()).toEqual([]);
+    expect((await tickAt(w, 6, 299)).autopilot).toMatchObject({ proposed: 1 });
+  });
+
+  it("sends the gate transaction in the bucket it judges, and records it as the row's evidence", async () => {
+    await seed(w, { autopilot: true, autopilotBucket: at(4) });
+    await sweepAfter(w, 5, FAIL);
+    const [row] = w.db.rows("trades");
+    expect(w.chain.gateSends()).toEqual([{ fn: "evaluateOnChain", bucket: BigInt(at(6) / 900) }]);
+    expect(row).toMatchObject({
+      origin: "autopilot",
+      status: "refused",
+      resultsSource: "chain",
+      gate: { verdict: "refused", bucketIndex: at(6) / 900, txHash: `0x${"1".padStart(64, "0")}`, signer: SIGNER, offchainVerdict: "refused" },
+    });
+    expect((row?.evidenceRefs as string[])[0]).toBe(`monad:10143/tx/0x${"1".padStart(64, "0")}`);
+  });
+
+  it("judges nothing, on-chain or off, for a rule the gate cannot judge, even with autopilot on", async () => {
     // A row left `pinned` by a client's say-so, from before pins were checked, with autopilot already on.
     const { strategyId } = await seed(w, { pinVerified: undefined, autopilot: true, autopilotBucket: at(3) });
-
-    expect(await sweepAfter(w, 4, PASS)).toMatchObject({ proposed: 0, refused: 0 });
+    expect(await sweepAfter(w, 4, PASS)).toMatchObject({ proposed: 0, refused: 0, legacy: 1, clean: true });
     expect(w.db.rows("trades")).toEqual([]);
+    expect(w.chain.gateSends()).toEqual([]);
     expect(w.state.seriesReads).toBe(0);
     // And it cannot be turned back on once it is off.
     await w.call(setAutopilot, { strategyId, on: false });
     await expect(w.call(setAutopilot, { strategyId, on: true })).rejects.toThrow(/pin it again/);
-  });
-
-  it("judges each closed candle once, however many times it runs before the next close", async () => {
-    const { strategyId } = await seed(w);
-    await w.call(setAutopilot, { strategyId, on: true });
-    await sweepAfter(w, 4, FAIL);
-
-    // A sweep a minute through the candle that is forming: nothing has closed, nothing is read.
-    for (let minute = 1; minute < 14; minute++) {
-      w.state.now += 60_000;
-      expect(await w.call(sweep)).toMatchObject({ armed: 0, proposed: 0, refused: 0, skipped: 0 });
-    }
-    expect(w.state.seriesReads).toBe(0);
-
-    expect(await sweepAfter(w, 5, FAIL)).toMatchObject({ refused: 1 });
-    w.state.now += 60_000;
-    expect(await w.call(sweep)).toMatchObject({ refused: 0 });
-    expect(w.db.rows("trades")).toHaveLength(1);
-    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(5));
   });
 
   it("records a refusal as a button press does, and marks it as autopilot's", async () => {
@@ -381,26 +575,27 @@ describe("the sweep", () => {
     const [byAutopilot] = w.db.rows("trades");
 
     w.state.subject = ALICE;
-    expect(await w.call(runProposer, { strategyId })).toMatchObject({ status: "refused" });
+    w.state.now += 60_000;
+    expect(await w.call(runProposer, { strategyId })).toMatchObject({ status: "refused", txHash: `0x${"2".padStart(64, "0")}` });
     const byButton = w.db.rows("trades")[1];
 
-    // The same verdict, the same numbers, the same evidence. Only who asked differs.
-    const { _id: _a, _creationTime: _b, origin, ...swept } = byAutopilot ?? {};
-    const { _id: _c, _creationTime: _d, ...pressed } = byButton ?? {};
-    expect(origin).toBe("autopilot");
-    expect(swept).toEqual(pressed);
-    expect(pressed).toMatchObject({
+    // The same verdict, the same numbers, the same explanation. Who asked, and the transaction, differ.
+    const same = ["status", "failedPredicateId", "failedSymbol", "failingValue", "requiredValue", "results", "resultsSource", "entry", "stop", "size"];
+    for (const field of same) expect(byAutopilot?.[field], field).toEqual(byButton?.[field]);
+    expect(byButton).toMatchObject({
       status: "refused",
       failedPredicateId: "p1",
       failedSymbol: "bos_bullish",
-      failingValue: px(FAIL),
-      requiredValue: px("101"),
+      failingValue: atExpo(FAIL),
+      requiredValue: atExpo("101"),
     });
-    expect("origin" in pressed).toBe(false);
-    expect("handoff" in swept).toBe(false);
+    expect(byAutopilot?.origin).toBe("autopilot");
+    expect("origin" in (byButton ?? {})).toBe(false);
+    expect("handoff" in (byAutopilot ?? {})).toBe(false);
+    expect((byAutopilot?.gate as { txHash: string }).txHash).not.toBe((byButton?.gate as { txHash: string }).txHash);
   });
 
-  it("writes a proposal for the gateway when every predicate passes: no undo window, no paper execution", async () => {
+  it("writes a proposal for the gateway when the gate passes: no undo window, no paper execution, its expiry scheduled", async () => {
     await seed(w, { autopilot: true, autopilotBucket: at(4) });
     expect(await sweepAfter(w, 5, PASS)).toMatchObject({ proposed: 1 });
     const [row] = w.db.rows("trades");
@@ -415,60 +610,92 @@ describe("the sweep", () => {
       asset: "BTC/USD",
       entry: px(PASS),
       satisfiedPredicateIds: ["p1"],
+      gate: { verdict: "proposed" },
     });
     expect("undoExpiresAt" in (row ?? {})).toBe(false);
-    expect(w.state.scheduled).toEqual([]);
+    expect(w.state.scheduled).toHaveLength(1);
+    const [delay, ref, args] = w.state.scheduled[0] as [number, FunctionReference<"mutation">, Record<string, unknown>];
+    expect([delay, getFunctionName(ref), args]).toEqual([HANDOFF_EXPIRY_MS, "autopilotData:expireOne", { tradeId: row!._id }]);
   });
 
   it("leaves a button press exactly as it was: its undo window, its paper execution, no mark", async () => {
     const { strategyId } = await seed(w);
     w.state.now = at(6) * 1000 + 30_000;
     w.state.series = seriesEnding(5, PASS);
+    w.chain.state.close = PASS;
     const out = (await w.call(runProposer, { strategyId })) as { status: string; tradeId: string };
     expect(out.status).toBe("proposed");
     const row = await w.db.get(out.tradeId);
-    expect(row).toMatchObject({ status: "proposed", undoExpiresAt: w.state.now + 7_000 });
+    expect(row).toMatchObject({ status: "proposed", undoExpiresAt: w.state.now + 7_000, gate: { verdict: "proposed" } });
     for (const field of ["origin", "handoff", "stakeUsd", "holdSeconds"]) expect(field in (row ?? {})).toBe(false);
     expect(w.state.scheduled).toHaveLength(1);
     // And it does not move autopilot's own place.
     expect("autopilotBucket" in ((await w.db.get(strategyId)) ?? {})).toBe(false);
   });
 
-  it("writes nothing when the series cannot support an answer, and tries the same candle again", async () => {
+  it("writes nothing and sends nothing when Convex's candles cannot price an entry, and tries the bucket again a minute later", async () => {
     const { strategyId } = await seed(w, { autopilot: true, autopilotBucket: at(4) });
-    // The newest candle is hours old: a setup is not judged against old prices.
-    w.state.now = at(40) * 1000 + 30_000;
-    w.state.series = seriesEnding(5, PASS);
-    expect(await w.call(sweep)).toMatchObject({ unavailable: 1, proposed: 0, refused: 0 });
+    // The newest candle is hours old: a setup is not priced from old prices.
+    w.state.series = seriesEnding(1, PASS);
+    w.chain.state.close = PASS;
+    expect((await tickAt(w, 6)).autopilot).toMatchObject({ unavailable: 1, proposed: 0, refused: 0, clean: false });
     expect(w.db.rows("trades")).toEqual([]);
+    expect(w.chain.gateSends()).toEqual([]);
     expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(4));
 
-    // The series catches up a minute later: that candle is judged then.
-    w.state.now += 60_000;
-    w.state.series = seriesEnding(39, FAIL);
-    expect(await w.call(sweep)).toMatchObject({ refused: 1 });
-    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(39));
+    // The series catches up a minute later: that bucket is judged then.
+    w.state.series = seriesEnding(5, FAIL);
+    w.chain.state.close = FAIL;
+    expect((await tickAt(w, 6, 90)).autopilot).toMatchObject({ refused: 1, clean: true });
+    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(6));
   });
 
   it("keeps judging the rest when one strategy cannot be read", async () => {
     const { alice } = await seed(w, { autopilot: true, autopilotBucket: at(4), spec: { ...bosSpec, series: { ...bosSpec.series, asset: "ETH/USD" } } });
-    const second = await w.db.insert("strategies", { ownerUserId: alice, spec: bosSpec, specHash: "0xother", status: "pinned", pinVerified: true, autopilot: true, autopilotBucket: at(4) });
-    w.state.now = at(6) * 1000 + 30_000;
+    const second = await w.db.insert("strategies", { ownerUserId: alice, spec: bosSpec, specHash: "0xother", ...PINNED, autopilot: true, autopilotBucket: at(4) });
+    w.chain.state.close = FAIL;
     // The first strategy's read throws; the second's answers.
     w.state.series = (asset) => (asset === "ETH/USD" ? new Error("read failed") : seriesEnding(5, FAIL));
     vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await w.call(sweep)).toMatchObject({ failed: 1, refused: 1 });
+    expect((await tickAt(w, 6)).autopilot).toMatchObject({ failed: 1, refused: 1, clean: false });
     expect(w.db.rows("trades").map((row) => row.strategyId)).toEqual([second]);
   });
 
   it("leaves alone a strategy autopilot is off for, and one whose stored spec does not parse", async () => {
     const { alice } = await seed(w, { autopilot: false, autopilotBucket: at(1) });
-    await w.db.insert("strategies", { ownerUserId: alice, spec: { not: "a spec" }, specHash: "0xbad", status: "pinned", pinVerified: true, autopilot: true, autopilotBucket: at(1) });
-    expect(await sweepAfter(w, 5, PASS)).toEqual({ armed: 0, proposed: 0, refused: 0, skipped: 0, unavailable: 0, failed: 0, expired: 0 });
+    await w.db.insert("strategies", { ownerUserId: alice, spec: { not: "a spec" }, specHash: "0xbad", ...PINNED, autopilot: true, autopilotBucket: at(1) });
+    expect(await sweepAfter(w, 5, PASS)).toMatchObject({ proposed: 0, notOpened: 0, refused: 0, armed: 0, unavailable: 0, failed: 0, legacy: 1, clean: true });
     expect(w.db.rows("trades")).toEqual([]);
   });
+});
 
-  it("does not judge a candle twice when two sweeps overlap: the write itself checks", async () => {
+describe("claiming a bucket", () => {
+  it("claims it once, before anything is sent, and gives it back only as it was", async () => {
+    const { strategyId } = await seed(w, { autopilot: true, autopilotBucket: at(4) });
+    expect(await w.call(autopilotData.claim, { strategyId, bucket: at(5) })).toEqual({ ok: true, previous: at(4) });
+    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(5));
+    // A second pass in the same bucket finds it claimed.
+    expect(await w.call(autopilotData.claim, { strategyId, bucket: at(5) })).toEqual({ ok: false, why: "judged" });
+
+    await w.call(autopilotData.unclaim, { strategyId, bucket: at(5), previous: at(4) });
+    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(4));
+
+    // A claim autopilot was turned off and on again over is not given back.
+    await w.call(autopilotData.claim, { strategyId, bucket: at(5) });
+    await w.db.patch(strategyId, { autopilotBucket: at(7) });
+    await w.call(autopilotData.unclaim, { strategyId, bucket: at(5), previous: at(4) });
+    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(7));
+  });
+
+  it("claims nothing for a rule autopilot is off for, and only remembers the bucket for one with none remembered", async () => {
+    const { strategyId } = await seed(w);
+    expect(await w.call(autopilotData.claim, { strategyId, bucket: at(5) })).toEqual({ ok: false, why: "off" });
+    await w.db.patch(strategyId, { autopilot: true });
+    expect(await w.call(autopilotData.claim, { strategyId, bucket: at(5) })).toEqual({ ok: false, why: "armed" });
+    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(5));
+  });
+
+  it("records every gate transaction: a pass after autopilot was turned off mid-judgment is a proposal not opened", async () => {
     const { strategyId } = await seed(w, { autopilot: true, autopilotBucket: at(5) });
     const row = {
       strategyId,
@@ -477,8 +704,8 @@ describe("the sweep", () => {
       entry: px(PASS),
       size: px("1"),
       stop: px("104"),
-      status: "refused",
-      satisfiedPredicateIds: [],
+      status: "proposed",
+      satisfiedPredicateIds: ["p1"],
       evidenceRefs: [],
       results: [],
       specHash: "0xspec",
@@ -489,55 +716,55 @@ describe("the sweep", () => {
       feed: "pyth/btc-usd",
       autopilot: { bucket: at(5), stakeUsd: 10, holdSeconds: 900 },
     };
-    // Already judged, by whichever sweep got there first.
-    expect(await w.call(trades.recordEvaluation, row)).toBeNull();
-    // Turned off between the read and the write.
-    await w.db.patch(strategyId, { autopilot: false });
-    expect(await w.call(trades.recordEvaluation, { ...row, autopilot: { ...row.autopilot, bucket: at(6) } })).toBeNull();
-    // Never armed: the first sweep only notes where it starts.
-    await w.db.patch(strategyId, { autopilot: true, autopilotBucket: undefined });
-    expect(await w.call(trades.recordEvaluation, { ...row, autopilot: { ...row.autopilot, bucket: at(6) } })).toBeNull();
-    expect(w.db.rows("trades")).toEqual([]);
+    // Turned off between the claim and the write.
+    await w.db.patch(strategyId, { autopilot: false, autopilotBucket: undefined });
+    expect(await w.call(trades.recordEvaluation, row)).toMatchObject({ handoff: "not_opened" });
+    expect(w.db.rows("trades")[0]).toMatchObject({ status: "undone", handoff: "not_opened", handoffReason: HANDOFF_MESSAGES.turnedOff, origin: "autopilot" });
+    // A refusal is recorded however autopilot stands.
+    expect(await w.call(trades.recordEvaluation, { ...row, status: "refused", satisfiedPredicateIds: [] })).toMatchObject({ tradeId: expect.any(String) });
+    expect(w.db.rows("trades")).toHaveLength(2);
+    expect(w.state.scheduled).toEqual([]);
   });
 });
 
 describe("one autopilot trade per strategy at a time", () => {
-  it("records nothing for a candle that passes while the last proposal is waiting, and still records a refusal", async () => {
+  it("records a pass while the last proposal is waiting as not opened, and still records a refusal", async () => {
     const { strategyId } = await seed(w, { autopilot: true, autopilotBucket: at(4) });
     await sweepAfter(w, 5, PASS);
     const [first] = proposalsOf(w);
     await w.call(autopilotData.begin, open(first!._id));
-    // The next candle closes while that order is still unanswered, and not yet given up on. (A 15m
-    // candle outlasts any order; the proposal is made young again so this holds for a 1m one too.)
+    // The next bucket opens while that order is still unanswered, and not yet given up on.
     w.state.now = at(7) * 1000 + 30_000;
     await w.db.patch(first!._id, { createdAt: w.state.now - HANDOFF_WINDOW_MS });
 
-    w.state.series = seriesEnding(6, PASS);
-    expect(await w.call(sweep)).toMatchObject({ proposed: 0, skipped: 1 });
-    expect(w.db.rows("trades")).toHaveLength(1);
-    // The candle counts as judged: it is not written later, when the trade has ended.
-    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(6));
+    expect(await sweepAfter(w, 6, PASS)).toMatchObject({ proposed: 0, notOpened: 1 });
+    expect(proposalsOf(w).map((row) => [row.status, row.handoff, row.handoffReason])).toEqual([
+      ["proposed", "pending", undefined],
+      ["undone", "not_opened", HANDOFF_MESSAGES.stillOpen],
+    ]);
+    // The bucket counts as judged: it is not judged again when the trade has ended.
+    expect((await w.db.get(strategyId))?.autopilotBucket).toBe(at(7));
 
     await w.db.patch(first!._id, { createdAt: at(8) * 1000 });
-    expect(await sweepAfter(w, 7, FAIL)).toMatchObject({ refused: 1, skipped: 0 });
-    expect(w.db.rows("trades").map((row) => row.status)).toEqual(["proposed", "refused"]);
+    expect(await sweepAfter(w, 7, FAIL)).toMatchObject({ refused: 1, notOpened: 0 });
+    expect(w.db.rows("trades").map((row) => row.status)).toEqual(["proposed", "undone", "refused"]);
   });
 
-  it("records nothing for a candle that passes while its trade is running, and proposes again once that has closed", async () => {
+  it("records a pass while its trade is running as not opened, and proposes again once that has closed", async () => {
     await seed(w, { autopilot: true, autopilotBucket: at(4) });
     await sweepAfter(w, 5, PASS);
     const [first] = proposalsOf(w);
     await w.call(autopilotData.begin, open(first!._id));
     const started = (await w.call(autopilotData.start, opened(first!._id, w.state.now))) as { ok: true; tradeId: string };
 
-    expect(await sweepAfter(w, 6, PASS)).toMatchObject({ proposed: 0, skipped: 1 });
+    expect(await sweepAfter(w, 6, PASS)).toMatchObject({ proposed: 0, notOpened: 1 });
     expect(await sweepAfter(w, 7, FAIL)).toMatchObject({ refused: 1 });
-    expect(proposalsOf(w)).toHaveLength(1);
+    expect(proposalsOf(w).filter((row) => row.handoff === "pending" || row.handoff === "opened")).toHaveLength(1);
 
     // The gateway closes the trade when its time is up, as it closes any timed trade.
     await w.call(timedData.update, { tradeId: started.tradeId, status: "closed", endedBy: "time", closedAt: w.state.now });
-    expect(await sweepAfter(w, 8, PASS)).toMatchObject({ proposed: 1, skipped: 0 });
-    expect(proposalsOf(w).map((row) => row.handoff)).toEqual(["opened", "pending"]);
+    expect(await sweepAfter(w, 8, PASS)).toMatchObject({ proposed: 1, notOpened: 0 });
+    expect(proposalsOf(w).map((row) => row.handoff)).toEqual(["opened", "not_opened", "pending"]);
   });
 
   it("proposes again after a proposal that was not opened", async () => {
@@ -564,6 +791,7 @@ describe("what the gateway is told is waiting", () => {
     const { strategyId } = await seed(w, { autopilot: true, autopilotBucket: at(4) });
     await sweepAfter(w, 5, FAIL);
     w.state.series = seriesEnding(5, PASS);
+    w.chain.state.close = PASS;
     await w.call(runProposer, { strategyId });
     expect(await w.call(autopilotData.pending, { nowMs: w.state.now })).toEqual([]);
 
@@ -779,22 +1007,31 @@ describe("what became of a proposal", () => {
     expect((await w.db.get(pressed.tradeId))?.status).toBe("proposed");
   });
 
-  it("is finished by the sweep when the gateway never picked it up, and says nothing was sent", async () => {
+  it("is finished when its scheduled expiry runs and the gateway never picked it up, and says nothing was sent", async () => {
     const { proposalId } = await proposal();
     w.state.now += HANDOFF_EXPIRY_MS - 1;
-    expect(await w.call(sweep)).toMatchObject({ expired: 0 });
+    expect(await w.call(autopilotData.expireOne, { tradeId: proposalId })).toBe(false);
     expect((await w.db.get(proposalId))?.handoff).toBe("pending");
     w.state.now += 1;
-    expect(await w.call(sweep)).toMatchObject({ expired: 1 });
+    expect(await w.call(autopilotData.expireOne, { tradeId: proposalId })).toBe(true);
     expect(await w.db.get(proposalId)).toMatchObject({ status: "undone", handoff: "not_opened", handoffReason: HANDOFF_MESSAGES.notPickedUp });
+    // Run again, or for a row that is not a pending proposal, it changes nothing.
+    expect(await w.call(autopilotData.expireOne, { tradeId: proposalId })).toBe(false);
   });
 
-  it("is finished by the sweep when its order went out and nothing was ever said, and says to look", async () => {
+  it("is finished when its order went out and nothing was ever said, and says to look", async () => {
     const { proposalId } = await proposal();
     await w.call(autopilotData.begin, open(proposalId));
     w.state.now += HANDOFF_EXPIRY_MS;
-    await w.call(sweep);
+    expect(await w.call(autopilotData.expireOne, { tradeId: proposalId })).toBe(true);
     expect(await w.db.get(proposalId)).toMatchObject({ status: "undone", handoff: "not_opened", handoffReason: HANDOFF_MESSAGES.noAnswer });
+  });
+
+  it("is finished by the next bucket's pass when its scheduled expiry was lost", async () => {
+    const { proposalId } = await proposal();
+    // The next bucket's tick, an hour on: the pass finishes every proposal past its time.
+    expect(await sweepAfter(w, 9, FAIL)).toMatchObject({ expired: 1 });
+    expect(await w.db.get(proposalId)).toMatchObject({ handoff: "not_opened", handoffReason: HANDOFF_MESSAGES.notPickedUp });
   });
 
   it("is withdrawn when its owner turns autopilot off before it went to the venue, and left alone once it has", async () => {
@@ -830,6 +1067,7 @@ describe("what the owner can and cannot do to an autopilot proposal from the app
     const { strategyId } = await seed(w, { autopilot: true, autopilotBucket: at(4) });
     await sweepAfter(w, 5, PASS);
     w.state.series = seriesEnding(5, FAIL);
+    w.chain.state.close = FAIL;
     w.state.now += 1_000;
     await w.call(runProposer, { strategyId });
     const proposalId = proposalsOf(w)[0]!._id;
@@ -915,7 +1153,7 @@ describe("the routes the gateway calls", () => {
     expect((await w.db.get(proposalId))?.handoff).toBe("pending");
   });
 
-  it("carry a proposal from the sweep to a running timed trade, with no token anywhere", async () => {
+  it("carry a proposal from the keeper tick to a running timed trade, with no token anywhere", async () => {
     const { alice } = await seed(w, { autopilot: true, autopilotBucket: at(4) });
     await sweepAfter(w, 5, PASS);
     w.state.subject = null;

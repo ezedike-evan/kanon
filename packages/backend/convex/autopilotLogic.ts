@@ -1,11 +1,11 @@
 /**
- * Autopilot's pure half: when a candle has closed, what the gateway is asked to
+ * Autopilot's pure half: when a bucket is judged, what the gateway is asked to
  * open for a proposal, how long a proposal may wait, and the shapes the gateway
  * sends (`http.ts`, `/autopilot/*`). No clock, no database.
  *
- * Autopilot decides nothing. The verdict on a candle is `proposeTrade`'s, the
- * same arithmetic a button press runs (`proposer.ts`); this file only says when
- * it is run and what follows a pass.
+ * Autopilot decides nothing. The verdict on a bucket is the on-chain gate's,
+ * the same transaction a button press sends (`proposer.ts`, `gate.ts`); this
+ * file only says when it is asked and what follows a pass.
  */
 
 import { z } from "zod";
@@ -46,8 +46,15 @@ export function sameMarket(a: string, b: string): boolean {
 // When a candle is judged
 // ---------------------------------------------------------------------------
 
-/** How many strategies one sweep reads. */
+/** How many strategies one autopilot pass reads. */
 export const MAX_ARMED = 200;
+
+/**
+ * The keeper tick judges a bucket for autopilot only in its first five
+ * minutes, right after the bucket's sample: that sample is the close of the
+ * candle before it, and later in the bucket it is old news.
+ */
+export const AUTOPILOT_JUDGE_WINDOW_SECONDS = 300;
 
 /** The candle length of a stored spec, or null for one that does not parse. */
 export function candleSecondsOf(spec: unknown): number | null {
@@ -61,11 +68,12 @@ export function lastClosedBucket(nowSeconds: number, candleSeconds: number): num
 }
 
 /**
- * What a sweep does with a strategy, given the candle it last judged.
+ * What autopilot does with a strategy, given the bucket it last judged
+ * (`autopilotData:claim`).
  *
- *   arm    autopilot was just turned on: remember the candle that has closed and judge nothing
- *   judge  a candle has closed since the one remembered
- *   wait   the newest closed candle is the one already judged
+ *   arm    nothing is remembered (a rule turned on before buckets were remembered): remember this one, judge nothing
+ *   judge  a bucket has begun since the one remembered
+ *   wait   this bucket is the one already judged
  */
 export function sweepStep(judgedBucket: number | null | undefined, closedBucket: number): "arm" | "judge" | "wait" {
   if (judgedBucket === null || judgedBucket === undefined) return "arm";
@@ -102,6 +110,7 @@ export function handoffExpired(createdAt: number, nowMs: number): boolean {
 
 export const HANDOFF_MESSAGES = {
   turnedOff: "Autopilot was turned off before this was opened. Nothing was sent.",
+  stillOpen: "The rule passed while its last autopilot trade was still open, so nothing was opened. Autopilot runs one trade at a time.",
   notPickedUp: "The gateway did not pick this up in time. Nothing was sent.",
   noAnswer: "No answer was recorded for this proposal's order. Check the position on the venue.",
 } as const;

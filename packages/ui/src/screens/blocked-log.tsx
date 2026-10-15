@@ -1,4 +1,4 @@
-import { Text, View } from 'react-native';
+import { Linking, Pressable, Text, View } from 'react-native';
 import { formatDecimal } from '@kanon/spec';
 import { AutopilotMark } from '../components/autopilot';
 import { Body, Screen, StatusBar, TabBar } from '../components/chrome';
@@ -16,6 +16,10 @@ import { routes, tradeRoute } from '../lib/routes';
  * primary metric, and this is where it is earned. Nothing here is styled as an
  * error and nothing apologises: a refusal is the product working, so its figure
  * is stated the way Analytics states it, as a loss avoided and never as a loss.
+ *
+ * A refusal the gate decided carries its transaction as its own pressable,
+ * beside the row and not inside it: the row opens the evidence chain, the hash
+ * opens the chain's explorer. One from before the gate says OFF-CHAIN there.
  */
 export function BlockedLogScreen() {
   const BLOCKED = useBlockedLog();
@@ -62,26 +66,43 @@ export function BlockedLogScreen() {
             </Text>
           ) : null}
           {BLOCKED.rows.map((row, i) => (
-            <Link
+            <View
               key={row.tradeId ?? `${row.symbol}-${row.at}`}
-              href={row.tradeId ? tradeRoute(row.tradeId) : routes.refused}
-              className={cx('flex-row gap-3 py-3.5', i > 0 && 'border-t border-hairline')}
-              aria-label={`Refusal ${i + 1} of ${BLOCKED.rows.length}: ${row.symbol}${row.autopilot ? ', by autopilot' : ''}`}
+              className={cx('py-3.5', i > 0 && 'border-t border-hairline')}
             >
-              <Dot className="mt-1.25 bg-refused" />
-              <View className="flex-1 gap-2">
-                <View className="flex-row items-baseline justify-between gap-3">
-                  <View className="min-w-0 flex-1 flex-row flex-wrap items-center gap-x-2.5 gap-y-1">
-                    <Text className="font-mono-medium text-12 text-bone">{row.symbol}</Text>
-                    {/* Judged at a candle close, with nobody pressing anything. */}
-                    {row.autopilot ? <AutopilotMark label="Autopilot" /> : null}
+              <Link
+                href={row.tradeId ? tradeRoute(row.tradeId) : routes.refused}
+                className="flex-row gap-3 active:opacity-60"
+                aria-label={`Refusal ${i + 1} of ${BLOCKED.rows.length}: ${row.symbol}${row.autopilot ? ', by autopilot' : ''}`}
+              >
+                <Dot className="mt-1.25 bg-refused" />
+                <View className="flex-1 gap-2">
+                  <View className="flex-row items-baseline justify-between gap-3">
+                    <View className="min-w-0 flex-1 flex-row flex-wrap items-center gap-x-2.5 gap-y-1">
+                      <Text className="font-mono-medium text-12 text-bone">{row.symbol}</Text>
+                      {/* Judged at a candle close, with nobody pressing anything. */}
+                      {row.autopilot ? <AutopilotMark label="Autopilot" /> : null}
+                    </View>
+                    <Num className="text-10 text-ash">{row.at}</Num>
                   </View>
-                  <Num className="text-10 text-ash">{row.at}</Num>
+                  {/* The predicate, and the number that failed it. Always both. */}
+                  <Num className="text-11p5 text-ash">{row.detail}</Num>
                 </View>
-                {/* The predicate, and the number that failed it. Always both. */}
-                <Num className="text-11p5 text-ash">{row.detail}</Num>
-              </View>
-            </Link>
+              </Link>
+              {/* The transaction is its own press, a sibling of the row's: one tap to the chain's word. */}
+              {row.tx ? (
+                <Pressable
+                  role="link"
+                  aria-label={`The gate transaction for refusal ${i + 1}, ${row.tx.short}, on ${row.tx.explorer}. Opens outside Kanon.`}
+                  onPress={() => void Linking.openURL(row.tx!.url).catch(() => undefined)}
+                  className="mt-1.5 ml-4.25 min-h-8 flex-row items-center self-start active:opacity-60"
+                >
+                  <Num className="text-10 tracking-w06 text-verified">GATE TX {row.tx.short}{'  ↗'}</Num>
+                </Pressable>
+              ) : row.decided === 'offchain' ? (
+                <Text className="mt-1.5 ml-4.25 font-mono text-10 tracking-w06 text-ash">DECIDED OFF-CHAIN</Text>
+              ) : null}
+            </View>
           ))}
         </View>
       </Body>

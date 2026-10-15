@@ -1,5 +1,6 @@
 import { Fragment, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { BacktestRow } from '../components/backtest-row';
 import { Body, Footer, NavBar, Screen } from '../components/chrome';
 import { ParamSheet } from '../components/param-sheet';
 import { FOCUS } from '../components/reel/trade-parts';
@@ -32,6 +33,9 @@ type View_ = 'plain' | 'parametric';
  * a rule being incomplete, not a fault, so it is set in the rule's colour like
  * the defaults are, never as an error. What the on-chain gate cannot see in a
  * rule (a liquidity sweep, on one price per bucket) is said in a neutral note.
+ *
+ * The rule under review can be tested on recorded prices from here. That is an
+ * offer, not a step: the pin and the change never wait for it.
  */
 export function SpecReviewScreen() {
   const nav = useNavigator();
@@ -237,6 +241,16 @@ export function SpecReviewScreen() {
             <Text className="mt-2 font-sans text-13 text-ash leading-[1.5]">{REVIEW.gateNote}</Text>
           </View>
         ) : null}
+
+        {/* Testing is offered, never required: nothing here waits for it, and pinning does not either. */}
+        <View className="mb-5 overflow-hidden rounded-sm border border-hairline bg-panel">
+          <BacktestRow href={routes.compileTest} />
+          <Text className="border-t border-hairline px-4 py-2.5 font-sans text-12 leading-[18px] text-ash">
+            {staged
+              ? 'Tests the rule as staged here. Sending the change does not wait for it.'
+              : 'Optional. Pinning does not wait for it.'}
+          </Text>
+        </View>
 
         {/* A pinned rule with a staged change: what it does, before it is sent. */}
         {staged && preview && preview.kind !== 'none' ? (

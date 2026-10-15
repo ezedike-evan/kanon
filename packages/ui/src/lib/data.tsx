@@ -54,6 +54,8 @@ import type {
 import type { AnalyticsState, NansenState } from '@kanon/spec';
 import { DEMO_ANALYTICS } from './analytics-demo';
 import { AUTOPILOT_DEMO, type AutopilotNote } from './autopilot';
+import { SAMPLE_BACKTEST } from './backtest-sample';
+import type { BacktestRead, BacktestSubject } from './backtest-types';
 
 const DEMO_ANALYTICS_STATE: AnalyticsState = { status: 'demo', report: DEMO_ANALYTICS };
 const NANSEN_NOT_CONNECTED: NansenState = { status: 'not_connected' };
@@ -116,7 +118,20 @@ export type BlockedRow = {
   tradeId?: string;
   /** Autopilot judged it at a candle close; nobody pressed anything. */
   autopilot?: boolean;
+  /** The gate transaction that refused it, on the explorer. Absent on a refusal decided off-chain. */
+  tx?: GateTx;
+  /** `offchain`: refused before every judgment went on-chain. */
+  decided?: 'chain' | 'offchain';
 };
+
+/** A gate transaction on its explorer: what a refusal's evidence link opens. */
+export interface GateTx {
+  hash: string;
+  /** `0x12ab34…cd56`. */
+  short: string;
+  url: string;
+  explorer: string;
+}
 
 export interface RuleData {
   ordinal: string;
@@ -153,9 +168,14 @@ export interface HomeStats {
 export interface RefusalData {
   predicate: string;
   reason: string;
-  requiredHigh: Decimal;
-  currentPrice: Decimal;
-  shortfall: Decimal;
+  /**
+   * The bar, the number and the gap between them. Null where the chain compared
+   * none: the gate could not evaluate the predicate, refused on the rule's side,
+   * or its own replay did not reproduce the bar.
+   */
+  requiredHigh: Decimal | null;
+  currentPrice: Decimal | null;
+  shortfall: Decimal | null;
   shortfallBps: number;
   at: string;
   block: string;
@@ -170,6 +190,17 @@ export interface RefusalData {
   tradeId: string;
   /** Present when autopilot judged the setup at a candle close, with nobody pressing anything. */
   autopilot?: AutopilotNote;
+  /** `chain`: the on-chain gate's verdict. `offchain`: a row from before every judgment went on-chain. Absent in the demo. */
+  decided?: 'chain' | 'offchain';
+  /** The gate transaction, and what the chain could and could not say. Present when `decided` is `chain`. */
+  gate?: {
+    tx: GateTx;
+    /** The predicate's window on the chain was not whole: it needs `needed` consecutive samples and has `recorded`. */
+    unevaluated?: { needed: number; recorded: number };
+    /** What the off-chain arithmetic said a moment before. The chain's verdict stands either way. */
+    offchainVerdict?: 'proposed' | 'refused';
+    previewDiffers?: boolean;
+  };
 }
 
 export interface CompilerData {
@@ -263,6 +294,8 @@ export interface ProposalData {
    * `entry`, `stop` and `size` stay the rule's own sizing, not what was sent.
    */
   autopilot?: AutopilotNote;
+  /** The gate transaction that passed it, on the explorer. Absent on a row decided off-chain. */
+  gateTx?: GateTx;
 }
 
 export interface TradeDetailData {
@@ -276,6 +309,8 @@ export interface TradeDetailData {
   claims: Claim[];
   /** Present when autopilot judged the setup: where it stands, what was sent, and the way to its timed trade. */
   autopilot?: AutopilotNote;
+  /** The gate transaction that decided it: the footer's evidence link. Absent on a row decided off-chain. */
+  gateTx?: GateTx;
 }
 
 export interface BlockedLogData {
@@ -453,6 +488,14 @@ export interface KanonDataSource {
    * only while the blocked log is mounted. Signed out it is the demo log.
    */
   useBlockedLog(): BlockedLogData;
+  /**
+   * Test on recorded prices: what the rule's stated stop and target would have
+   * done, walked over the recorded candles of its pair. A hook: opening the
+   * screen asks only for the stored answer, and a run (a server action that
+   * reads the candles) happens when `run()` is pressed. Signed out it is the
+   * labelled sample, and nothing is run.
+   */
+  useBacktest(subject: BacktestSubject): BacktestRead;
   /** Who is looking. `demo` renders fixtures; `live` renders the signed-in user's own rows. */
   session: KanonSession;
   /** The signed-in user's own row, or null. Never someone else's. */
@@ -676,6 +719,16 @@ const DEMO_SPOT_CLIENT: SpotClient = {
 const demoTimedOpen = async (): Promise<TimedOpenResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 const demoTimedClose = async (): Promise<TimedCloseResult> => ({ status: 'unavailable', message: SIGN_IN_TO_TRADE });
 
+/** Signed out the test screen is the sample, labelled as one: nothing is read and nothing is run. */
+const DEMO_BACKTEST: BacktestRead = {
+  state: { status: 'result', result: SAMPLE_BACKTEST, sample: true },
+  subject: { asset: SPEC.series.asset, timeframe: '15M' },
+  running: false,
+  note: null,
+  canRun: false,
+  run() {},
+};
+
 /**
  * The default source. Every figure comes straight from `lib/demo.ts`, so a
  * screen rendered with no provider mounted looks exactly like it did before
@@ -826,6 +879,7 @@ export const demoDataSource: KanonDataSource = {
   onboardingStrategy: { starters: [...ONBOARDING.starters] },
   useVaults: () => DEMO_VAULT_SOURCE,
   useBlockedLog: () => DEMO_BLOCKED_LOG,
+  useBacktest: () => DEMO_BACKTEST,
   session: { mode: 'demo', pending: false, signedIn: false, hasWallet: false },
   settings: { name: 'Demo', username: 'demo', email: null, hasWallet: false },
   // The same history Profile lists, so Home's "Rules pinned" and Profile's count are one number.

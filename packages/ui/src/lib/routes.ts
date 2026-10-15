@@ -22,6 +22,8 @@ export const routes = {
   compile: '/compile',
   compileReview: '/compile/review',
   compilePin: '/compile/pin',
+  /** Test on recorded prices: the spec under review, a draft or a staged change. */
+  compileTest: '/compile/test',
   proposal: '/trades/proposal',
   onboarding: '/onboarding',
   onboardingFund: '/onboarding/fund',
@@ -49,6 +51,8 @@ export const recordRoute = (id: string) => `${routes.profileRecords}?open=${enco
 export const timedTradeRoute = (timedTradeId: string) => recordRoute(`timed:${timedTradeId}`);
 export const loosenRoute = (ruleId: string) => `/rules/${ruleId}/loosen`;
 export const shareRoute = (ruleId: string) => `/share/${ruleId}`;
+/** Test on recorded prices: one of the person's own rules, as it is pinned (or drafted). */
+export const ruleTestRoute = (ruleId: string) => `/rules/${ruleId}/test`;
 
 /**
  * The chart, opened on one pair: `/chart?asset=BTC%2FUSD`. The chart reads it back
@@ -77,6 +81,7 @@ export const SCREEN_INDEX: ReadonlyArray<{ label: string; href: string }> = [
   { label: '02 · CHAT-TO-SPEC COMPILER', href: routes.compile },
   { label: '03 · SPEC REVIEW', href: routes.compileReview },
   { label: '04 · PINNING CEREMONY', href: routes.compilePin },
+  { label: '04B · TEST ON RECORDED PRICES', href: ruleTestRoute(RULE.id) },
   { label: '05 · TRADE PROPOSAL · UNDO WINDOW', href: routes.proposal },
   { label: '06 · TRADE DETAIL · EVIDENCE', href: tradeRoute(TRADE_ID) },
   { label: '07 · BLOCKED TRADES LOG', href: routes.blocked },

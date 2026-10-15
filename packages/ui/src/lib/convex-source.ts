@@ -160,6 +160,8 @@ export function useConvexKanonSource(input: {
   const undoTrade = hooks.useMutation(api.trades.undoTrade);
   const confirmTrade = hooks.useMutation(api.trades.confirmTrade);
   const setAutopilot = hooks.useMutation(api.strategies.setAutopilot);
+  // Test on recorded prices. Called only from the test screen, never at the root.
+  const backtest = hooks.useAction(api.backtest.run);
 
   const actions = useMemo<LiveActions>(
     () => ({
@@ -175,6 +177,7 @@ export function useConvexKanonSource(input: {
       undoTrade: (args) => undoTrade(args),
       confirmTrade: (args) => confirmTrade(args),
       setAutopilot: (args) => setAutopilot(args),
+      backtest: (args) => backtest(args),
     }),
     [
       compile,
@@ -189,6 +192,7 @@ export function useConvexKanonSource(input: {
       undoTrade,
       confirmTrade,
       setAutopilot,
+      backtest,
     ],
   );
 

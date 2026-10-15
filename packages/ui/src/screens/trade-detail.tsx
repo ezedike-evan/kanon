@@ -17,6 +17,11 @@ import { routes, shareRoute } from '../lib/routes';
  * A setup autopilot judged carries that above its evidence: where it stands
  * with the venue, what was asked for, the timed trade that was opened for it
  * (one press, and where the real fill is), or the reason nothing was.
+ *
+ * The chain's first claim is the on-chain gate's: its verdict, transaction,
+ * block, bucket and signer, and whether the off-chain check agreed. The footer
+ * opens that transaction. A row from before the gate says it was decided
+ * off-chain, and its footer keeps the pinned rule's own proof.
  */
 export function TradeDetailScreen({ id }: { id: string }) {
   const { rule: RULE, tradeDetail } = useKanonData();
@@ -120,11 +125,15 @@ export function TradeDetailScreen({ id }: { id: string }) {
       </Body>
 
       <Footer>
-        <EvidenceLink
-          label="Verify on-chain"
-          hash={RULE.txAbbrev}
-          href={shareRoute(RULE.id)}
-        />
+        {TRADE.gateTx ? (
+          <EvidenceLink
+            label="View the gate transaction"
+            hash={TRADE.gateTx.short}
+            href={TRADE.gateTx.url}
+          />
+        ) : (
+          <EvidenceLink label="Verify on-chain" hash={RULE.txAbbrev} href={shareRoute(RULE.id)} />
+        )}
       </Footer>
     </Screen>
   );

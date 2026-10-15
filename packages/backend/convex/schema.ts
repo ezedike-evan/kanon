@@ -9,6 +9,42 @@ export const decimal = v.object({
 });
 
 /**
+ * The on-chain judgment a `trades` row records (`gateLogic.ts`, `GateRecord`):
+ * the `RefusalGate.evaluateOnChain` transaction Kanon's signer sent for it, and
+ * what its event said. The chain's verdict is the row's `status`; what the
+ * off-chain arithmetic said a moment before is kept beside it, never over it.
+ * int256 and wei are base-10 strings.
+ */
+export const gateRecord = v.object({
+  chainId: v.number(),
+  gate: v.string(),
+  series: v.string(),
+  chainStrategyId: v.string(),
+  txHash: v.string(),
+  blockNumber: v.number(),
+  /** Unix seconds of the block the verdict was mined in, and the 15-minute bucket (over 900) the gate judged. */
+  blockTime: v.number(),
+  bucketIndex: v.number(),
+  signer: v.string(),
+  /** The limit sent, which Monad bills, and what it cost. */
+  gasLimit: v.string(),
+  costWei: v.string(),
+  /** The series' scale, read with the replay. Absent when the replay could not be read. */
+  priceExpo: v.optional(v.number()),
+  verdict: v.union(v.literal("proposed"), v.literal("refused")),
+  /** The spec hash the gate read from the registry, as its event carries it. */
+  specHash: v.string(),
+  /** A refusal's `predicateSymbol` and `decidingValue`, as the event carries them. */
+  symbol: v.optional(v.string()),
+  decidingValue: v.optional(v.string()),
+  offchainVerdict: v.union(v.literal("proposed"), v.literal("refused")),
+  /** Present when the event said something else than `previewOnChain` a moment before. The event decides. */
+  previewDiffers: v.optional(v.boolean()),
+  /** The predicate the gate's window could not hold, with what it needs: refused with 0, not failed by a number. */
+  couldNotEvaluate: v.optional(v.object({ predicateId: v.string(), needed: v.number(), recorded: v.number() })),
+});
+
+/**
  * Asset classes the ledger accepts. Mirrors `ASSET_CLASSES` in
  * packages/spec/src/assets.ts, which is where enabling a new class starts.
  * Add its literal here too; the check below fails to compile until the two
@@ -75,9 +111,10 @@ export default defineSchema({
     /** On: the rule is judged on every closed candle with nobody pressing anything (`autopilot.ts`). */
     autopilot: v.boolean(),
     /**
-     * Unix seconds: the start of the last closed candle autopilot judged. Absent
-     * from the moment autopilot is turned on until its first sweep, which only
-     * writes this, so turning it on never replays candles that closed before.
+     * Unix seconds: the start of the last 15-minute bucket autopilot judged on
+     * the gate (its one sample is the close of the candle before it). Set to the
+     * bucket autopilot is turned on in, so turning it on never judges a price
+     * from before; claimed before each gate transaction (`autopilotData:claim`).
      */
     autopilotBucket: v.optional(v.number()),
     pendingSpec: v.optional(v.any()),
@@ -189,6 +226,17 @@ export default defineSchema({
     timedTradeId: v.optional(v.id("timedTrades")),
     /** Why nothing was opened, in the venue's words. */
     handoffReason: v.optional(v.string()),
+    /**
+     * The gate transaction that decided this row (`gateRecord`). Absent on a row
+     * from before every judgment went on-chain: that verdict was decided off-chain.
+     */
+    gate: v.optional(gateRecord),
+    /**
+     * Where `results` come from: `chain`, the gate's own window replayed over
+     * the series' recorded candles; `offchain`, Convex's candles. Absent on a
+     * row from before the gate, whose results are all off-chain.
+     */
+    resultsSource: v.optional(v.union(v.literal("chain"), v.literal("offchain"))),
   })
     .index("by_strategy", ["strategyId"])
     .index("by_status", ["status"])
@@ -581,4 +629,29 @@ export default defineSchema({
     lastError: v.optional(v.string()),
     lastErrorAt: v.optional(v.number()),
   }),
+
+  /**
+   * The last backtest of each spec (`backtest.ts`), one row per spec hash,
+   * replaced by the next run. A run is a pure function of the spec and the
+   * candles through `throughBucket`, so while that is still the newest closed
+   * candle the row is the answer, and a reopened test screen reads this one
+   * row instead of thousands of candles. Nothing per-user: two people with the
+   * same spec get the same answer.
+   */
+  backtests: defineTable({
+    specHash: v.string(),
+    asset: v.string(),
+    bucketSeconds: v.number(),
+    /** Unix seconds: the start of the newest closed candle when it ran. Candles after it were not read. */
+    throughBucket: v.number(),
+    /** Milliseconds. */
+    computedAt: v.number(),
+    engineVersion: v.number(),
+    /**
+     * `BacktestOutcome` from `backtestLogic.ts`, exactly as the engine returned
+     * it: a result with every trade, or a halt with its sentence. Both carry
+     * the constants they ran under in `params`.
+     */
+    outcome: v.any(),
+  }).index("by_spec", ["specHash"]),
 });

@@ -29,16 +29,11 @@ if (process.env.PREDICT_MARKETS_SWEEP === "on") {
   crons.interval("sweep predict markets", { minutes: sweepMinutes }, sweepMarkets, {});
 }
 
-// Autopilot: judge each strategy it is on for once per closed candle of its own timeframe
-// (`autopilot.ts`). Every minute whatever the override above says, because the shortest candle
-// a spec can be written on closes every minute. With autopilot on for nothing it is one read.
-const sweepAutopilot = makeFunctionReference<"action", Record<string, never>>("autopilot:sweep");
-crons.interval("sweep autopilot", { minutes: 1 }, sweepAutopilot, {});
-
 // The keeper: samples the on-chain series of every pair a pinned rule uses, once per 15-minute
 // bucket, with Kanon's own signer (`keeper.ts`). Every minute, so a bucket is sampled within a
 // minute of opening. Does nothing unless KEEPER_ENABLED=on; on, a minute with nothing to sample
-// reads one small row.
+// reads one small row. Autopilot runs inside it: once per bucket, after the sample, every rule it
+// is on for is judged on the gate (`autopilot.ts`). There is no separate autopilot sweep.
 const keeperTick = makeFunctionReference<"action", Record<string, never>>("keeper:tick");
 crons.interval("keeper tick", { minutes: 1 }, keeperTick, {});
 

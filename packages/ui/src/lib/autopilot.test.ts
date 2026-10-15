@@ -287,6 +287,11 @@ describe('throwing the switch', () => {
     // A server that has not been given autopilot yet.
     const missing = new Error("Could not find public function for 'strategies:setAutopilot'. Did you forget to run `npx convex dev`?");
     expect(autopilotFailureLine(missing, true)).toBe('This server does not run autopilot yet. Nothing changed.');
+    // Why the gate cannot judge a rule is the server's sentence for the person, and is shown as it is.
+    const hourly = Object.assign(new Error('[CONVEX M(strategies:setAutopilot)] Uncaught ConvexError'), {
+      data: { code: 'not_eligible', message: 'The on-chain gate judges rules written on 15-minute candles, and this one is written on 1h candles, so it cannot be asked.' },
+    });
+    expect(autopilotFailureLine(hourly, true)).toMatch(/^The on-chain gate judges rules written on 15-minute candles/);
     for (const line of [autopilotFailureLine(draft, true), autopilotFailureLine(missing, false), autopilotFailureLine('boom', true)]) {
       expect(line).not.toMatch(/CONVEX|Request ID|handler|Uncaught|sorry|oops/i);
     }

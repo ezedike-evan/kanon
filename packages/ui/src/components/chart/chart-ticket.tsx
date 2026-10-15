@@ -37,6 +37,7 @@ import { Skeleton } from '../skeleton';
 import { Label } from '../stat';
 import { Num } from '../ui';
 import { OpenPositions, SIDE_WORD, SideGlyph } from './chart-trades';
+import { useGateWait } from '../../lib/gate-wait';
 
 /*
  * The order ticket: a real market order on the venue, for the asset on the
@@ -499,11 +500,14 @@ function RuleCheck({
   /** 44px tall, for a thumb. */
   roomy?: boolean;
 }) {
+  // The check is a gate transaction: seconds, not a moment. A long wait is explained once, in neutral type.
+  const slow = useGateWait(busy);
+  const said = note ?? slow;
   return (
     <View className="gap-1.5">
       <Pressable
         role="button"
-        aria-label="Check the market against the pinned rule. Nothing is placed."
+        aria-label="Check the market against the pinned rule on the on-chain gate. Nothing is placed."
         aria-busy={busy}
         disabled={busy}
         onPress={onPress}
@@ -516,13 +520,13 @@ function RuleCheck({
         <View className="min-w-0 flex-1 flex-row items-center gap-2">
           <View className="size-1.75 shrink-0 bg-signal" />
           <Text numberOfLines={1} className="shrink font-sans text-12 text-bone">
-            {busy ? 'Checking against the rule…' : 'Check against the rule'}
+            {busy ? 'Asking the on-chain gate…' : 'Check against the rule'}
           </Text>
         </View>
         <Icon name="chevron-right" size={14} color="ash" />
       </Pressable>
-      {note ? (
-        <Num className="text-10 leading-4 text-ash">{note}</Num>
+      {said ? (
+        <Num className="text-10 leading-4 text-ash">{said}</Num>
       ) : roomy ? (
         <Text className="font-sans text-11 leading-4 text-ash">
           The rule proposes the trade or refuses it. Nothing is placed by that check.

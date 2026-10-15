@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Linking, Pressable, Text, View } from 'react-native';
 import { Link } from '../nav';
 import { cx } from '../lib/cx';
 
@@ -182,6 +182,9 @@ export function DangerButton(props: ButtonProps) {
 /**
  * Evidence is one tap from anywhere a claim is shown. If it took two, the word
  * "verifiable" would be marketing.
+ *
+ * `href` is a route in the app, or an `https://` address (a transaction on the
+ * chain's explorer), which opens outside it.
  */
 export function EvidenceLink({
   label,
@@ -194,16 +197,28 @@ export function EvidenceLink({
   href: string;
   className?: string | undefined;
 }) {
-  return (
-    <Link
-      href={href}
-      className={cx(
-        'flex-row items-center justify-between border-y border-hairline py-4',
-        className,
-      )}
-    >
+  const box = cx('flex-row items-center justify-between border-y border-hairline py-4 active:opacity-60', className);
+  const inner = (
+    <>
       <Text className="font-mono text-12 tracking-w04 text-verified">{label}</Text>
       <Num className="text-11 text-verified">{hash}{'  ↗'}</Num>
+    </>
+  );
+  if (/^https?:\/\//i.test(href)) {
+    return (
+      <Pressable
+        role="link"
+        aria-label={`${label}${hash ? `, ${hash}` : ''}. Opens the block explorer, outside Kanon.`}
+        className={box}
+        onPress={() => void Linking.openURL(href).catch(() => undefined)}
+      >
+        {inner}
+      </Pressable>
+    );
+  }
+  return (
+    <Link href={href} className={box}>
+      {inner}
     </Link>
   );
 }

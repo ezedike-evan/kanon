@@ -61,6 +61,7 @@ export {
 } from './lib/live';
 export { useConvexKanonSource, type ConvexHooks, type ConvexSession } from './lib/convex-source';
 export type { LiveStrategy, LiveTrade, LiveModelled } from './lib/live-map';
+export type * from './lib/backtest-types';
 export {
   PinError,
   MONAD_CHAIN_ID,
@@ -109,6 +110,7 @@ export { HomeScreen } from './screens/home';
 export { CompilerScreen } from './screens/compiler';
 export { SpecReviewScreen } from './screens/spec-review';
 export { PinningScreen } from './screens/pinning';
+export { BacktestScreen } from './screens/backtest';
 export { ProposalScreen } from './screens/proposal';
 export { TradeDetailScreen } from './screens/trade-detail';
 export { BlockedLogScreen } from './screens/blocked-log';

@@ -236,6 +236,7 @@ export const SIGNER_DEFAULTS = {
   warnBalanceWei: WEI_PER_MON,
   maxFeePerGasWei: 250n * WEI_PER_GWEI,
   dailySpendWei: 4n * WEI_PER_MON,
+  keeperReserveWei: (5n * WEI_PER_MON) / 2n,
 } as const;
 
 export const GATE_DEFAULTS = {
@@ -255,6 +256,11 @@ export interface SignerEnv {
   maxFeePerGasWei: bigint;
   /** What the signer may spend in one UTC day, keeper and gate together. */
   dailySpendWei: bigint;
+  /**
+   * The part of that day the gate may not spend: the keeper's share. A gate check stops at
+   * `dailySpendWei - keeperReserveWei`, so judging can never starve the samples it judges on.
+   */
+  keeperReserveWei: bigint;
 }
 
 /**
@@ -271,6 +277,7 @@ export function parseSignerEnv(env: Env): EnvResult<SignerEnv> {
       KEEPER_WARN_BALANCE_MON: mon.optional(),
       KEEPER_MAX_FEE_GWEI: gwei.optional(),
       SIGNER_DAILY_SPEND_MON: mon.optional(),
+      KEEPER_RESERVE_MON: mon.optional(),
     }),
     pick(env, [
       "KEEPER_PRIVATE_KEY",
@@ -278,6 +285,7 @@ export function parseSignerEnv(env: Env): EnvResult<SignerEnv> {
       "KEEPER_WARN_BALANCE_MON",
       "KEEPER_MAX_FEE_GWEI",
       "SIGNER_DAILY_SPEND_MON",
+      "KEEPER_RESERVE_MON",
     ]),
   );
   if (!r.ok) return r;
@@ -290,6 +298,7 @@ export function parseSignerEnv(env: Env): EnvResult<SignerEnv> {
       warnBalanceWei: v.KEEPER_WARN_BALANCE_MON ?? SIGNER_DEFAULTS.warnBalanceWei,
       maxFeePerGasWei: v.KEEPER_MAX_FEE_GWEI ?? SIGNER_DEFAULTS.maxFeePerGasWei,
       dailySpendWei: v.SIGNER_DAILY_SPEND_MON ?? SIGNER_DEFAULTS.dailySpendWei,
+      keeperReserveWei: v.KEEPER_RESERVE_MON ?? SIGNER_DEFAULTS.keeperReserveWei,
     },
   };
 }

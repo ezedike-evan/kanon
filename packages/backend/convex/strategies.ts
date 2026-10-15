@@ -35,8 +35,9 @@ import {
   type RpcReceipt,
 } from "./chainLogic";
 import { getReceiptSoon, rpcFor, rpcIsOnChain } from "./chainReads";
+import { GATE_BUCKET_SECONDS, gateEligibility } from "./gateLogic";
 import { recomputeKeeperFeeds } from "./keeperData";
-import { describeEnvProblem, parseRegistryEnv, type RegistryEnv } from "./serverEnv";
+import { describeEnvProblem, parseGateEnv, parseKeeperSwitch, parseRegistryEnv, type RegistryEnv } from "./serverEnv";
 import { resolveWallet } from "./users";
 
 /**
@@ -743,14 +744,21 @@ export const withdrawAmendment = mutation({
   },
 });
 
+/** Why autopilot is not turned on for a rule the gate cannot judge. A sentence the app shows as it is. */
+const AUTOPILOT_NOT_CONFIGURED = "Autopilot is judged on the on-chain gate, which is not configured on this deployment.";
+const AUTOPILOT_SIGNER_OFF = "Autopilot is judged on the on-chain gate, and Kanon's signer is switched off on this deployment, so nothing would judge it.";
+
 /**
  * Turns autopilot on or off for the caller's own strategy. On, the rule is
- * judged on every closed candle of its own timeframe with nobody pressing
- * anything, and a candle that passes opens a timed trade (`autopilot.ts`).
+ * judged on the on-chain gate once per 15-minute bucket with nobody pressing
+ * anything, and a bucket that passes opens a timed trade (`autopilot.ts`).
  *
- * It can only be turned on for a rule that is enforced: a draft is judged by
- * nothing. Turning it on judges no candle that has already closed; the first
- * sweep after it only notes where it starts. Turning it off withdraws any
+ * It can only be turned on for a rule that is enforced (a draft is judged by
+ * nothing) and that the gate on this deployment can judge: written on 15m
+ * candles, pinned and read from the chain, on this deployment's chain and
+ * registry, on a series the keeper samples. Anything else is refused with a
+ * sentence (`not_eligible`). Turning it on remembers the bucket it is turned
+ * on in, so no price from before is judged. Turning it off withdraws any
  * proposal still waiting to be opened. A trade already running runs to its
  * time, or until its owner ends it.
  *
@@ -772,7 +780,18 @@ export const setAutopilot = mutation({
     if (args.on && strategy.pinVerified !== true) {
       throw new Error("this rule's pin was recorded before pins were checked on-chain; pin it again to run it on autopilot");
     }
-    await ctx.db.patch(strategy._id, { autopilot: args.on, autopilotBucket: undefined });
+    let autopilotBucket: number | undefined;
+    if (args.on) {
+      const gate = parseGateEnv(process.env);
+      if (!gate.ok) throw new ConvexError({ code: "not_eligible", message: AUTOPILOT_NOT_CONFIGURED });
+      const on = parseKeeperSwitch(process.env);
+      if (!on.ok || !on.value) throw new ConvexError({ code: "not_eligible", message: AUTOPILOT_SIGNER_OFF });
+      const eligible = gateEligibility(strategy, parseSpec(strategy.spec), gate.value);
+      if (!eligible.ok) throw new ConvexError({ code: "not_eligible", message: eligible.message });
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      autopilotBucket = nowSeconds - (nowSeconds % GATE_BUCKET_SECONDS);
+    }
+    await ctx.db.patch(strategy._id, { autopilot: args.on, autopilotBucket });
     if (!args.on) await withdrawWaiting(ctx, strategy._id);
     return { autopilot: args.on };
   },

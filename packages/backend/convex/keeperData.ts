@@ -148,6 +148,20 @@ export const noteTick = internalMutation({
 });
 
 /**
+ * Remembers that autopilot judged `bucket` (unix seconds over 900) clean: every
+ * rule it is on for was judged or settled. The tick does not hand that bucket
+ * to autopilot again. Never moves backwards.
+ */
+export const noteJudged = internalMutation({
+  args: { bucket: v.number() },
+  handler: async (ctx, args) => {
+    const row = await ensureRow(ctx);
+    if (row.judgedBucket === undefined || row.judgedBucket < args.bucket) await ctx.db.patch(row._id, { judgedBucket: args.bucket });
+    return null;
+  },
+});
+
+/**
  * Recomputes the feeds in use by hand: run once after `SERIES_*_ADDRESS` is
  * set, to count rules pinned before the keeper existed.
  *

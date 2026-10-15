@@ -10,6 +10,7 @@ import type {
   TickerState,
 } from './domain-types';
 import type { BlockedLogData } from './data';
+import type { BacktestRead, BacktestSubject } from './backtest-types';
 import { useKanonSelector } from './data';
 import { shallowEqual } from './store';
 import type { CopyLeadsState, SparklineState } from './home-types';
@@ -97,6 +98,11 @@ export function useVaults(): VaultSource {
 /** Refusals and what they would have cost. Works the modelled outcomes out only while mounted. */
 export function useBlockedLog(): BlockedLogData {
   return useKanonSelector((s) => s.useBlockedLog)();
+}
+
+/** Test on recorded prices, for the spec under review or one of the person's rules. See `lib/backtest.ts`. */
+export function useBacktest(subject: BacktestSubject): BacktestRead {
+  return useKanonSelector((s) => s.useBacktest)(subject);
 }
 
 /** The shared trading account orders go to. Read (a server action) only while a ticket is mounted. */

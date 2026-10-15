@@ -30,6 +30,7 @@ import {
   ruleFromStrategy,
   safeSpec,
   shareCardFromStrategy,
+  gateTxOf,
   tradeDetailFromTrade,
   utcFull,
   utcShort,
@@ -246,17 +247,20 @@ describe('refusalFromTrade', () => {
   it('names the predicate and the exact numbers, without apology', () => {
     const r = refusalFromTrade(bosRefusal, RULE_04)!;
     expect(r.predicate).toBe('bos_bullish');
-    expect(formatDecimal(r.requiredHigh)).toBe('68,412.50');
-    expect(formatDecimal(r.currentPrice)).toBe('68,207.30');
-    expect(formatDecimal(r.shortfall)).toBe('−205.20');
+    expect(formatDecimal(r.requiredHigh!)).toBe('68,412.50');
+    expect(formatDecimal(r.currentPrice!)).toBe('68,207.30');
+    expect(formatDecimal(r.shortfall!)).toBe('−205.20');
     expect(r.shortfallBps).toBe(-30);
     expect(r.reason).toContain('closed candle above the prior swing high');
     expect(r.requiredLabel).toBe('REQUIRED HIGH');
     expect(r.unit).toBe('price');
     expect(r.at).toBe('2026-09-02 14:32:07 UTC');
     expect(r.tradeId).toBe('t-refused');
-    // Not claimed to be on-chain: the proposer judged it against the pinned spec.
+    // Not claimed to be on-chain: a row from before the gate was judged off-chain, and says so.
     expect(r.label).not.toMatch(/on-chain/i);
+    expect(r.label).toBe('DECIDED OFF-CHAIN, BEFORE THE GATE');
+    expect(r.decided).toBe('offchain');
+    expect(r.gate).toBeUndefined();
     expect(r.reason.toLowerCase()).not.toMatch(/sorry|error|failed|oops/);
   });
 
@@ -316,8 +320,8 @@ describe('proposalFromTrade', () => {
 describe('tradeDetailFromTrade', () => {
   it('lists every predicate as a claim with the candle that decided it', () => {
     const d = tradeDetailFromTrade(proposed, RULE_04);
-    expect(d.claims.map((c) => c.symbol)).toEqual(['bos_bullish', 'fvg_present']);
-    const bos = d.claims[0]!;
+    expect(d.claims.map((c) => c.symbol)).toEqual(['DECIDED OFF-CHAIN', 'bos_bullish', 'fvg_present']);
+    const bos = d.claims[1]!;
     expect(bos.fields).toContainEqual(['close', '68,441.20']);
     expect(bos.fields).toContainEqual(['prior swing extreme', '68,412.50']);
     expect(bos.fields).toContainEqual(['comparison', '68,441.20 > 68,412.50']);
@@ -331,7 +335,7 @@ describe('tradeDetailFromTrade', () => {
       { ...proposed, scan: { from: 1788358500, to: 1788359400, asOf: 1788359400 } },
       RULE_04,
     );
-    const field = d.claims[0]!.fields.find(([k]) => k === 'scan window');
+    const field = d.claims[1]!.fields.find(([k]) => k === 'scan window');
     expect(field?.[1]).toMatch(/UTC to .* UTC$/);
   });
 
@@ -345,8 +349,11 @@ describe('tradeDetailFromTrade', () => {
   it('a refused trade is evidence too, with the unmet claim marked', () => {
     const d = tradeDetailFromTrade(bosRefusal, RULE_04);
     expect(d.side).toBe('LONG · REFUSED');
-    expect(d.claims[0]!.badge).toBe('NOT MET');
-    expect(d.claims[0]!.tone).toBe('ash');
+    expect(d.claims[1]!.badge).toBe('NOT MET');
+    expect(d.claims[1]!.tone).toBe('ash');
+    // Decided before the gate: said, with no transaction to point at.
+    expect(d.claims[0]).toMatchObject({ symbol: 'DECIDED OFF-CHAIN', badge: 'OFF-CHAIN', tone: 'ash' });
+    expect(d.gateTx).toBeUndefined();
   });
 });
 
@@ -357,6 +364,7 @@ describe('blocked log', () => {
       at: '09-02 14:32',
       detail: 'req 68,412.50 · got 68,207.30 · −205.20',
       tradeId: 't-refused',
+      decided: 'offchain',
     });
   });
 
@@ -744,7 +752,7 @@ describe('autopilot on the rows a screen draws', () => {
     expect(tradeDetailFromTrade(opened, RULE_04).side).toBe('LONG · OPENED');
     expect(tradeDetailFromTrade(opened, RULE_04).autopilot?.timedTradeId).toBe('tt-1');
     // The evidence chain is the same arithmetic a button press records.
-    expect(tradeDetailFromTrade(opened, RULE_04).claims.map((c) => c.symbol)).toEqual(['bos_bullish', 'fvg_present']);
+    expect(tradeDetailFromTrade(opened, RULE_04).claims.map((c) => c.symbol)).toEqual(['DECIDED OFF-CHAIN', 'bos_bullish', 'fvg_present']);
   });
 
   it('a refusal autopilot recorded is a refusal like any other, and says who asked', () => {
@@ -756,5 +764,135 @@ describe('autopilot on the rows a screen draws', () => {
     expect(blockedRow(refused, RULE_04)).toMatchObject({ symbol: 'bos_bullish', autopilot: true });
     // It still counts as the rule working.
     expect(countTrades([refused, opened])).toEqual({ taken: 1, blocked: 1 });
+  });
+});
+
+describe('a row the on-chain gate decided', () => {
+  const TX = `0x${'cd'.repeat(32)}`;
+  // 2026-09-02 14:45 UTC: the bucket the gate judged, and its block 40 s into it.
+  const BUCKET = Date.parse('2026-09-02T14:45:00Z') / 1000 / 900;
+  const gate = {
+    chainId: 10143,
+    gate: '0x388f55962954c5083d885543af22b1b6ee640ec0',
+    series: '0x74c4b8710fb83dcc18c1a5ae2e35a63dc005257a',
+    chainStrategyId: '0',
+    txHash: TX,
+    blockNumber: 48_000_123,
+    blockTime: BUCKET * 900 + 40,
+    bucketIndex: BUCKET,
+    signer: '0xe0072e39d6fb592bafb3c6783710c1b24ec601b4',
+    gasLimit: '317628',
+    priceExpo: -8,
+    verdict: 'refused' as const,
+    symbol: 'bos_bullish',
+    decidingValue: '6820730000000',
+    offchainVerdict: 'refused' as const,
+  };
+  const onChain = (v: string) => parseDecimal(v, 8);
+  const gateRefusal: LiveTrade = {
+    ...bosRefusal,
+    _id: 't-gate',
+    failingValue: onChain('68207.30'),
+    requiredValue: onChain('68412.50'),
+    evidenceRefs: [`monad:10143/tx/${TX}`, 'pyth/btc-usd#900s@1788359400'],
+    resultsSource: 'chain',
+    gate,
+    results: [{ ...bosRefusal.results![0]!, decidingValue: onChain('68207.30'), referenceValue: onChain('68412.50') }],
+  };
+
+  it('links to the gate transaction on its own chain\'s explorer', () => {
+    expect(gateTxOf(gateRefusal)).toEqual({
+      hash: TX,
+      short: `0xcdcdcd…cdcd`,
+      url: `https://testnet.monadscan.com/tx/${TX}`,
+      explorer: 'Monadscan',
+    });
+    expect(gateTxOf({ gate: { ...gate, chainId: 143 } })?.url).toBe(`https://monadscan.com/tx/${TX}`);
+    expect(gateTxOf(bosRefusal)).toBeNull();
+  });
+
+  it('is refused by the on-chain gate, with the block, the bucket and the chain\'s sample', () => {
+    const r = refusalFromTrade(gateRefusal, RULE_04)!;
+    expect(r).toMatchObject({
+      label: 'REFUSED BY THE ON-CHAIN GATE',
+      predicate: 'bos_bullish',
+      block: 'BLOCK 48000123 · BUCKET 09-02 14:45 UTC',
+      at: '2026-09-02 14:45:40 UTC',
+      actualSub: 'CHAIN SAMPLE · BTC / USD · 15M',
+      decided: 'chain',
+      gate: { tx: { url: `https://testnet.monadscan.com/tx/${TX}` }, offchainVerdict: 'refused' },
+    });
+    expect(formatDecimal(r.requiredHigh!)).toBe('68,412.50000000');
+    expect(formatDecimal(r.currentPrice!)).toBe('68,207.30000000');
+    expect(r.shortfallBps).toBe(-30);
+    expect(r.reason.toLowerCase()).not.toMatch(/sorry|error|failed|oops/);
+  });
+
+  it('says could not evaluate, and how many samples it needs, with no number shown as if one decided it', () => {
+    const young: LiveTrade = {
+      ...gateRefusal,
+      failingValue: undefined as never,
+      requiredValue: undefined as never,
+      results: [],
+      gate: { ...gate, decidingValue: '0', couldNotEvaluate: { predicateId: 'p1', needed: 21, recorded: 3 } },
+    };
+    const r = refusalFromTrade(young, RULE_04)!;
+    expect(r).toMatchObject({ requiredHigh: null, currentPrice: null, shortfall: null, gate: { unevaluated: { needed: 21, recorded: 3 } } });
+    expect(r.reason).toBe(
+      'Could not evaluate: bos_bullish needs 21 consecutive 15m samples on the chain, and the series has 3. Until it has them, the gate refuses.',
+    );
+    expect(blockedRow(young, RULE_04)).toMatchObject({
+      detail: 'could not evaluate · needs 21 consecutive 15m samples · has 3',
+      decided: 'chain',
+      tx: { short: '0xcdcdcd…cdcd' },
+    });
+  });
+
+  it('shows only the chain\'s number when the replay did not reproduce the bar', () => {
+    const r = refusalFromTrade({ ...gateRefusal, requiredValue: undefined as never }, RULE_04)!;
+    expect(r.currentPrice).toEqual(onChain('68207.30'));
+    expect(r.requiredHigh).toBeNull();
+    expect(r.shortfall).toBeNull();
+  });
+
+  it("states the gate's own refusals in words: the rule's side, a retired rule", () => {
+    const side = refusalFromTrade(
+      { ...gateRefusal, failedPredicateId: undefined as never, failedSymbol: 'SIDE_MISMATCH', failingValue: undefined as never, requiredValue: undefined as never, gate: { ...gate, symbol: 'SIDE_MISMATCH', decidingValue: '1' } },
+      RULE_04,
+    )!;
+    expect(side).toMatchObject({ predicate: 'SIDE_MISMATCH', reason: 'The rule takes longs only.', requiredHigh: null });
+  });
+
+  it('says so when the off-chain check would have passed it', () => {
+    expect(refusalFromTrade({ ...gateRefusal, gate: { ...gate, offchainVerdict: 'proposed' } }, RULE_04)!.gate).toMatchObject({ offchainVerdict: 'proposed' });
+  });
+
+  it('puts the gate first in the evidence chain, and keeps each outcome with its own candle', () => {
+    const d = tradeDetailFromTrade(gateRefusal, RULE_04);
+    expect(d.claims.map((c) => c.symbol)).toEqual(['ON-CHAIN GATE', 'bos_bullish']);
+    expect(d.claims[0]).toMatchObject({ badge: 'ON-CHAIN', tone: 'long', summary: 'REFUSED · BLOCK 48000123' });
+    expect(d.claims[0]!.fields).toEqual([
+      ['verdict', 'refused · bos_bullish · 6820730000000'],
+      ['transaction', '0xcdcdcd…cdcd'],
+      ['block', '48000123'],
+      ['bucket', '2026-09-02 14:45:00 UTC · 900s'],
+      ['signer', '0xe0072e…01b4'],
+      ['gas limit', '317628'],
+      ['off-chain said', 'refused too'],
+      ['outcomes below', "replayed on the chain's candles"],
+    ]);
+    // The transaction is the gate's claim; the outcome keeps its candle, not the transaction.
+    expect(d.claims[1]!.fields).toContainEqual(['evidence ref', 'pyth/btc-usd#900s@1788359400']);
+    expect(d.gateTx?.url).toBe(`https://testnet.monadscan.com/tx/${TX}`);
+  });
+
+  it('a pass the gate decided carries its transaction to the proposal screen', () => {
+    const pass: LiveTrade = { ...proposed, gate: { ...gate, verdict: 'proposed', symbol: undefined as never, decidingValue: undefined as never, previewDiffers: true } };
+    expect(proposalFromTrade(pass, RULE_04, T)!.gateTx?.short).toBe('0xcdcdcd…cdcd');
+    const claim = tradeDetailFromTrade(pass, RULE_04).claims[0]!;
+    expect(claim.summary).toBe('PASSED · BLOCK 48000123');
+    expect(claim.fields).toContainEqual(['off-chain said', 'refused']);
+    expect(claim.fields).toContainEqual(['preview', 'said otherwise; the transaction decides']);
+    expect(proposalFromTrade(proposed, RULE_04, T)!.gateTx).toBeUndefined();
   });
 });

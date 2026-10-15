@@ -223,9 +223,9 @@ describe("the feeds in use", () => {
 });
 
 describe("the cron", () => {
-  it("ticks the keeper every minute by the name it is exported under, and keeps the autopilot sweep", () => {
+  it("ticks the keeper every minute by the name it is exported under; autopilot runs inside it, with no sweep of its own", () => {
     const jobs = (crons as unknown as { crons: Record<string, { name: string; schedule: Record<string, unknown> }> }).crons;
     expect(jobs["keeper tick"]).toMatchObject({ name: "keeper:tick", schedule: { type: "interval", minutes: 1 } });
-    expect(jobs["sweep autopilot"]).toMatchObject({ name: "autopilot:sweep" });
+    expect(jobs["sweep autopilot"]).toBeUndefined();
   });
 });

@@ -1,24 +1,30 @@
-import { internalAction } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { makeFunctionReference } from "convex/server";
 import type { Decimal } from "@kanon/spec";
-import { lastClosedBucket, sweepStep } from "./autopilotLogic";
+import type { Claim } from "./autopilotData";
+import { GATE_BUCKET_SECONDS } from "./gateLogic";
 import { evaluateStrategy } from "./proposer";
 
 /**
- * Autopilot: a pinned rule judged on every closed candle, with nobody pressing
- * anything.
+ * Autopilot: a pinned rule judged on the on-chain gate once per 15-minute
+ * bucket, with nobody pressing anything.
  *
- * Once a minute (`crons.ts`) the sweep looks at every strategy autopilot is on
- * for. When a candle of the spec's own timeframe has closed since the one it
- * last judged, it runs `evaluateStrategy`: the same reads, the same
- * `proposeTrade` and the same `trades` row a button press gets. A predicate
- * that fails is a refusal, recorded as any other. When every predicate passes,
- * the row is a proposal the gateway opens a timed trade for (`autopilotData.ts`,
- * `http.ts`): this backend cannot reach the venue, and does not try.
+ * The keeper tick (`keeper.ts`) runs this once per bucket, after it has
+ * sampled the bucket, inside the bucket's first five minutes: the one sample
+ * is the close of the candle before it. For each rule autopilot is on for,
+ * the bucket is claimed (`autopilotData:claim`) and `evaluateStrategy` sends
+ * the same gate transaction a button press sends, and writes the same row. A
+ * refusal is recorded as any other. A pass is a proposal the gateway opens a
+ * timed trade for (`autopilotData.ts`, `http.ts`): this backend cannot reach
+ * the venue, and does not try.
  *
- * Nothing here decides anything, and no model is called. The sweep only
- * chooses when the arithmetic is run.
+ * A judgment that ends with no transaction gives its claim back, and the next
+ * minute's tick tries the bucket again. Once every rule is judged or settled,
+ * the keeper remembers the bucket (`keeperData:noteJudged`) and reads nothing
+ * more for it: autopilot costs one read per bucket, not one per minute.
+ *
+ * Nothing here decides anything, and no model is called.
  *
  * Functions are referenced by name because `_generated/api.d.ts` is stale until
  * `npx convex dev` regenerates it (see convex/README.md).
@@ -26,11 +32,8 @@ import { evaluateStrategy } from "./proposer";
 
 const snapshotRef = makeFunctionReference<
   "query",
-  { nowMs: number },
-  {
-    strategies: Array<{ strategyId: Id<"strategies">; candleSeconds: number | null; judgedBucket: number | null }>;
-    expired: number;
-  }
+  Record<string, never>,
+  { strategies: Array<{ strategyId: Id<"strategies">; judgedBucket: number | null }>; legacy: number }
 >("autopilotData:snapshot");
 
 const contextRef = makeFunctionReference<
@@ -39,60 +42,99 @@ const contextRef = makeFunctionReference<
   { strategy: Doc<"strategies">; collateral: Decimal | null } | null
 >("autopilotData:context");
 
-const armRef = makeFunctionReference<"mutation", { strategyId: Id<"strategies">; bucket: number }, null>(
-  "autopilotData:arm",
-);
-
+const claimRef = makeFunctionReference<"mutation", { strategyId: Id<"strategies">; bucket: number }, Claim>("autopilotData:claim");
+const unclaimRef = makeFunctionReference<
+  "mutation",
+  { strategyId: Id<"strategies">; bucket: number; previous: number | null },
+  null
+>("autopilotData:unclaim");
 const expireRef = makeFunctionReference<"mutation", Record<string, never>, number>("autopilotData:expire");
 
-export interface AutopilotSweepReport {
-  /** Strategies whose first sweep this was: the closed candle was remembered and nothing judged. */
-  armed: number;
+export interface AutopilotPassReport {
+  /** The bucket judged: unix seconds over 900, as the keeper counts them. */
+  bucket: number;
+  /** Proposals handed to the gateway. */
   proposed: number;
+  /** Passes not handed over: the last autopilot trade was still open, or autopilot was turned off meanwhile. */
+  notOpened: number;
   refused: number;
-  /** A candle that passed while the strategy's last autopilot trade was still open, or one another sweep judged first. */
-  skipped: number;
-  /** The series could not support an answer. The candle is tried again on the next sweep. */
+  /** Rules with no bucket remembered: this one was remembered and nothing judged. */
+  armed: number;
+  /** Judgments that ended with no verdict. Their claim is given back. */
   unavailable: number;
-  /** An evaluation that threw. Logged, and tried again on the next sweep. */
+  /** Judgments that threw. Logged, and tried again on the next tick. */
   failed: number;
+  /** Rules autopilot is on for that the gate cannot judge: skipped, never judged off-chain instead. */
+  legacy: number;
   /** Proposals finished because the gateway never opened or reported them. */
   expired: number;
+  /** Every rule was judged or settled: the keeper remembers the bucket and does not come back to it. */
+  clean: boolean;
 }
 
-export const sweep = internalAction({
-  args: {},
-  handler: async (ctx): Promise<AutopilotSweepReport> => {
-    const report: AutopilotSweepReport = { armed: 0, proposed: 0, refused: 0, skipped: 0, unavailable: 0, failed: 0, expired: 0 };
-    const nowMs = Date.now();
-    const nowSeconds = Math.floor(nowMs / 1000);
+/** One pass over the rules autopilot is on for, for the bucket `bucketIndex`. */
+export async function runAutopilotPass(ctx: ActionCtx, bucketIndex: number): Promise<AutopilotPassReport> {
+  const bucket = bucketIndex * GATE_BUCKET_SECONDS;
+  const report: AutopilotPassReport = {
+    bucket: bucketIndex,
+    proposed: 0,
+    notOpened: 0,
+    refused: 0,
+    armed: 0,
+    unavailable: 0,
+    failed: 0,
+    legacy: 0,
+    expired: 0,
+    clean: true,
+  };
 
-    const { strategies, expired } = await ctx.runQuery(snapshotRef, { nowMs });
-    if (expired > 0) report.expired = await ctx.runMutation(expireRef, {});
+  report.expired = await ctx.runMutation(expireRef, {});
+  const { strategies, legacy } = await ctx.runQuery(snapshotRef, {});
+  report.legacy = legacy;
 
-    for (const { strategyId, candleSeconds, judgedBucket } of strategies) {
-      // A stored spec that no longer parses is judged by nothing.
-      if (candleSeconds === null) continue;
-      const bucket = lastClosedBucket(nowSeconds, candleSeconds);
-      const step = sweepStep(judgedBucket, bucket);
-      if (step === "wait") continue;
-
-      // One strategy's failure is its own: the rest are still judged.
-      try {
-        if (step === "arm") {
-          await ctx.runMutation(armRef, { strategyId, bucket });
-          report.armed += 1;
-          continue;
-        }
-        const owned = await ctx.runQuery(contextRef, { strategyId });
-        if (!owned) continue;
-        const out = await evaluateStrategy(ctx, { ...owned, autopilot: { bucket } });
-        report[out.status] += 1;
-      } catch (err) {
-        console.error(`autopilot:sweep could not judge ${strategyId}`, err);
-        report.failed += 1;
-      }
+  for (const { strategyId, judgedBucket } of strategies) {
+    if (judgedBucket !== null && judgedBucket >= bucket) continue;
+    // One rule's failure is its own: the rest are still judged.
+    let claim: Claim;
+    try {
+      claim = await ctx.runMutation(claimRef, { strategyId, bucket });
+    } catch (err) {
+      console.error(`autopilot: could not claim bucket ${bucketIndex} for ${strategyId}`, err);
+      report.failed += 1;
+      report.clean = false;
+      continue;
     }
-    return report;
-  },
-});
+    if (!claim.ok) {
+      if (claim.why === "armed") report.armed += 1;
+      continue;
+    }
+    const previous = claim.previous;
+    const giveBack = () => ctx.runMutation(unclaimRef, { strategyId, bucket, previous });
+
+    try {
+      const owned = await ctx.runQuery(contextRef, { strategyId });
+      if (!owned) {
+        await giveBack();
+        continue;
+      }
+      const out = await evaluateStrategy(ctx, { ...owned, autopilot: { bucket } });
+      if (out.status === "unavailable") {
+        report.unavailable += 1;
+        // A transaction that may still land keeps its claim: a bucket is never sent twice.
+        if (out.reason !== "unconfirmed") await giveBack();
+        if (out.retryable) report.clean = false;
+        console.warn(`autopilot: ${strategyId} was not judged for bucket ${bucketIndex}: ${out.message}`);
+        continue;
+      }
+      if (out.status === "refused") report.refused += 1;
+      else if (out.handoff === "pending") report.proposed += 1;
+      else report.notOpened += 1;
+    } catch (err) {
+      console.error(`autopilot: could not judge ${strategyId}`, err);
+      report.failed += 1;
+      report.clean = false;
+      await giveBack().catch(() => undefined);
+    }
+  }
+  return report;
+}

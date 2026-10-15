@@ -104,6 +104,7 @@ describe("public Convex surface", () => {
       "analytics:report",
       "compiler:compileStrategy",
       "proposer:runProposer",
+      "backtest:run",
       "users:createUser",
       "users:me",
     ]) {
@@ -168,11 +169,12 @@ describe("public Convex surface", () => {
       "accounts:updateAccountLedger",
       "positions:createPosition",
       // Autopilot acts for a strategy's owner with nobody signed in. None of it is a client's to call.
-      "autopilot:sweep",
       "autopilotData:snapshot",
       "autopilotData:context",
-      "autopilotData:arm",
+      "autopilotData:claim",
+      "autopilotData:unclaim",
       "autopilotData:expire",
+      "autopilotData:expireOne",
       "autopilotData:pending",
       "autopilotData:begin",
       "autopilotData:start",
@@ -184,7 +186,13 @@ describe("public Convex surface", () => {
       "keeperData:acquire",
       "keeperData:release",
       "keeperData:noteTick",
+      "keeperData:noteJudged",
       "keeperData:recomputeFeeds",
+      // The backtester's reads and its stored runs. Only `backtest:run`, which authenticates first, reaches them.
+      "backtestData:bounds",
+      "backtestData:candlePage",
+      "backtestData:cached",
+      "backtestData:store",
     ]) {
       expect(names.has(internal), `${internal} must be internal`).toBe(false);
     }

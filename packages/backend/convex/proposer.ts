@@ -2,35 +2,44 @@ import { action, type ActionCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
-import {
-  TIMEFRAME_SECONDS,
-  parseSpec,
-  type Decimal,
-  type Series,
-  type StrategySpec,
-} from "@kanon/spec";
+import { parseSpec, type Decimal, type Series, type StrategySpec } from "@kanon/spec";
 import { requireSubject } from "./authz";
 import { AUTOPILOT_STAKE_USD, holdSecondsFor } from "./autopilotLogic";
+import { convexLease, gateSetup, judgeOnChain, keeperRow, readReplay, realClock } from "./gate";
+import { gateEligibility, rowFromJudgment, type GateUnavailableReason, type OffchainJudgment } from "./gateLogic";
+import { spentToday } from "./keeperLogic";
 import {
   PAPER_EQUITY,
+  UNDO_WINDOW_MS,
   bucketsNeeded,
   modelRefusedOutcome,
   proposeTrade,
   requiredCandles,
   summariseBlocked,
   type ModelledOutcome,
-  type PredicateOutcome,
   type BlockedSummary,
 } from "./proposerLogic";
+import { checkRateLimit } from "./rateLimit";
 
 /**
- * The action around `proposeTrade`. It does the I/O the pure function may not:
- * reads the strategy and the price series, calls the proposer, and writes the
- * `trades` row. It never calls a model and never decides anything itself.
+ * The action around a judgment. Every judgment, a button press or autopilot's,
+ * pass or refusal, is a real `RefusalGate.evaluateOnChain` transaction signed
+ * by Kanon's key, and the verdict is the chain's (`gate.ts`). Nothing here
+ * decides one, and no model is called.
  *
- * `evaluateStrategy` is that I/O. A button press reaches it through
- * `runProposer`; autopilot reaches it from its sweep (`autopilot.ts`), once per
- * closed candle. Both get the same reads, the same arithmetic and the same row.
+ * `evaluateStrategy` is the I/O, in this order:
+ *
+ *   1. Whether the gate can judge the rule at all (`gateEligibility`). If not,
+ *      nothing is read and nothing is spent.
+ *   2. The off-chain arithmetic, `proposeTrade` over Convex's candles, for the
+ *      setup's entry, stop and size: the gate judges a rule, not a price to
+ *      trade at. Its verdict is kept beside the chain's as `offchainVerdict`.
+ *   3. `judgeOnChain`: the transaction, its receipt and its event.
+ *   4. `readReplay`: the verdict explained over the chain's own candles.
+ *   5. `trades:recordEvaluation`, the row, with the transaction as its evidence.
+ *
+ * A button press reaches it through `runProposer`; autopilot through the
+ * keeper tick (`autopilot.ts`), once per 15-minute bucket.
  *
  * Functions are referenced by name because `_generated/api.d.ts` is stale until
  * `npx convex dev` regenerates it (see convex/README.md).
@@ -59,128 +68,138 @@ const listRefused = makeFunctionReference<
   Doc<"trades">[]
 >("trades:refusedForSubject");
 
-// Null only for autopilot: the candle was already judged, or it passed while the strategy's last
-// autopilot trade was still open. A button press is always written.
 const recordEvaluation = makeFunctionReference<
   "mutation",
   Record<string, unknown>,
-  Id<"trades"> | null
+  { tradeId: Id<"trades">; handoff?: "pending" | "not_opened" }
 >("trades:recordEvaluation");
 
 export type RunProposerResult =
-  | { status: "proposed" | "refused"; tradeId: Id<"trades"> }
-  | { status: "unavailable"; reason: string; message: string }
+  | { status: "proposed" | "refused"; tradeId: Id<"trades">; txHash: string }
+  | { status: "unavailable"; reason: string; message: string; txHash?: string }
   | { status: "blocked"; message: string };
 
-/** What one evaluation came to. `unavailable` wrote nothing and claims nothing: a gap in the data is not a rule failing. */
+/**
+ * What one evaluation came to. `unavailable` wrote nothing and claims nothing:
+ * the rule was not judged, and `message` says why. `txHash` is there when a
+ * transaction was sent and carries no verdict (it reverted, or was not
+ * confirmed): the evidence of what was spent.
+ */
 export type Evaluated =
-  | { status: "proposed" | "refused"; tradeId: Id<"trades"> }
-  | { status: "unavailable"; reason: string; message: string }
-  /** Autopilot only: the verdict was reached and no row was written for it (`trades:recordEvaluation` says when). */
-  | { status: "skipped"; verdict: "proposed" | "refused" };
+  | { status: "proposed" | "refused"; tradeId: Id<"trades">; txHash: string; handoff?: "pending" | "not_opened" }
+  | {
+      status: "unavailable";
+      reason: GateUnavailableReason | "send_failed" | "no_series" | "insufficient_data" | "stale" | "bad_price";
+      message: string;
+      /** Whether asking again a minute later can give another answer. */
+      retryable: boolean;
+      txHash?: string;
+    };
 
 export interface EvaluateInput {
   /** A strategy with an enforced spec. The caller has already settled whose it is. */
   strategy: Doc<"strategies">;
   /** The owner's account collateral, or null to size against paper equity. */
   collateral: Decimal | null;
-  /** Set by the sweep: the start of the closed candle being judged, unix seconds. */
+  /** Set by autopilot: the bucket it claimed (its start, unix seconds). */
   autopilot?: { bucket: number };
 }
 
-/** The candle-coordinate evidence pointer for one predicate's deciding candle. */
-function evidenceRef(feed: string, bucketSeconds: number, o: PredicateOutcome): string {
-  return `${feed}#${bucketSeconds}s@${o.at}`;
-}
-
-/**
- * One evaluation of a pinned rule, start to finish: reads the series each
- * predicate is written on, hands them to `proposeTrade`, and writes the row
- * for the verdict. The verdict is `proposeTrade`'s alone. Who asked changes
- * only what is written beside it.
- */
-export async function evaluateStrategy(ctx: ActionCtx, input: EvaluateInput): Promise<Evaluated> {
-  const { strategy, autopilot } = input;
-  const spec: StrategySpec = parseSpec(strategy.spec);
-
+/** The setup's entry, stop and size from Convex's candles, and what that arithmetic said. */
+async function offchainSetup(
+  ctx: ActionCtx,
+  spec: StrategySpec,
+  collateral: Decimal | null,
+): Promise<{ ok: true; offchain: OffchainJudgment } | { ok: false; reason: "no_series" | "insufficient_data" | "stale" | "bad_price"; message: string }> {
   const source: Record<number, Series> = {};
   for (const bucketSeconds of bucketsNeeded(spec)) {
-    const series = await ctx.runQuery(getSeries, {
+    source[bucketSeconds] = await ctx.runQuery(getSeries, {
       asset: spec.series.asset,
       bucketSeconds,
       limit: requiredCandles(spec, bucketSeconds),
     });
-    source[bucketSeconds] = series;
   }
-
-  const equity = input.collateral ?? undefined;
-
-  const now = Date.now();
-  const out = proposeTrade(spec, source, now, {
+  const equity = collateral ?? undefined;
+  const out = proposeTrade(spec, source, Date.now(), {
     equity: equity ?? PAPER_EQUITY,
     equitySource: equity ? "account" : "paper",
   });
-
-  if (out.kind === "unavailable") {
-    return { status: "unavailable", reason: out.reason, message: out.message };
-  }
-
-  const bucketOf = (o: PredicateOutcome): number => {
-    const tf = spec.predicates.find((p) => p.id === o.predicateId)?.timeframe.value;
-    return tf ? TIMEFRAME_SECONDS[tf] : spec.series.bucketSeconds;
+  if (out.kind === "unavailable") return { ok: false, reason: out.reason, message: out.message };
+  return {
+    ok: true,
+    offchain: {
+      verdict: out.kind === "proposal" ? "proposed" : "refused",
+      setup: out.setup,
+      results: out.results,
+      scan: out.scan,
+    },
   };
-
-  const common = {
-    strategyId: strategy._id,
-    direction: out.setup.direction,
-    asset: out.setup.asset,
-    entry: out.setup.entry,
-    size: out.setup.size,
-    stop: out.setup.stop,
-    results: out.results,
-    specHash: strategy.specHash,
-    scan: out.scan,
-    equity: out.setup.equity,
-    equitySource: out.setup.equitySource,
-    riskBps: out.setup.riskBps,
-    feed: spec.series.feed,
-    evidenceRefs: out.results.map((r) => evidenceRef(spec.series.feed, bucketOf(r), r)),
-    // What the gateway is asked to open if this passes, stated on the row from the backend's own table.
-    ...(autopilot
-      ? {
-          autopilot: {
-            bucket: autopilot.bucket,
-            stakeUsd: AUTOPILOT_STAKE_USD,
-            holdSeconds: holdSecondsFor(spec.series.bucketSeconds),
-          },
-        }
-      : {}),
-  };
-
-  if (out.kind === "proposal") {
-    const tradeId = await ctx.runMutation(recordEvaluation, {
-      ...common,
-      status: "proposed",
-      satisfiedPredicateIds: out.results.map((r) => r.predicateId),
-      // The undo window is for the person who pressed the button. Nobody is there for an autopilot
-      // proposal, and it does not run on paper when a window lapses: the gateway opens it.
-      ...(autopilot ? {} : { undoExpiresAt: out.undoExpiresAt }),
-    });
-    return tradeId ? { status: "proposed", tradeId } : { status: "skipped", verdict: "proposed" };
-  }
-
-  const tradeId = await ctx.runMutation(recordEvaluation, {
-    ...common,
-    status: "refused",
-    satisfiedPredicateIds: out.results.filter((r) => r.satisfied).map((r) => r.predicateId),
-    failedPredicateId: out.failed.predicateId,
-    failedSymbol: out.failed.symbol,
-    failingValue: out.failed.decidingValue,
-    requiredValue: out.failed.referenceValue,
-  });
-  return tradeId ? { status: "refused", tradeId } : { status: "skipped", verdict: "refused" };
 }
 
+/** One judgment of a pinned rule on the gate, start to finish, in the order the module comment gives. */
+export async function evaluateStrategy(ctx: ActionCtx, input: EvaluateInput): Promise<Evaluated> {
+  const { strategy, autopilot } = input;
+  const spec: StrategySpec = parseSpec(strategy.spec);
+
+  const setup = gateSetup(process.env);
+  if (!setup.ok) return { status: "unavailable", reason: setup.reason, message: setup.message, retryable: false };
+  const eligible = gateEligibility(strategy, spec, setup.env);
+  if (!eligible.ok) return { status: "unavailable", reason: "not_eligible", message: eligible.message, retryable: false };
+  const { target } = eligible;
+
+  const off = await offchainSetup(ctx, spec, input.collateral);
+  if (!off.ok) return { status: "unavailable", reason: off.reason, message: off.message, retryable: true };
+
+  const row0 = await keeperRow(ctx);
+  const judgment = await judgeOnChain({
+    port: setup.port,
+    source: setup.source,
+    target,
+    mockPyth: setup.env.mockPythAddress,
+    limits: setup.limits,
+    spentTodayWei: spentToday(row0, Date.now()),
+    lease: convexLease(ctx, `gate:${crypto.randomUUID()}`),
+    clock: realClock,
+    log: (level, line) => console[level](line),
+    secrets: setup.secrets,
+  });
+  if (!judgment.ok) {
+    return {
+      status: "unavailable",
+      reason: judgment.reason,
+      message: judgment.message,
+      retryable: judgment.retryable,
+      ...(judgment.txHash ? { txHash: judgment.txHash } : {}),
+    };
+  }
+
+  const replay = await readReplay(setup.port, spec, target, judgment);
+  const row = rowFromJudgment({ strategy, spec, target, offchain: off.offchain, judgment, replay });
+  const written = await ctx.runMutation(recordEvaluation, {
+    ...row,
+    ...(autopilot
+      ? {
+          // What the gateway is asked to open if this passes, stated on the row from the backend's own table.
+          autopilot: { bucket: autopilot.bucket, stakeUsd: AUTOPILOT_STAKE_USD, holdSeconds: holdSecondsFor(spec.series.bucketSeconds) },
+        }
+      : row.status === "proposed"
+        ? // The undo window is for the person who pressed the button, and starts once the verdict is in.
+          { undoExpiresAt: Date.now() + UNDO_WINDOW_MS }
+        : {}),
+  });
+  return {
+    status: row.status,
+    tradeId: written.tradeId,
+    txHash: judgment.txHash,
+    ...(written.handoff ? { handoff: written.handoff } : {}),
+  };
+}
+
+/**
+ * "Check setup now": the owner asks the gate about their rule. Each press is a
+ * transaction Kanon pays for, so it is held to `gateCheck` per hour. It takes
+ * 3 to 9 seconds, and up to about 25 near the end of a 15-minute bucket.
+ */
 export const runProposer = action({
   args: { strategyId: v.id("strategies") },
   handler: async (ctx, args): Promise<RunProposerResult> => {
@@ -192,10 +211,13 @@ export const runProposer = action({
     if (strategy.status === "draft" || strategy.spec === undefined) {
       return { status: "blocked", message: "Pin the rule before it can judge a trade." };
     }
+    const limited = await checkRateLimit(ctx, subject, "gateCheck");
+    if (limited) return { status: "unavailable", reason: "rate_limited", message: limited.message };
     const out = await evaluateStrategy(ctx, { strategy, collateral: owned.collateral });
-    // Only autopilot's write can be skipped. A button press is always written.
-    if (out.status === "skipped") return { status: "blocked", message: "The verdict was not recorded. Try again." };
-    return out;
+    if (out.status === "unavailable") {
+      return { status: "unavailable", reason: out.reason, message: out.message, ...(out.txHash ? { txHash: out.txHash } : {}) };
+    }
+    return { status: out.status, tradeId: out.tradeId, txHash: out.txHash };
   },
 });
 

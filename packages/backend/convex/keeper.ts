@@ -1,14 +1,19 @@
 import { internalAction } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { makeFunctionReference } from "convex/server";
+import { AUTOPILOT_JUDGE_WINDOW_SECONDS } from "./autopilotLogic";
+import { runAutopilotPass, type AutopilotPassReport } from "./autopilot";
 import { createPythSource, createViemGatePort } from "./gatePort";
+import { GATE_BUCKET_SECONDS } from "./gateLogic";
 import { failedTick, runKeeperTick, sentence, spentToday, tickNote, type KeeperTickReport, type TickNote } from "./keeperLogic";
 import { describeEnvProblem, parseGateEnv, parseKeeperSwitch, parseSignerEnv } from "./serverEnv";
 
 /**
  * The keeper's tick, once a minute (`crons.ts`). It keeps the on-chain series
  * of every pair a pinned rule uses sampled once per 15-minute bucket; what it
- * does and in what order is `runKeeperTick` (`keeperLogic.ts`).
+ * does and in what order is `runKeeperTick` (`keeperLogic.ts`). Then, once per
+ * bucket and inside its first five minutes, it hands the bucket to autopilot
+ * (`autopilot.ts`), which judges each rule it is on for on the gate.
  *
  * Off unless `KEEPER_ENABLED=on`, so deploying this spends nothing. Switched
  * on, a minute with every in-use series already sampled reads one small row
@@ -25,6 +30,7 @@ const acquireRef = makeFunctionReference<"mutation", { holder: string }, { ok: b
 );
 const releaseRef = makeFunctionReference<"mutation", { holder: string; spentWei: string }, null>("keeperData:release");
 const noteTickRef = makeFunctionReference<"mutation", TickNote, null>("keeperData:noteTick");
+const noteJudgedRef = makeFunctionReference<"mutation", { bucket: number }, null>("keeperData:noteJudged");
 
 export interface KeeperTickOutcome {
   status: "off" | "not_configured" | "idle" | "ran" | "busy" | "paused" | "failed";
@@ -33,6 +39,19 @@ export interface KeeperTickOutcome {
   sent?: Array<{ feed: string; call: string; hash: string; costWei: string }>;
   paused?: string | null;
   errors?: string[];
+  /** Present on the tick that handed a bucket to autopilot. */
+  autopilot?: AutopilotPassReport;
+}
+
+/**
+ * Whether this tick hands its bucket to autopilot: the bucket was read and
+ * nothing is paused, the bucket is in its first five minutes, and it has not
+ * been judged clean already.
+ */
+export function autopilotDue(report: Pick<KeeperTickReport, "bucket" | "blockTime" | "paused">, judgedBucket: number | undefined): boolean {
+  if (report.bucket === null || report.blockTime === undefined || report.paused) return false;
+  if (report.blockTime % GATE_BUCKET_SECONDS >= AUTOPILOT_JUDGE_WINDOW_SECONDS) return false;
+  return judgedBucket === undefined || judgedBucket < report.bucket;
 }
 
 export const tick = internalAction({
@@ -85,10 +104,19 @@ export const tick = internalAction({
       report = failedTick(line);
     }
 
-    // Autopilot is handed the bucket here once it judges on the gate: after sampling, once per bucket.
-
     const note = tickNote(row, report, port.signer);
     if (note) await ctx.runMutation(noteTickRef, note);
+
+    // Autopilot, after sampling, once per bucket: a pass that left nothing to try again is remembered.
+    let autopilot: AutopilotPassReport | undefined;
+    if (autopilotDue(report, row?.judgedBucket) && report.bucket !== null) {
+      try {
+        autopilot = await runAutopilotPass(ctx, report.bucket);
+        if (autopilot.clean) await ctx.runMutation(noteJudgedRef, { bucket: report.bucket });
+      } catch (e) {
+        console.error(`keeper: the autopilot pass could not run: ${sentence(e, secrets)}`);
+      }
+    }
 
     return {
       status:
@@ -98,6 +126,7 @@ export const tick = internalAction({
       sent: report.sent.map((s) => ({ ...s, costWei: s.costWei.toString() })),
       paused: report.paused,
       errors: report.errors,
+      ...(autopilot ? { autopilot } : {}),
     };
   },
 });

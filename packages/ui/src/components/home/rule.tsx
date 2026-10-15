@@ -2,10 +2,12 @@ import { memo, useState } from 'react';
 import { Text, View } from 'react-native';
 import { Link, useNavigator } from '../../nav';
 import { useKanonSelector } from '../../lib/data';
+import { ASKING_THE_GATE, useGateWait } from '../../lib/gate-wait';
 import type { HomeRule } from '../../lib/domain-types';
-import { routes } from '../../lib/routes';
+import { routes, ruleTestRoute } from '../../lib/routes';
 import { shallowEqual } from '../../lib/store';
 import { AutopilotRow } from '../autopilot';
+import { BacktestRow } from '../backtest-row';
 import { Badge } from '../badge';
 import { Card } from '../card';
 import { Chip } from '../chip';
@@ -33,6 +35,8 @@ function CoolingClock({ endsAtMs }: { endsAtMs: number }) {
  * at every candle close with nobody pressing anything, and the check by hand.
  * The autopilot row opens its terms (the screen holds the sheet); it is shown
  * signed out too, where the terms can be read and the switch asks for sign-in.
+ * Under it, the way to test the rule's stated stop and target on recorded
+ * prices; signed out that screen is a labelled sample.
  */
 export const RuleSection = memo(function RuleSection({
   rule,
@@ -52,12 +56,16 @@ export const RuleSection = memo(function RuleSection({
       live: s.mode === 'live',
       autopilot: s.rule.autopilot,
       candleSeconds: s.rule.bucketSeconds,
+      ruleId: s.rule.id,
+      pair: `${s.rule.symbol} ${s.rule.timeframe}`,
     }),
     shallowEqual,
   );
   const requestProposal = useKanonSelector((s) => s.requestProposal);
   const [checking, setChecking] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // A check is a gate transaction: seconds, not a moment. A long wait is explained, not alarmed.
+  const slowNote = useGateWait(checking);
 
   async function check() {
     if (checking) return;
@@ -159,14 +167,18 @@ export const RuleSection = memo(function RuleSection({
           className="border-t border-hairline"
         />
 
+        {/* The rule's stated stop and target on recorded prices. Opens the test; runs nothing by itself. */}
+        <BacktestRow href={ruleTestRoute(extra.ruleId)} pair={extra.pair} className="border-t border-hairline" />
+
         {extra.live ? (
           <View className="gap-2 border-t border-hairline p-3">
             <GhostButton onPress={check} disabled={checking} className="py-3" textClassName="text-12 tracking-w14">
-              {checking ? 'CHECKING' : 'CHECK SETUP NOW'}
+              {checking ? ASKING_THE_GATE : 'CHECK SETUP NOW'}
             </GhostButton>
             <Text className="font-mono text-10 leading-[1.5] text-ash" accessibilityLiveRegion="polite">
               {note ??
-                'Puts the market as it stands to your rule. It is proposed, or refused with the number that decided it.'}
+                slowNote ??
+                'Asks the on-chain gate about your rule as the market stands. It passes, or refuses with the number that decided it.'}
             </Text>
           </View>
         ) : null}

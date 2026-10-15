@@ -261,11 +261,50 @@ export interface RegistryClaim {
 const WORD = 64;
 
 /**
+ * The one log of `topic0` that the contract at `address` itself emitted in a
+ * transaction that succeeded, as its data words and its topics. The log's
+ * address is what makes it that contract's word: only the contract can emit
+ * from its address, whatever the transaction was sent to. `topics` are the
+ * indexed arguments after `topic0`, as 32-byte topics, where null matches any
+ * value (it is read back from `topics` in the answer). No log, or more than
+ * one, is a refusal.
+ */
+export function contractEvent(input: {
+  receipt: RpcReceipt | null;
+  address: string;
+  topic0: string;
+  topics: ReadonlyArray<string | null>;
+  words: number;
+  missing: string;
+  malformed: string;
+}): RegistryVerdict<{ words: string[]; topics: string[] }> {
+  const { receipt } = input;
+  if (!receipt) return { ok: false, reason: "The transaction is not confirmed yet." };
+  if (lower(receipt.status) !== "0x1") return { ok: false, reason: "The transaction did not succeed." };
+  const wanted = [input.topic0, ...input.topics].map((t) => (t === null ? null : lower(t)));
+
+  const matches = (receipt.logs ?? []).filter((l) => {
+    const t = l.topics ?? [];
+    return (
+      lower(l.address) === lower(input.address) &&
+      t.length === wanted.length &&
+      wanted.every((topic, i) => topic === null || lower(t[i]) === topic)
+    );
+  });
+  if (matches.length !== 1) return { ok: false, reason: input.missing };
+
+  const log = matches[0]!;
+  const data = log.data ?? "0x";
+  if (!isHex(data) || data.length !== 2 + WORD * input.words) return { ok: false, reason: input.malformed };
+  if (!(log.topics ?? []).every((t) => isHex(t) && t.length === 2 + WORD)) return { ok: false, reason: input.malformed };
+  const words = Array.from({ length: input.words }, (_, i) => "0x" + lower(data.slice(2 + i * WORD, 2 + (i + 1) * WORD)));
+  return { ok: true, words, topics: (log.topics ?? []).map(lower) };
+}
+
+/**
  * The one log of `topic0` the registry itself emitted for this strategy in a
- * transaction that succeeded, as its data words. The log's address is what
- * makes it the registry's word: only the registry can emit from its address,
- * whatever contract the transaction was sent to. No log, or more than one, is
- * a refusal.
+ * transaction that succeeded, as its data words (`contractEvent`, with the
+ * strategy id as the first indexed argument).
  */
 function registryEvent(input: {
   receipt: RpcReceipt | null;
@@ -281,24 +320,16 @@ function registryEvent(input: {
   if (!receipt) return { ok: false, reason: "The transaction is not confirmed yet." };
   if (lower(receipt.status) !== "0x1") return { ok: false, reason: "The transaction did not succeed." };
   if (!/^\d{1,78}$/.test(input.chainStrategyId)) return { ok: false, reason: "The rule has no registry id." };
-  const wanted = [input.topic0, padUint(BigInt(input.chainStrategyId)), ...(input.indexed ?? [])];
-
-  const matches = (receipt.logs ?? []).filter((l) => {
-    const t = l.topics ?? [];
-    return (
-      lower(l.address) === lower(input.registryAddress) &&
-      t.length === wanted.length &&
-      wanted.every((topic, i) => lower(t[i]) === topic)
-    );
+  const ev = contractEvent({
+    receipt,
+    address: input.registryAddress,
+    topic0: input.topic0,
+    topics: [padUint(BigInt(input.chainStrategyId)), ...(input.indexed ?? [])],
+    words: input.words,
+    missing: input.missing,
+    malformed: "The registry's log is malformed.",
   });
-  if (matches.length !== 1) return { ok: false, reason: input.missing };
-
-  const data = matches[0]!.data;
-  if (!isHex(data) || data.length !== 2 + WORD * input.words) {
-    return { ok: false, reason: "The registry's log is malformed." };
-  }
-  const words = Array.from({ length: input.words }, (_, i) => "0x" + lower(data.slice(2 + i * WORD, 2 + (i + 1) * WORD)));
-  return { ok: true, words };
+  return ev.ok ? { ok: true, words: ev.words } : ev;
 }
 
 /** The hash, the commitment and the series a log carries must be the ones the row is about to record. */

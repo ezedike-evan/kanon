@@ -37,8 +37,24 @@ function align(a: Decimal, b: Decimal): [bigint, bigint, number] {
   return [scale(a), scale(b), decimals];
 }
 
-/** -1, 0 or 1. Scale-independent. */
+/** A non-negative integer written with no leading zero: two of these compare by length, then digit by digit. */
+const CANONICAL_UNSIGNED = /^(?:0|[1-9]\d*)$/;
+
+/**
+ * -1, 0 or 1. Scale-independent.
+ *
+ * Prices of one series share a scale and are never negative, and every
+ * predicate and every backtest compares them by the million, so that case is
+ * answered from the digits without building two big integers. It is exact: the
+ * same answer the integer comparison gives, which `decimal.test.ts` pins.
+ */
 export function compareDecimal(a: Decimal, b: Decimal): -1 | 0 | 1 {
+  if (a.decimals === b.decimals && CANONICAL_UNSIGNED.test(a.atoms) && CANONICAL_UNSIGNED.test(b.atoms)) {
+    const x = a.atoms;
+    const y = b.atoms;
+    if (x.length !== y.length) return x.length < y.length ? -1 : 1;
+    return x < y ? -1 : x > y ? 1 : 0;
+  }
   const [x, y] = align(a, b);
   return x < y ? -1 : x > y ? 1 : 0;
 }

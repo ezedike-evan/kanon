@@ -63,7 +63,10 @@ import type {
 } from './data';
 import { autopilotNote, autopilotState, AUTOPILOT_STATE_LABEL } from './autopilot';
 import type { AmendmentPreview, PinAvailability, PinningAvailability, ReviewMode } from './flow-types';
+import { monad, monadTestnet } from './monad-chain';
+import { decidingReading, recordTx } from './onchain-record';
 import type { PinTargetResult } from './pin';
+import type { TxRef } from './venue-trade';
 
 // ---------------------------------------------------------------------------
 // Row shapes: what a Convex document looks like once it crosses the wire.
@@ -102,6 +105,38 @@ export interface LiveOutcome {
   decidingValue: Decimal;
   referenceValue: Decimal;
   at: number;
+}
+
+/**
+ * The gate transaction that decided a row (`trades.gate` in the backend's
+ * schema): `RefusalGate.evaluateOnChain`, signed by Kanon's key, and what its
+ * event said. The row's status is this verdict. int256 and wei are base-10
+ * strings, exactly as stored.
+ */
+export interface LiveGate {
+  chainId: number;
+  gate: string;
+  series: string;
+  chainStrategyId: string;
+  txHash: string;
+  blockNumber: number;
+  /** Unix seconds of the block, and the 15-minute bucket (unix seconds over 900) the gate judged. */
+  blockTime: number;
+  bucketIndex: number;
+  signer: string;
+  gasLimit: string;
+  costWei?: string;
+  priceExpo?: number;
+  verdict: 'proposed' | 'refused';
+  specHash?: string;
+  /** A refusal's predicate symbol and deciding value, as the event emitted them. */
+  symbol?: string;
+  decidingValue?: string;
+  /** What the off-chain arithmetic said a moment before. Kept beside the verdict, never over it. */
+  offchainVerdict?: 'proposed' | 'refused';
+  previewDiffers?: boolean;
+  /** The predicate the gate's window could not hold: refused with 0, not failed by a number. */
+  couldNotEvaluate?: { predicateId: string; needed: number; recorded: number };
 }
 
 export interface LiveTrade {
@@ -150,6 +185,10 @@ export interface LiveTrade {
   timedTradeId?: string;
   /** Why nothing was opened, in the server's words. */
   handoffReason?: string;
+  /** The gate transaction that decided it. Absent on a row decided off-chain, before every judgment went on-chain. */
+  gate?: LiveGate;
+  /** Where `results` come from: the gate's window replayed over the chain's candles, or Convex's candles. */
+  resultsSource?: 'chain' | 'offchain';
 }
 
 /** What `blockedReport` returns per refusal. */
@@ -391,35 +430,135 @@ export function refusalCopy(p: Predicate, required: Decimal, asset: string, time
   }
 }
 
+// ---------------------------------------------------------------------------
+// The gate's transaction
+// ---------------------------------------------------------------------------
+
+/** The explorer of the chain a gate transaction is on: testnet's for 10143, mainnet's otherwise. */
+function explorerOf(chainId: number): { name: string; url: string } {
+  return chainId === monadTestnet.id ? monadTestnet.blockExplorers.default : monad.blockExplorers.default;
+}
+
+/** The gate transaction that decided a row, on its chain's explorer. Null on a row decided off-chain. */
+export function gateTxOf(trade: Pick<LiveTrade, 'gate'>): TxRef | null {
+  return trade.gate ? recordTx(explorerOf(trade.gate.chainId), trade.gate.txHash) : null;
+}
+
+/** Where the gate judged it: the block, and the 15-minute bucket by its UTC start. */
+export function gateWhere(gate: Pick<LiveGate, 'blockNumber' | 'bucketIndex'>): string {
+  return `BLOCK ${gate.blockNumber} · BUCKET ${utcShort(gate.bucketIndex * 900 * 1000)} UTC`;
+}
+
+/** The sentence for a predicate the gate's window could not hold. No number decided it. */
+export function couldNotEvaluateLine(symbol: string, needed: number, recorded: number, timeframe: string): string {
+  return `Could not evaluate: ${symbol} needs ${needed} consecutive ${timeframe} samples on the chain, and the series has ${recorded}. Until it has them, the gate refuses.`;
+}
+
+/** What a row from before every judgment went on-chain is labelled: its verdict was not the chain's. */
+const offchainLabel = 'DECIDED OFF-CHAIN, BEFORE THE GATE';
+
 export function refusalFromTrade(trade: LiveTrade, spec: StrategySpec): RefusalData | null {
-  if (trade.status !== 'refused' || !trade.failingValue || !trade.requiredValue) return null;
+  if (trade.status !== 'refused') return null;
+  const gate = trade.gate;
+  const tx = gateTxOf(trade);
+  const autopilot = autopilotNote(trade);
   const p = findPredicate(spec, trade.failedPredicateId);
-  if (!p) return null;
+  const timeframe = timeframeLabel(spec);
+  const asset = assetLabel(spec);
+
+  // A row from before the gate: shown as it always was, and said to be off-chain.
+  if (!gate || !tx) {
+    if (!trade.failingValue || !trade.requiredValue || !p) return null;
+    const unit = PRICE_UNIT(p.kind);
+    const shortfall = subDecimal(trade.failingValue, trade.requiredValue);
+    const copy = refusalCopy(p, trade.requiredValue, asset, timeframe);
+    return {
+      predicate: trade.failedSymbol ?? p.id,
+      reason: copy.reason,
+      requiredHigh: trade.requiredValue,
+      currentPrice: trade.failingValue,
+      shortfall,
+      shortfallBps: unit === 'bps' ? Number(shortfall.atoms) : roundedBps(shortfall, trade.requiredValue),
+      at: utcFull(trade.createdAt),
+      block: trade.feed ? `${trade.feed} · ${spec.series.bucketSeconds}s` : `${spec.series.bucketSeconds}s`,
+      label: offchainLabel,
+      unit,
+      requiredLabel: copy.requiredLabel,
+      requiredSub: copy.requiredSub,
+      actualLabel: copy.actualLabel,
+      actualSub: copy.actualSub,
+      tradeId: trade._id,
+      decided: 'offchain',
+      ...(autopilot ? { autopilot } : {}),
+    };
+  }
+
+  const common = {
+    predicate: trade.failedSymbol ?? gate.symbol ?? p?.id ?? 'refused',
+    at: utcFull(gate.blockTime * 1000),
+    block: gateWhere(gate),
+    label: 'REFUSED BY THE ON-CHAIN GATE',
+    tradeId: trade._id,
+    decided: 'chain' as const,
+    gate: { tx, ...(gate.previewDiffers ? { previewDiffers: true } : {}), ...(gate.offchainVerdict ? { offchainVerdict: gate.offchainVerdict } : {}) },
+    ...(autopilot ? { autopilot } : {}),
+  };
+  const none = { requiredHigh: null, currentPrice: null, shortfall: null, shortfallBps: 0 };
+
+  // The gate's own refusals that name no predicate: the rule's side, or a retired rule.
+  if (!p) {
+    const reading = decidingReading(common.predicate, gate.decidingValue ?? null);
+    return {
+      ...common,
+      ...none,
+      reason: reading.words ?? `The gate refused it: ${common.predicate}.`,
+      unit: 'price',
+      requiredLabel: '',
+      requiredSub: '',
+      actualLabel: '',
+      actualSub: '',
+    };
+  }
 
   const unit = PRICE_UNIT(p.kind);
-  const shortfall = subDecimal(trade.failingValue, trade.requiredValue);
-  const shortfallBps =
-    unit === 'bps' ? Number(shortfall.atoms) : roundedBps(shortfall, trade.requiredValue);
-  const copy = refusalCopy(p, trade.requiredValue, assetLabel(spec), timeframeLabel(spec));
-  const autopilot = autopilotNote(trade);
-
-  return {
-    predicate: trade.failedSymbol ?? p.id,
-    reason: copy.reason,
-    requiredHigh: trade.requiredValue,
-    currentPrice: trade.failingValue,
-    shortfall,
-    shortfallBps,
-    at: utcFull(trade.createdAt),
-    block: trade.feed ? `${trade.feed} · ${spec.series.bucketSeconds}s` : `${spec.series.bucketSeconds}s`,
-    label: 'REFUSED BY YOUR PINNED RULE',
+  const required = trade.requiredValue ?? (p.kind === 'fair_value_gap' ? { atoms: String(p.minGapBps.value), decimals: 0 } : null);
+  const copy = refusalCopy(p, required ?? { atoms: '0', decimals: 0 }, asset, timeframe);
+  const labels = {
     unit,
     requiredLabel: copy.requiredLabel,
     requiredSub: copy.requiredSub,
     actualLabel: copy.actualLabel,
-    actualSub: copy.actualSub,
-    tradeId: trade._id,
-    ...(autopilot ? { autopilot } : {}),
+    // The number the gate compared is the chain's own sample, not a candle from anywhere else.
+    actualSub: unit === 'price' ? `CHAIN SAMPLE · ${asset} · ${timeframe}` : copy.actualSub,
+  };
+
+  // The window was not whole: no number decided it, and none is shown as if one had.
+  if (gate.couldNotEvaluate) {
+    const { needed, recorded } = gate.couldNotEvaluate;
+    return {
+      ...common,
+      ...none,
+      ...labels,
+      reason: couldNotEvaluateLine(common.predicate, needed, recorded, p.timeframe.value),
+      gate: { ...common.gate, unevaluated: { needed, recorded } },
+    };
+  }
+
+  // The figures are shown as far as the chain's own replay reproduced them: never a bar the chain did not compare.
+  const shortfall = trade.failingValue && trade.requiredValue ? subDecimal(trade.failingValue, trade.requiredValue) : null;
+  return {
+    ...common,
+    ...labels,
+    reason: copy.reason,
+    requiredHigh: trade.requiredValue ?? null,
+    currentPrice: trade.failingValue ?? null,
+    shortfall,
+    shortfallBps:
+      shortfall && trade.requiredValue
+        ? unit === 'bps'
+          ? Number(shortfall.atoms)
+          : roundedBps(shortfall, trade.requiredValue)
+        : 0,
   };
 }
 
@@ -449,6 +588,7 @@ export function proposalFromTrade(
       : 0;
   // An autopilot proposal has no undo window and is not executed on paper: the gateway opens it.
   const autopilot = autopilotNote(trade);
+  const gateTx = gateTxOf(trade);
 
   return {
     entry: trade.entry,
@@ -472,6 +612,7 @@ export function proposalFromTrade(
         ? `${formatDecimal(trade.equity)} ${trade.equitySource === 'paper' ? 'PAPER EQUITY' : 'ACCOUNT EQUITY'}`
         : 'ACCOUNT EQUITY',
     ...(autopilot ? { autopilot } : {}),
+    ...(gateTx ? { gateTx } : {}),
   };
 }
 
@@ -492,12 +633,70 @@ const STATUS_LABEL: Record<LiveTrade['status'], string> = {
   undone: 'UNDONE',
 };
 
+const VERDICT_WORD: Record<LiveGate['verdict'], string> = { proposed: 'passed', refused: 'refused' };
+
+/**
+ * The gate's own claim, first in the chain: the transaction, where and by whom
+ * it was sent, what the event said, and whether the off-chain arithmetic and
+ * the preview agreed with it. A row from before the gate says so instead.
+ */
+export function gateClaim(trade: LiveTrade, spec: StrategySpec): Claim {
+  const gate = trade.gate;
+  const tx = gateTxOf(trade);
+  if (!gate || !tx) {
+    return {
+      symbol: 'DECIDED OFF-CHAIN',
+      summary: 'Before every judgment went on-chain',
+      fields: [
+        ['decided by', "Kanon's candles, off-chain"],
+        ['gate transaction', 'none'],
+      ],
+      badge: 'OFF-CHAIN',
+      tone: 'ash',
+    };
+  }
+  const refused = gate.verdict === 'refused';
+  const said = refused
+    ? gate.couldNotEvaluate
+      ? `refused · ${gate.symbol ?? ''} · could not evaluate`
+      : `refused · ${gate.symbol ?? ''} · ${gate.decidingValue ?? ''}`
+    : 'passed';
+  const fields: EvidenceField[] = [
+    ['verdict', said],
+    ['transaction', tx.short],
+    ['block', String(gate.blockNumber)],
+    ['bucket', `${utcFull(gate.bucketIndex * 900 * 1000)} · ${spec.series.bucketSeconds}s`],
+    ['signer', abbreviateHash(gate.signer, 6, 4)],
+    ['gas limit', gate.gasLimit],
+  ];
+  if (gate.offchainVerdict) {
+    fields.push([
+      'off-chain said',
+      gate.offchainVerdict === gate.verdict ? `${VERDICT_WORD[gate.verdict]} too` : VERDICT_WORD[gate.offchainVerdict],
+    ]);
+  }
+  if (gate.previewDiffers) fields.push(['preview', 'said otherwise; the transaction decides']);
+  fields.push([
+    'outcomes below',
+    trade.resultsSource === 'chain' ? "replayed on the chain's candles" : "Kanon's candles, off-chain",
+  ]);
+  return {
+    symbol: 'ON-CHAIN GATE',
+    summary: `${VERDICT_WORD[gate.verdict].toUpperCase()} \u00B7 BLOCK ${gate.blockNumber}`,
+    fields,
+    badge: 'ON-CHAIN',
+    tone: 'long',
+  };
+}
+
 export function tradeDetailFromTrade(trade: LiveTrade, spec: StrategySpec): TradeDetailData {
-  const claims: Claim[] = (trade.results ?? []).map((r, i) => {
+  // The transaction is its own claim; the rest of the references point at candles, one per outcome.
+  const candleRefs = trade.evidenceRefs.filter((ref) => !ref.startsWith('monad:'));
+  const outcomeClaims: Claim[] = (trade.results ?? []).map((r, i) => {
     const p = findPredicate(spec, r.predicateId);
     const kind = (p?.kind ?? r.kind) as PredicateKind;
     const [decidingLabel, referenceLabel_] = EVIDENCE_LABELS[kind] ?? ['value', 'threshold'];
-    const ref = trade.evidenceRefs[i];
+    const ref = candleRefs[i];
     const fields: EvidenceField[] = [
       [decidingLabel, formatPredicateValue(kind, r.decidingValue)],
       [referenceLabel_, formatPredicateValue(kind, r.referenceValue)],
@@ -517,6 +716,8 @@ export function tradeDetailFromTrade(trade: LiveTrade, spec: StrategySpec): Trad
       tone: r.satisfied ? 'long' : 'ash',
     };
   });
+  const claims = [gateClaim(trade, spec), ...outcomeClaims];
+  const gateTx = gateTxOf(trade);
 
   // `EXECUTED` and `UNDONE` are a person's words: autopilot's row was opened by the gateway, or was not.
   const state = autopilotState(trade);
@@ -530,6 +731,7 @@ export function tradeDetailFromTrade(trade: LiveTrade, spec: StrategySpec): Trad
     returnBps: null,
     claims,
     ...(autopilot ? { autopilot } : {}),
+    ...(gateTx ? { gateTx } : {}),
   };
 }
 
@@ -550,16 +752,24 @@ export function blockedRow(trade: LiveTrade, spec: StrategySpec): BlockedRow {
   const kind = (findPredicate(spec, trade.failedPredicateId)?.kind ?? failing?.kind ?? 'break_of_structure') as PredicateKind;
   const req = trade.requiredValue;
   const got = trade.failingValue;
-  const detail =
-    req && got
+  const symbol = trade.failedSymbol ?? trade.failedPredicateId ?? 'unknown';
+  const unevaluated = trade.gate?.couldNotEvaluate;
+  const side = trade.gate && !findPredicate(spec, trade.failedPredicateId) ? decidingReading(symbol, trade.gate.decidingValue ?? null).words : null;
+  const detail = unevaluated
+    ? `could not evaluate · needs ${unevaluated.needed} consecutive ${findPredicate(spec, unevaluated.predicateId)?.timeframe.value ?? ''} samples · has ${unevaluated.recorded}`
+    : req && got
       ? `req ${formatPredicateValue(kind, req)} · got ${formatPredicateValue(kind, got)} · ${formatPredicateDelta(kind, subDecimal(got, req))}`
-      : '';
+      : got
+        ? `got ${formatPredicateValue(kind, got)}`
+        : (side ?? '');
+  const tx = gateTxOf(trade);
   return {
-    symbol: trade.failedSymbol ?? trade.failedPredicateId ?? 'unknown',
-    at: utcShort(trade.createdAt),
+    symbol,
+    at: utcShort(trade.gate ? trade.gate.blockTime * 1000 : trade.createdAt),
     detail,
     tradeId: trade._id,
     ...(trade.origin === 'autopilot' ? { autopilot: true } : {}),
+    ...(tx ? { tx, decided: 'chain' as const } : { decided: 'offchain' as const }),
   };
 }
 

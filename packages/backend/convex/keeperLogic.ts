@@ -118,6 +118,11 @@ export function gasLimitFor(estimate: bigint, maxGas: bigint): bigint | null {
 
 export type SpendLimits = Omit<SignerEnv, "privateKey">;
 
+/** What the gate may spend in a UTC day: the cap less the keeper's reserve, never below nothing. */
+export function gateDailySpendWei(limits: Pick<SpendLimits, "dailySpendWei" | "keeperReserveWei">): bigint {
+  return limits.dailySpendWei > limits.keeperReserveWei ? limits.dailySpendWei - limits.keeperReserveWei : 0n;
+}
+
 /**
  * Whether a send may go ahead. Without `gas` it is the check made before the
  * signer is taken; with it, the check made before each transaction, which
@@ -215,6 +220,13 @@ const MIRROR_REFUSALS: Record<Extract<MirrorPlan, { ok: false }>["reason"], (age
   source_from_future: () => "the mainnet price is stamped after the mainnet clock, so it was not mirrored",
 };
 
+/** The mainnet price was not one the keeper mirrors (`planMirror`). Nothing was sent for it. */
+export class SourceRefused extends Error {
+  constructor(readonly reason: Extract<MirrorPlan, { ok: false }>["reason"], ageSeconds: bigint) {
+    super(MIRROR_REFUSALS[reason](ageSeconds));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The tick
 // ---------------------------------------------------------------------------
@@ -237,6 +249,8 @@ export interface KeeperTickInput {
 export interface KeeperTickReport {
   /** The bucket the tick looked at: the testnet block time over 900. Null when even that could not be read. */
   bucket: number | null;
+  /** The testnet block time the bucket was read from, unix seconds. */
+  blockTime?: number;
   /** Feeds the chain shows recorded, at the bucket each was recorded in. */
   sampled: Array<{ feed: string; bucket: number }>;
   sent: Array<{ feed: string; call: string; hash: `0x${string}`; costWei: bigint }>;
@@ -247,6 +261,8 @@ export interface KeeperTickReport {
   /** The signer was held by someone else; tried again next minute. */
   busy: boolean;
   errors: string[];
+  /** Feeds whose mainnet price was refused (`SourceRefused`): their line is in `errors` too. */
+  sourceRefused?: string[];
 }
 
 /** A guard tripped: nothing more is sent this tick. */
@@ -278,6 +294,7 @@ export async function runKeeperTick(input: KeeperTickInput): Promise<KeeperTickR
   const blockTime = await port.blockTime();
   const bucket = blockTime / BUCKET_SECONDS;
   report.bucket = Number(bucket);
+  report.blockTime = Number(blockTime);
 
   const due: Array<{ feed: string; series: `0x${string}` }> = [];
   for (const feed of input.feeds) {
@@ -366,7 +383,7 @@ export async function runKeeperTick(input: KeeperTickInput): Promise<KeeperTickR
 
     const { price, sourceNowSeconds } = await source.read(feedId);
     const plan = planMirror(price, sourceNowSeconds, now, limits.maxSourceAgeSeconds);
-    if (!plan.ok) throw new Error(MIRROR_REFUSALS[plan.reason](plan.sourceAgeSeconds));
+    if (!plan.ok) throw new SourceRefused(plan.reason, plan.sourceAgeSeconds);
     const target = plan.price.publishTime / BUCKET_SECONDS;
 
     await transact(feed, "setPrice", setPriceCall(input.mockPyth, feedId, plan.price));
@@ -389,6 +406,7 @@ export async function runKeeperTick(input: KeeperTickInput): Promise<KeeperTickR
         }
         const line = `${feed}: ${sentence(e, secrets)}`;
         report.errors.push(line);
+        if (e instanceof SourceRefused) report.sourceRefused = [...(report.sourceRefused ?? []), feed];
         log("error", `keeper: ${line}`);
       }
     }
@@ -520,6 +538,8 @@ export function keeperStatus(row: KeeperRow | null, env: Env, nowMs: number) {
     balanceMon: view.balance ? formatMon(BigInt(view.balance.atoms)) : null,
     spentTodayMon: formatMon(BigInt(view.spentToday.atoms)),
     dailyCapMon: view.dailyCap ? formatMon(BigInt(view.dailyCap.atoms)) : null,
+    /** The last bucket (unix seconds over 900) autopilot judged clean on the gate. */
+    judgedBucket: row?.judgedBucket ?? null,
     lease:
       row?.leaseHolder !== undefined && (row.leaseUntil ?? 0) > nowMs
         ? { holder: row.leaseHolder, until: row.leaseUntil ?? null }

@@ -10,16 +10,19 @@ import {
   notOpenedPatch,
   openedPatch,
   sameMarket,
+  sweepStep,
   withinHandoff,
 } from "./autopilotLogic";
+import { GATE_BUCKET_SECONDS } from "./gateLogic";
 import { firstCollateral } from "./proposerData";
 import { decimal } from "./schema";
 import { takeLock } from "./venueData";
 
 /**
- * What autopilot reads and writes: for its sweep (`autopilot.ts`), and for the
- * gateway, which opens a timed trade for a proposal the rule passed and asks
- * for these writes through `http.ts` (`/autopilot/*`).
+ * What autopilot reads and writes: for its pass from the keeper tick
+ * (`autopilot.ts`), and for the gateway, which opens a timed trade for a
+ * proposal the rule passed and asks for these writes through `http.ts`
+ * (`/autopilot/*`).
  *
  * Everything here is internal. Nobody signs in for an autopilot trade, so a
  * proposal stands in for its owner the way a timed trade stands in for the
@@ -29,12 +32,12 @@ import { takeLock } from "./venueData";
 
 const network = v.union(v.literal("testnet"), v.literal("mainnet"));
 
-/** How many waiting proposals one read hands the gateway, or one sweep finishes. */
+/** How many waiting proposals one read hands the gateway, or one pass finishes. */
 const MAX_WAITING = 100;
 
 type Proposal = Doc<"trades">;
 
-/** A row the sweep wrote for a pass: the only kind the gateway may act for. */
+/** A row autopilot wrote for a pass: the only kind the gateway may act for. */
 const isProposal = (row: Proposal | null): row is Proposal =>
   row !== null && row.origin === "autopilot" && row.handoff !== undefined;
 
@@ -87,29 +90,29 @@ export async function withdrawWaiting(ctx: MutationCtx, strategyId: Id<"strategi
 }
 
 // ---------------------------------------------------------------------------
-// The sweep
+// The pass
 // ---------------------------------------------------------------------------
 
 /**
- * Every strategy autopilot is on for, with what tells whether a candle has
- * closed since it was last judged, and how many proposals have waited past any
- * order that could be on its way. The clock is the caller's.
+ * Every strategy autopilot is on for that the gate can judge, with the bucket
+ * each last judged. Read once per bucket by the keeper tick, not once a
+ * minute. A rule turned on before autopilot judged on the gate, and that the
+ * gate cannot judge (another timeframe, a pin never read from the chain, no
+ * registry id), is skipped and counted, never judged off-chain instead.
  */
 export const snapshot = internalQuery({
-  args: { nowMs: v.number() },
-  handler: async (ctx, args) => {
+  args: {},
+  handler: async (ctx) => {
     const armed = await ctx.db
       .query("strategies")
       .withIndex("by_autopilot", (q) => q.eq("autopilot", true))
       .take(MAX_ARMED);
-    const waiting = await waitingProposals(ctx.db);
+    const judgeable = armed.filter(
+      (s) => candleSecondsOf(s.spec) === GATE_BUCKET_SECONDS && s.pinVerified === true && s.chainStrategyId !== undefined,
+    );
     return {
-      strategies: armed.map((s) => ({
-        strategyId: s._id,
-        candleSeconds: candleSecondsOf(s.spec),
-        judgedBucket: s.autopilotBucket ?? null,
-      })),
-      expired: waiting.filter((row) => handoffExpired(row.createdAt, args.nowMs)).length,
+      strategies: judgeable.map((s) => ({ strategyId: s._id, judgedBucket: s.autopilotBucket ?? null })),
+      legacy: armed.length - judgeable.length,
     };
   },
 });
@@ -119,29 +122,76 @@ export const context = internalQuery({
   args: { strategyId: v.id("strategies") },
   handler: async (ctx, args) => {
     const strategy = await ctx.db.get(args.strategyId);
-    // An unpinned draft is judged by nothing, by a button or by a sweep.
+    // An unpinned draft is judged by nothing, by a button or by autopilot.
     if (!strategy || !strategy.autopilot || strategy.status === "draft" || strategy.spec === undefined) return null;
-    // A pass here sends an order to the venue, so the sweep judges only a pin the backend read from the chain.
+    // A pass here sends an order to the venue, so autopilot judges only a pin the backend read from the chain.
     if (strategy.pinVerified !== true) return null;
     return { strategy, collateral: await firstCollateral(ctx.db, strategy.ownerUserId) };
   },
 });
 
-/** The first sweep after autopilot is turned on: remembers the candle that has closed and judges nothing. */
-export const arm = internalMutation({
+export type Claim = { ok: true; previous: number | null } | { ok: false; why: "off" | "armed" | "judged" };
+
+/**
+ * Claims `bucket` (its start, unix seconds) for a strategy before its gate
+ * transaction is sent, so two passes can never both send one, and a bucket is
+ * judged once. Nothing is claimed for a strategy autopilot is off for, or one
+ * that already judged this bucket. A strategy with no bucket remembered (turned
+ * on before buckets were) remembers this one and judges nothing.
+ */
+export const claim = internalMutation({
   args: { strategyId: v.id("strategies"), bucket: v.number() },
-  handler: async (ctx, args): Promise<null> => {
+  handler: async (ctx, args): Promise<Claim> => {
     const strategy = await ctx.db.get(args.strategyId);
-    if (!strategy || !strategy.autopilot || strategy.autopilotBucket !== undefined) return null;
+    if (!strategy || !strategy.autopilot) return { ok: false, why: "off" };
+    const previous = strategy.autopilotBucket ?? null;
+    const step = sweepStep(previous, args.bucket);
+    if (step === "wait") return { ok: false, why: "judged" };
     await ctx.db.patch(strategy._id, { autopilotBucket: args.bucket });
-    return null;
+    if (step === "arm") return { ok: false, why: "armed" };
+    return { ok: true, previous };
   },
 });
 
 /**
- * Finishes proposals that waited too long. One the gateway never began is too
- * old to open. One whose order was begun and never reported is not known to be
- * closed: its reason says to look.
+ * Gives a claim back when its judgment ended with no transaction, so the
+ * bucket is tried again on the next minute's tick. Only the claim this pass
+ * made is given back: one autopilot was turned off or on again over is left.
+ */
+export const unclaim = internalMutation({
+  args: { strategyId: v.id("strategies"), bucket: v.number(), previous: v.union(v.number(), v.null()) },
+  handler: async (ctx, args): Promise<null> => {
+    const strategy = await ctx.db.get(args.strategyId);
+    if (!strategy || strategy.autopilotBucket !== args.bucket) return null;
+    await ctx.db.patch(strategy._id, { autopilotBucket: args.previous ?? undefined });
+    return null;
+  },
+});
+
+/** What a proposal that waited too long is finished with: nothing was sent, or nobody said what became of its order. */
+const expiredReason = (row: Proposal) =>
+  row.openOrderId === undefined ? HANDOFF_MESSAGES.notPickedUp : HANDOFF_MESSAGES.noAnswer;
+
+/**
+ * Finishes one proposal that waited too long, when its time is up: scheduled
+ * by `trades:recordEvaluation` as the proposal is written. One the gateway
+ * never began is too old to open. One whose order was begun and never reported
+ * is not known to be closed: its reason says to look.
+ */
+export const expireOne = internalMutation({
+  args: { tradeId: v.id("trades") },
+  handler: async (ctx, args): Promise<boolean> => {
+    const row = await ctx.db.get(args.tradeId);
+    if (!isPending(row) || !handoffExpired(row.createdAt, Date.now())) return false;
+    await ctx.db.patch(row._id, notOpenedPatch(expiredReason(row)));
+    return true;
+  },
+});
+
+/**
+ * Finishes every proposal that waited too long. `expireOne` is scheduled for
+ * each; this runs once per bucket from the keeper tick to catch any whose
+ * schedule was lost.
  */
 export const expire = internalMutation({
   args: {},
@@ -150,8 +200,7 @@ export const expire = internalMutation({
     let finished = 0;
     for (const row of await waitingProposals(ctx.db)) {
       if (!handoffExpired(row.createdAt, now)) continue;
-      const reason = row.openOrderId === undefined ? HANDOFF_MESSAGES.notPickedUp : HANDOFF_MESSAGES.noAnswer;
-      await ctx.db.patch(row._id, notOpenedPatch(reason));
+      await ctx.db.patch(row._id, notOpenedPatch(expiredReason(row)));
       finished += 1;
     }
     return finished;
@@ -165,7 +214,7 @@ export const expire = internalMutation({
 /**
  * The proposals that have not been handed to the venue yet, oldest first, each
  * with the trade the gateway is asked to open for it. One that has waited past
- * its window is left out: it is finished by the next sweep, not opened late.
+ * its window is left out: it is finished by `expireOne`, not opened late.
  */
 export const pending = internalQuery({
   args: { nowMs: v.number() },

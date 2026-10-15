@@ -3,7 +3,7 @@ import { MAX_LIST_ROWS } from "./limits";
 import type { Id } from "./_generated/dataModel";
 import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
-import { decimal } from "./schema";
+import { decimal, gateRecord } from "./schema";
 import {
   ownedStrategyBySubject,
   requireOwnedTrade,
@@ -12,7 +12,7 @@ import {
   viewerUser,
 } from "./authz";
 import { hasOpenTrade } from "./autopilotData";
-import { sweepStep } from "./autopilotLogic";
+import { HANDOFF_EXPIRY_MS, HANDOFF_MESSAGES, notOpenedPatch } from "./autopilotLogic";
 import {
   UNDO_WINDOW_MS,
   confirmTransition,
@@ -45,19 +45,26 @@ const finalizeTradeRef = makeFunctionReference<
   unknown
 >("trades:finalizeTrade");
 
+const expireOneRef = makeFunctionReference<"mutation", { tradeId: Id<"trades"> }, unknown>("autopilotData:expireOne");
+
 /**
  * Written only by `evaluateStrategy` (`proposer.ts`), for a button press or for
- * autopilot's sweep. Not callable by a client: a browser must never be able to
- * insert an "executed" trade, or a refusal that did not happen.
+ * autopilot, once a gate transaction has carried a verdict. Not callable by a
+ * client: a browser must never be able to insert an "executed" trade, or a
+ * refusal that did not happen.
  *
- * With `autopilot`, the write also settles what only one transaction can: that
- * this candle has not been judged already, and that the strategy has no
- * autopilot trade still open. It returns null when it wrote no row:
+ * Every gate transaction gets its row: what the chain said is recorded, even
+ * when nothing follows from it. With `autopilot`, a pass is handed to the
+ * gateway only if this one transaction can still settle that it should be:
  *
- *   - autopilot was turned off, or another sweep judged this candle first;
- *   - every predicate passed while the strategy's last autopilot trade was
- *     waiting to be opened or still running. The candle counts as judged and
- *     nothing is recorded for it. A refusal is recorded either way.
+ *   - the bucket this pass claimed is still the strategy's claim. Autopilot
+ *     turned off meanwhile makes the pass a proposal that was not opened,
+ *     `turnedOff`;
+ *   - the strategy has no autopilot trade waiting to be opened or still
+ *     running. One that has makes the pass a proposal not opened, `stillOpen`.
+ *
+ * A refusal is recorded either way. A pass handed to the gateway is finished
+ * by `autopilotData:expireOne` if nothing answered for it in time.
  */
 export const recordEvaluation = internalMutation({
   args: {
@@ -82,10 +89,12 @@ export const recordEvaluation = internalMutation({
     riskBps: v.number(),
     feed: v.string(),
     undoExpiresAt: v.optional(v.number()),
-    /** The sweep's: the closed candle being judged (its start, unix seconds) and what a pass asks the gateway to open. */
+    resultsSource: v.optional(v.union(v.literal("chain"), v.literal("offchain"))),
+    gate: v.optional(gateRecord),
+    /** Autopilot's: the bucket it claimed (its start, unix seconds) and what a pass asks the gateway to open. */
     autopilot: v.optional(v.object({ bucket: v.number(), stakeUsd: v.number(), holdSeconds: v.number() })),
   },
-  handler: async (ctx, args): Promise<Id<"trades"> | null> => {
+  handler: async (ctx, args): Promise<{ tradeId: Id<"trades">; handoff?: "pending" | "not_opened" }> => {
     const { autopilot, ...row } = args;
     const createdAt = Date.now();
 
@@ -96,29 +105,29 @@ export const recordEvaluation = internalMutation({
         // slack keeps the scheduler from firing a hair before the window closes.
         await ctx.scheduler.runAfter(UNDO_WINDOW_MS + 250, finalizeTradeRef, { tradeId });
       }
-      return tradeId;
+      return { tradeId };
     }
-
-    const strategy = await ctx.db.get(row.strategyId);
-    if (!strategy || !strategy.autopilot || sweepStep(strategy.autopilotBucket, autopilot.bucket) !== "judge") {
-      return null;
-    }
-    await ctx.db.patch(strategy._id, { autopilotBucket: autopilot.bucket });
 
     if (row.status === "refused") {
-      return await ctx.db.insert("trades", { ...row, createdAt, origin: "autopilot" });
+      return { tradeId: await ctx.db.insert("trades", { ...row, createdAt, origin: "autopilot" }) };
     }
-    if (await hasOpenTrade(ctx.db, strategy._id)) return null;
     // No undo window and no paper execution: the gateway opens this, and reports what became of it.
     const { undoExpiresAt: _noWindow, ...proposal } = row;
-    return await ctx.db.insert("trades", {
-      ...proposal,
-      createdAt,
-      origin: "autopilot",
-      handoff: "pending",
-      stakeUsd: autopilot.stakeUsd,
-      holdSeconds: autopilot.holdSeconds,
-    });
+    const pass = { ...proposal, createdAt, origin: "autopilot" as const, stakeUsd: autopilot.stakeUsd, holdSeconds: autopilot.holdSeconds };
+
+    const strategy = await ctx.db.get(row.strategyId);
+    const claimed = strategy !== null && strategy.autopilot && strategy.autopilotBucket === autopilot.bucket;
+    if (!claimed) {
+      const tradeId = await ctx.db.insert("trades", { ...pass, ...notOpenedPatch(HANDOFF_MESSAGES.turnedOff) });
+      return { tradeId, handoff: "not_opened" };
+    }
+    if (await hasOpenTrade(ctx.db, strategy._id)) {
+      const tradeId = await ctx.db.insert("trades", { ...pass, ...notOpenedPatch(HANDOFF_MESSAGES.stillOpen) });
+      return { tradeId, handoff: "not_opened" };
+    }
+    const tradeId = await ctx.db.insert("trades", { ...pass, handoff: "pending" });
+    await ctx.scheduler.runAfter(HANDOFF_EXPIRY_MS, expireOneRef, { tradeId });
+    return { tradeId, handoff: "pending" };
   },
 });
 
@@ -184,8 +193,10 @@ export const listRecentActivity = query({
         createdAt: t.createdAt,
         executedAt: t.executedAt,
         failedSymbol: t.failedSymbol,
-        // `autopilot` when the sweep wrote the row. Absent for a button press.
+        // `autopilot` when autopilot wrote the row. Absent for a button press.
         origin: t.origin,
+        // The gate transaction that decided it. Absent on a row decided off-chain, before the gate.
+        gateTx: t.gate?.txHash,
       }));
   },
 });

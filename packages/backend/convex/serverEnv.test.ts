@@ -204,6 +204,7 @@ describe("parseSignerEnv", () => {
         warnBalanceWei: 1_000_000_000_000_000_000n,
         maxFeePerGasWei: 250_000_000_000n,
         dailySpendWei: 4_000_000_000_000_000_000n,
+        keeperReserveWei: 2_500_000_000_000_000_000n,
       },
     });
     expect(SIGNER_DEFAULTS.minBalanceWei).toBe(2n * 10n ** 17n);
@@ -216,6 +217,7 @@ describe("parseSignerEnv", () => {
       KEEPER_WARN_BALANCE_MON: "1.000000000000000001",
       KEEPER_MAX_FEE_GWEI: "102.5",
       SIGNER_DAILY_SPEND_MON: "0.3",
+      KEEPER_RESERVE_MON: "0.25",
     });
     expect(r.ok && r.value).toMatchObject({
       minBalanceWei: 100_000_000_000_000_000n,
@@ -223,6 +225,7 @@ describe("parseSignerEnv", () => {
       maxFeePerGasWei: 102_500_000_000n,
       // 0.1 + 0.2 is not 0.3 in floats; in wei it is.
       dailySpendWei: 300_000_000_000_000_000n,
+      keeperReserveWei: 250_000_000_000_000_000n,
     });
   });
 

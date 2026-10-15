@@ -202,9 +202,13 @@ export const AUTOPILOT_UNREAD = 'The answer could not be read. Check the switch 
 /**
  * A calm sentence for a switch that was not thrown. The server's own message is
  * a stack frame in development and "Server Error" in production, so it is read
- * for what it means and never shown.
+ * for what it means and never shown. The one exception is a sentence the
+ * server wrote for the person (`ConvexError` with `not_eligible`): why the
+ * on-chain gate cannot judge this rule, shown as it is.
  */
 export function autopilotFailureLine(err: unknown, on: boolean): string {
+  const data = (err as { data?: { code?: unknown; message?: unknown } } | null | undefined)?.data;
+  if (data?.code === 'not_eligible' && typeof data.message === 'string' && data.message.length > 0) return data.message;
   const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
   if (message.includes('pin this one first')) return 'Autopilot runs a pinned rule. Pin this one first.';
   if (message.includes('Could not find public function')) return 'This server does not run autopilot yet. Nothing changed.';

@@ -137,6 +137,16 @@ function chain() {
       calls.push("receipt");
       return { status: state.receiptStatus, gasUsed: 0n, effectiveGasPrice: state.effectiveGasPrice, blockNumber: 1n };
     },
+    // The gate's own reads (`gate.test.ts`). The keeper never makes them.
+    async blockTimeAt() {
+      throw new Error("the keeper reads no block but the latest");
+    },
+    async previewOnChain() {
+      throw new Error("the keeper never asks the gate");
+    },
+    async readCandles() {
+      throw new Error("the keeper reads one candle at a time");
+    },
   };
 
   const source: PriceSource = {
@@ -158,6 +168,7 @@ function chain() {
       warnBalanceWei: MON,
       maxFeePerGasWei: 250n * GWEI,
       dailySpendWei: 4n * MON,
+      keeperReserveWei: (5n * MON) / 2n,
       maxGas: 400_000n,
       maxSourceAgeSeconds: 7_200n,
     },

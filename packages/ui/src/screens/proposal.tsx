@@ -7,15 +7,21 @@ import { UndoCountdown } from '../components/countdown';
 import { DangerButton, Dot, EvidenceLink, GhostButton, Meta, Num, Panel, PrimaryButton } from '../components/ui';
 import { useNavigator } from '../nav';
 import { useKanonData } from '../lib/data';
+import { ASKING_THE_GATE, useGateWait } from '../lib/gate-wait';
 import { routes, timedTradeRoute } from '../lib/routes';
 import { cx } from '../lib/cx';
 
 /**
  * 05 · TRADE PROPOSAL · UNDO WINDOW.
  *
- * The setup satisfied the spec, so it executes. Each predicate is shown beside
- * the arithmetic that satisfied it — the same comparison the contract made, in
- * the same direction, with the same numbers.
+ * The on-chain gate passed the setup, so it executes. The pass is the gate's
+ * transaction, one press away under the predicates. Each predicate is shown
+ * beside the arithmetic that explains it: the gate's own window replayed over
+ * the chain's candles when the row says so, Kanon's candles otherwise. The
+ * entry, stop and size are Kanon's sizing of the setup, not the chain's.
+ *
+ * "Check setup now" sends that transaction, so it takes seconds: the button
+ * says it is asking the gate, and a wait past six seconds is explained.
  *
  * The undo window is enforced on the server clock, not this countdown: the
  * countdown only shows it. Cancelling after the window has closed is refused
@@ -33,6 +39,8 @@ export function ProposalScreen() {
     useKanonData();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+  const slowNote = useGateWait(asking);
 
   // The window is read off its expiry, so a screen opened a moment late still shows what is left.
   const expiry = PROPOSAL?.undoExpiresAt;
@@ -59,21 +67,28 @@ export function ProposalScreen() {
             Check the market as it stands. It is proposed if every predicate holds, and refused with the
             number that decided it if one does not.
           </Text>
-          {note ? <Text className="mt-4 font-mono text-11 text-ash leading-[1.5]">{note}</Text> : null}
+          {note ?? slowNote ? (
+            <Text className="mt-4 font-mono text-11 text-ash leading-[1.5]" accessibilityLiveRegion="polite">
+              {note ?? slowNote}
+            </Text>
+          ) : null}
         </Body>
         <Footer>
           <PrimaryButton
-            disabled={busy}
+            disabled={asking}
             onPress={async () => {
-              setBusy(true);
+              setAsking(true);
               setNote(null);
-              const out = await requestProposal();
-              setBusy(false);
-              if (out.status === 'refused') nav.replace(routes.refused);
-              else if (out.status !== 'proposed') setNote(out.message);
+              try {
+                const out = await requestProposal();
+                if (out.status === 'refused') nav.replace(routes.refused);
+                else if (out.status !== 'proposed') setNote(out.message);
+              } finally {
+                setAsking(false);
+              }
             }}
           >
-            {busy ? 'CHECKING' : 'CHECK SETUP NOW'}
+            {asking ? ASKING_THE_GATE : 'CHECK SETUP NOW'}
           </PrimaryButton>
         </Footer>
       </Screen>
@@ -193,6 +208,15 @@ export function ProposalScreen() {
               <Num className="text-12 text-ash">{check.evidence}</Num>
             </View>
           ))}
+          {/* The pass itself: the gate's transaction, where anyone can read it. */}
+          {PROPOSAL.gateTx ? (
+            <EvidenceLink
+              className="mt-4"
+              label="Passed on the gate"
+              hash={PROPOSAL.gateTx.short}
+              href={PROPOSAL.gateTx.url}
+            />
+          ) : null}
         </View>
       </Body>
 

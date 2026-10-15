@@ -362,7 +362,11 @@ describe("pinning", () => {
       seriesAddress: SERIES,
     });
     expect("pendingSpec" in ((await w.db.get(strategyId)) ?? {})).toBe(false);
-    // And only now may it be run on autopilot.
+    // And only now may it be run on autopilot, on a deployment whose gate samples its series.
+    vi.stubEnv("REFUSAL_GATE_ADDRESS", `0x${"44".repeat(20)}`);
+    vi.stubEnv("MOCK_PYTH_ADDRESS", `0x${"55".repeat(20)}`);
+    vi.stubEnv("SERIES_BTCUSD_ADDRESS", SERIES);
+    vi.stubEnv("KEEPER_ENABLED", "on");
     expect(await w.call(setAutopilot, { strategyId, on: true })).toEqual({ autopilot: true });
   });
 

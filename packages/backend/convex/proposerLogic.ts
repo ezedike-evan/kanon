@@ -2,6 +2,10 @@
  * The proposer's pure half: given a spec and a series, decide whether the
  * setup is a proposal or a refusal, and name the number that decided it.
  *
+ * A live judgment is decided on-chain, not here (`gate.ts`): this arithmetic,
+ * over Convex's candles, gives that judgment its entry, stop and size, and its
+ * verdict is recorded beside the chain's as `offchainVerdict`.
+ *
  * Everything the model-free enforcement path needs lives here as arithmetic
  * over price data — evaluation is `@kanon/spec`'s `evaluatePredicate`, sizing
  * is integer division, the undo window is a comparison of two timestamps. No
@@ -43,10 +47,14 @@ import {
 export const UNDO_WINDOW_MS = 7_000;
 
 /**
- * The number of most recent candles that may decide a predicate. Without it an
- * evaluator answers "did this ever happen in the window", not "is this setup
- * live". The contract's `evaluateOnChain` takes the same thing as an explicit
- * `fromBucketInclusive`; this is its off-chain twin, recorded on every row.
+ * The number of most recent candles that may decide a predicate off-chain.
+ * Without it an evaluator answers "did this ever happen in the window", not
+ * "is this setup live". It is the off-chain arithmetic's own choice and the
+ * chain does not share it: `RefusalGate.evaluateOnChain` takes no window at
+ * all, derives one from each predicate's committed lookback, and lets only the
+ * bucket it is judging decide (`PredicateEngine.windowStart`, ported as
+ * `gateWindowStart` in `gateLogic.ts`). The chain's verdict is the one a row
+ * records; this one is kept beside it as `offchainVerdict`.
  */
 export const SETUP_RECENCY_CANDLES = 4;
 
@@ -181,6 +189,31 @@ export function sizePosition(input: {
     stop: dec(stopAtoms, entry.decimals),
     size: dec(size, SIZE_DECIMALS),
   };
+}
+
+/**
+ * The target from the entry and the spec's stated target distance. Rounded
+ * away from the entry, like the stop, so a win is never counted short of the
+ * distance the user stated. Null when there is no price to put it at: a short
+ * whose target would sit at or below zero.
+ */
+export function targetPrice(input: {
+  direction: 'long' | 'short';
+  entry: Decimal;
+  targetDistanceBps: number;
+}): Decimal | null {
+  const { direction, entry, targetDistanceBps } = input;
+  const price = BigInt(entry.atoms);
+  if (price <= 0n) return null;
+
+  const raw = price * BigInt(targetDistanceBps);
+  let distance = raw / 10_000n;
+  if (raw % 10_000n !== 0n) distance += 1n; // ceil
+  if (distance < 1n) distance = 1n;
+
+  const atoms = direction === 'long' ? price + distance : price - distance;
+  if (atoms <= 0n) return null;
+  return dec(atoms, entry.decimals);
 }
 
 // ---------------------------------------------------------------------------

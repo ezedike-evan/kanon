@@ -114,6 +114,7 @@ missing value fails closed (the action refuses) and logs the variable name only.
 | `KEEPER_MAX_FEE_GWEI` | `keeper:tick` | default `250`; a network gas price above it sends nothing. Also the `maxFeePerGas` bid |
 | `KEEPER_MAX_GAS`, `GATE_MAX_GAS` | `keeper:tick` | defaults `400000`, `2000000`; a gas limit is the estimate plus a tenth, never above these. Monad bills the limit |
 | `SIGNER_DAILY_SPEND_MON` | `keeper:tick` | default `4`; what the signer may spend in a UTC day (gas limit times the price paid) |
+| `KEEPER_RESERVE_MON` | `keeper:tick`, `proposer:runProposer` | default `2.5`; the part of that day the gate may not spend, so gate checks stop at the cap less this and the keeper's samples never run short |
 | `KEEPER_MAX_SOURCE_AGE_SECONDS` | `keeper:tick` | default `7200`; a mainnet Pyth price older than this is not mirrored. Mainnet is read from `MONAD_RPC_URL`, or `https://rpc.monad.xyz` |
 
 Chain-mirroring rows are never built from client numbers: stakes come from the

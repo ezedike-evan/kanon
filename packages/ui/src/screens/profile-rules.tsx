@@ -2,6 +2,7 @@ import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
 import { FlatList, Linking, Pressable, Text, View } from 'react-native';
 import { COOLING_OFF_SECONDS, abbreviateHash } from '@kanon/spec';
 import { AutopilotRow, AutopilotSheet } from '../components/autopilot';
+import { BacktestRow } from '../components/backtest-row';
 import { Badge, type BadgeProps } from '../components/badge';
 import { Card } from '../components/card';
 import { EmptyState } from '../components/empty-state';
@@ -16,6 +17,7 @@ import { Link } from '../nav';
 import { useHaptics } from '../platform';
 import { useAccount } from '../lib/account';
 import { autopilotOffer, type AutopilotSubject } from '../lib/autopilot';
+import { timeframeOf } from '../lib/backtest';
 import { useOnchainRecord } from '../lib/domains';
 import { activeChain } from '../lib/monad-chain';
 import { useRules } from '../lib/profile-hooks';
@@ -29,7 +31,7 @@ import {
   type RuleSection,
   type RuleState,
 } from '../lib/profile-logic';
-import { loosenRoute, routes, shareRoute } from '../lib/routes';
+import { loosenRoute, ruleTestRoute, routes, shareRoute } from '../lib/routes';
 import type { RuleHistoryItem } from '../lib/domain-types';
 
 /**
@@ -43,7 +45,8 @@ import type { RuleHistoryItem } from '../lib/domain-types';
  *
  * The rule enforcing now also says whether autopilot is on for it, and opens
  * autopilot's terms and switch. A rule that was replaced while autopilot was on
- * is still being judged, so it keeps that row, as the way to turn it off.
+ * is still being judged, so it keeps that row, as the way to turn it off. Every
+ * rule whose spec can be read has the way to test it on recorded prices.
  *
  * Under the rules is the chain's own account of them: the on-chain record, read
  * from the Kanon indexer on Envio for the signed-in wallet. It has its own
@@ -205,6 +208,15 @@ const RuleCard = memo(function RuleCard({
             candleSeconds={rule.candleSeconds}
             replaced={state === 'superseded' && rule.autopilot}
             onPress={() => onAutopilot(rule.id)}
+            className="border-t border-hairline"
+          />
+        )}
+
+        {/* Any rule whose spec can still be read can be tested on recorded prices, a replaced one too. */}
+        {rule.candleSeconds === null ? null : (
+          <BacktestRow
+            href={ruleTestRoute(rule.id)}
+            pair={rule.asset ? `${rule.asset} ${timeframeOf(rule.candleSeconds)}` : null}
             className="border-t border-hairline"
           />
         )}

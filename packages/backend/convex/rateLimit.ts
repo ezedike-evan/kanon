@@ -14,6 +14,10 @@ export const RATE_LIMITS = {
   venueOrder: { limit: 30, windowMs: 60 * 60 * 1000 },
   /** Reads of the trading account. Each is three requests to the venue. */
   venueAccount: { limit: 600, windowMs: 60 * 60 * 1000 },
+  /** "Check setup now": each is an `evaluateOnChain` transaction Kanon's signer pays for. */
+  gateCheck: { limit: 20, windowMs: 60 * 60 * 1000 },
+  /** Backtests that read candles: each is thousands of rows of database I/O. A cached answer spends none. */
+  backtest: { limit: 6, windowMs: 60 * 60 * 1000 },
 } as const;
 
 export type RateLimitKey = keyof typeof RATE_LIMITS;
