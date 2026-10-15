@@ -284,6 +284,20 @@ colour. No result in money is shown anywhere. The last section lists the market'
 contracts and the listing transactions, each one press from the explorer. Signed out, the book is
 shown and the ticket is the way to sign in.
 
+**Test on recorded prices (`/compile/test`, `/rules/[id]/test`).** The rule replayed over the
+backend's own recorded candles, from a card on review (optional, never in the way of the pin)
+and a row under the autopilot row. Above the fold, with no money anywhere: the win rate in
+large monospaced figures with how many trades decided it, a neutral verdict badge against the
+break-even the stop and target set, four tiles (decided, wins, losses, cannot tell) that each
+filter the trade list, and the range of candles with how current it is. Below: a line that
+autopilot opens timed trades and does not trade this stop and target; the trades, each a row
+that opens a bottom sheet with the predicate comparisons, entry, stop, target, the exit
+candle and the comparison that decided it; then every parameter of the test, and the gaps in
+their own sheet. A candle that touched both levels, or a gap mid-trade, is `cannot tell` and
+counts for neither side. A test that cannot run says `TEST STOPPED` and the reason, and a
+rule with no stated target is offered the way to state one. Opening the screen reads the
+stored result; only the press runs a new test.
+
 **One record for three ways of trading.** Trading records lists every trade the person
 took, newest first by the day it was opened: a position from the chart's ticket, a
 timed trade from Predict, and a setup put to their rule (executed or refused). Each row
@@ -433,6 +447,7 @@ begins), `refusal` (heavy impact; felt before it is read). No-op on the web.
 | `app/chart`, `app/create`, `app/predict` | none yet | Chart, AI and Predict tabs |
 | `app/profile` | none yet | Profile tab: account, appearance (theme), records, rules, copy trading, security |
 | `app/risk`, `app/spot` | none yet | Reached from Profile: Perpl risk, and the tkBTC/USDC test market on Kuru testnet |
+| `app/compile/test`, `app/rules/[id]/test` | none yet | Test on recorded prices: win rate, the decided trades, every parameter |
 
 ## Consistency check
 

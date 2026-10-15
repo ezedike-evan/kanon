@@ -17,12 +17,15 @@ repo, clean commit history, dated tags.
 - Blocked trades log with would-have-lost count.
 - Cooling-off on loosening.
 - Shareable strategy card.
+- Testing a rule on recorded prices (added 15 October 2026, at the owner's call: the core is
+  a rule you can test for a win rate). The test needs a stop and a target the person stated,
+  replays the rule over the backend's own recorded candles, and stops with a reason rather
+  than guess.
 
 ## Out of scope
 
 - A strategy marketplace
 - Multiple assets or timeframes
-- Backtesting
 - Copy trading or subscriptions to another user's strategy
 - Portfolio management
 - Social features, leaderboards, comments

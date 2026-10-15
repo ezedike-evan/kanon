@@ -140,6 +140,14 @@ Tightening a parameter takes effect immediately. Loosening one enters a
 cooling-off period with a visible, unskippable countdown. You cannot widen a stop
 mid-drawdown.
 
+A rule carries a stop and a target, both stated by the person: the compiler asks for
+either one it was not given and never chooses them, and nothing without both is drafted,
+pinned, amended or tested. Adding a target to a rule pinned without one is immediate;
+moving a target either way, or removing it, cools off, because an exit changes nothing
+about which setups the rule admits and so neither direction is provably tighter. The
+contract never reads the stop or the target: they are bound by the spec hash the pin
+writes, not checked on-chain.
+
 There is no override, no admin key, no support path. A escape hatch that exists
 will be used, and its existence defeats the product.
 
